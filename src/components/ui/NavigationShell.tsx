@@ -1,0 +1,876 @@
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Bell,
+  CreditCard,
+  Home,
+  LogOut,
+  MoreVertical,
+  Search,
+  ShieldCheck,
+  UploadCloud,
+  User,
+  X,
+} from 'lucide-react';
+import type {
+  AppScreen,
+  StudentAccount,
+  SubscriptionTierId,
+  UserRole,
+} from '../../core/types';
+import { getPlanById } from '../../core/pricing';
+import { CustomSelect } from './CustomSelect';
+import { BrandLogo } from './BrandLogo';
+import { TactileButton } from './TactileButton';
+
+interface NavigationShellProps {
+  activeScreen: AppScreen;
+  onNavigate: (screen: AppScreen) => void;
+  onQuickFind: () => void;
+  unreadCount: number;
+  activeTierId: SubscriptionTierId;
+  activeRole: UserRole;
+  onRoleChange: (role: UserRole) => void;
+  student: StudentAccount;
+  onSignOut: () => void;
+  children: React.ReactNode;
+}
+
+function getStudentInitials(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'ST';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+export const NavigationShell: React.FC<NavigationShellProps> = ({
+  activeScreen,
+  onNavigate,
+  onQuickFind,
+  unreadCount,
+  activeTierId,
+  activeRole,
+  onRoleChange,
+  student,
+  onSignOut,
+  children,
+}) => {
+  const activePlan = getPlanById(activeTierId);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [swipeOffsetX, setSwipeOffsetX] = useState(0);
+  const [isSwipingDrawer, setIsSwipingDrawer] = useState(false);
+
+  const desktopTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const drawerPanelRef = useRef<HTMLElement | null>(null);
+  const signOutTimerRef = useRef<number | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const gestureAxisRef = useRef<'pending' | 'horizontal' | 'vertical' | null>(null);
+
+  const initials = getStudentInitials(student.fullName);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 10);
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (signOutTimerRef.current !== null) {
+        window.clearTimeout(signOutTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      const inDesktop = desktopTriggerRef.current?.contains(target);
+      const inMenu = accountMenuRef.current?.contains(target);
+      if (!inDesktop && !inMenu) {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [accountMenuOpen]);
+
+  useEffect(() => {
+    if (!drawerOpen) {
+      setSwipeOffsetX(0);
+      setIsSwipingDrawer(false);
+      touchStartRef.current = null;
+      gestureAxisRef.current = null;
+      return;
+    }
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDrawerOpen(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [drawerOpen]);
+
+  const handleDrawerTouchStart = (e: React.TouchEvent<HTMLElement>) => {
+    if (!drawerOpen || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: performance.now(),
+    };
+    gestureAxisRef.current = 'pending';
+  };
+
+  const handleDrawerTouchMove = (e: React.TouchEvent<HTMLElement>) => {
+    const start = touchStartRef.current;
+    if (!start || e.touches.length !== 1) return;
+    if (gestureAxisRef.current === 'vertical') return;
+
+    const touch = e.touches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+
+    if (gestureAxisRef.current === 'pending') {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (absX < 10 && absY < 10) return;
+
+      // Immediately yield to native vertical scroll on any vertical or leftward motion
+      if (absY >= absX * 0.85 || dx <= 0) {
+        gestureAxisRef.current = 'vertical';
+        return;
+      }
+
+      gestureAxisRef.current = 'horizontal';
+      setIsSwipingDrawer(true);
+    }
+
+    if (gestureAxisRef.current === 'horizontal') {
+      setSwipeOffsetX(Math.max(0, dx));
+    }
+  };
+
+  const handleDrawerTouchEnd = () => {
+    const start = touchStartRef.current;
+    const axis = gestureAxisRef.current;
+
+    touchStartRef.current = null;
+    gestureAxisRef.current = null;
+
+    if (axis !== 'horizontal' || !start) {
+      setIsSwipingDrawer(false);
+      setSwipeOffsetX(0);
+      return;
+    }
+
+    const panelWidth = drawerPanelRef.current?.offsetWidth || 300;
+    const elapsed = Math.max(1, performance.now() - start.time);
+    const velocityX = swipeOffsetX / elapsed;
+
+    const shouldClose =
+      swipeOffsetX > panelWidth * 0.32 ||
+      (velocityX > 0.35 && swipeOffsetX > 28);
+
+    setIsSwipingDrawer(false);
+    setSwipeOffsetX(0);
+
+    if (shouldClose) {
+      setDrawerOpen(false);
+    }
+  };
+
+  const handleSignOutClick = () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    signOutTimerRef.current = window.setTimeout(() => {
+      setIsSigningOut(false);
+      setAccountMenuOpen(false);
+      setDrawerOpen(false);
+      onSignOut();
+    }, 450);
+  };
+
+  const navItems: Array<{
+    id: AppScreen;
+    label: string;
+    icon: React.ReactNode;
+    badge?: number;
+  }> = [
+    { id: 'home', label: 'Archive', icon: <Home className="w-5 h-5" /> },
+    { id: 'subscription', label: 'Passes', icon: <CreditCard className="w-5 h-5" /> },
+    {
+      id: 'notifications',
+      label: 'Alerts',
+      icon: <Bell className="w-5 h-5" />,
+      badge: unreadCount,
+    },
+    { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
+    { id: 'super_admin', label: 'Super Admin', icon: <ShieldCheck className="w-5 h-5" /> },
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#F6F7F9] text-[#1A1B20] flex flex-col lg:flex-row">
+      {/* Desktop Left Sidebar */}
+      <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 bg-white border-r border-[#1A1B20]/[0.07] p-5 sticky top-0 h-screen justify-between">
+        <div className="space-y-7">
+          <button
+            type="button"
+            onClick={() => onNavigate('home')}
+            className="flex items-center gap-3 text-left cursor-pointer group"
+          >
+            <div className="h-10 w-10 rounded-2xl tactile-dark text-white flex items-center justify-center shrink-0">
+              <BrandLogo className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="block font-display text-base font-bold tracking-tight text-[#1A1B20]">
+                PrepVault
+              </span>
+              <span className="block text-xs text-[#686C78]">University Exam Archive</span>
+            </div>
+          </button>
+
+          <nav aria-label="Primary desktop navigation" className="space-y-1.5">
+            {navItems.map((item) => {
+              const isActive =
+                activeScreen === item.id ||
+                (activeScreen === 'reader' && item.id === 'home');
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onNavigate(item.id)}
+                  className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-2xl flex items-center justify-between text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                    isActive
+                      ? 'tactile-dark text-white'
+                      : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span
+                      className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${
+                        isActive
+                          ? 'bg-white text-[#1D1E23]'
+                          : 'bg-[#1D1E23] text-white'
+                      }`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Workspace Switcher, Plan Summary & Student Sign Out */}
+        <div className="space-y-3 pt-4 border-t border-[#1A1B20]/[0.07]">
+          <CustomSelect
+            id="desktop-role-select"
+            label="Active Workspace View"
+            size="sm"
+            menuPlacement="top"
+            value={activeRole}
+            options={[
+              { value: 'student', label: 'Student View' },
+              { value: 'school_admin', label: 'School Admin View' },
+              { value: 'super_admin', label: 'Super Admin View' },
+            ]}
+            onChange={(val) => {
+              const role = val as UserRole;
+              onRoleChange(role);
+              if (role === 'school_admin') onNavigate('school_admin');
+              else if (role === 'super_admin') onNavigate('super_admin');
+              else onNavigate('home');
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() => onNavigate('subscription')}
+            className="w-full text-left rounded-2xl bg-[#F6F7F9] p-3.5 hover:bg-[#ECEEF3] transition-colors cursor-pointer"
+          >
+            <p className="text-xs text-[#686C78]">Current Plan</p>
+            <p className="text-sm font-bold text-[#1A1B20] mt-0.5 truncate">
+              {activePlan.name}
+            </p>
+            <p className="text-xs text-[#505460] mt-0.5">
+              {activePlan.includesFullArchive ? 'Full Access Active' : 'Upgrade from ₦500'}
+            </p>
+          </button>
+
+          <div className="rounded-2xl bg-[#F6F7F9] p-3 flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="h-9 w-9 rounded-full tactile-dark text-white text-xs font-bold flex items-center justify-center shrink-0">
+                {initials}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-[#1A1B20] truncate">
+                  {student.fullName}
+                </p>
+                <p className="text-[11px] font-mono-tabular text-[#686C78] truncate">
+                  {student.matricNumber}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={isSigningOut}
+              onClick={handleSignOutClick}
+              aria-label="Sign out"
+              title="Sign out"
+              className="h-9 w-9 rounded-xl bg-white border border-[#1A1B20]/[0.08] text-[#1A1B20] hover:bg-[#1D1E23] hover:text-white flex items-center justify-center shrink-0 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Viewport */}
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        {/* Mobile & Tablet Fixed Top Bar: compact app logo left, space, bare Bell + 3-dot menu right; turns solid dark ash smoothly on scroll */}
+        <header
+          className={`lg:hidden fixed top-0 inset-x-0 z-40 h-14 px-4 sm:px-6 flex items-center justify-between transition-colors duration-250 ease-out ${
+            isScrolled
+              ? 'bg-[#1D1E23] text-white shadow-[0_6px_18px_-6px_rgba(14,15,20,0.42)]'
+              : activeScreen === 'home'
+              ? 'bg-transparent text-white'
+              : 'bg-[#F6F7F9] text-[#1D1E23] border-b border-[#1A1B20]/[0.06]'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => onNavigate('home')}
+            aria-label="PrepVault home"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-start cursor-pointer transition-transform duration-150 active:scale-95"
+          >
+            <span
+              className={`h-8 w-8 rounded-[10px] flex items-center justify-center transition-colors duration-250 ${
+                activeScreen === 'home' || isScrolled
+                  ? 'bg-[#2B2E38] text-white'
+                  : 'bg-[#1D1E23] text-white'
+              }`}
+            >
+              <BrandLogo className="w-[18px] h-[18px]" />
+            </span>
+          </button>
+
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => onNavigate('notifications')}
+              aria-label={`Open notifications (${unreadCount} unread)`}
+              className={`relative h-10 w-10 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
+                activeScreen === 'home' || isScrolled
+                  ? 'text-white'
+                  : 'text-[#1D1E23]'
+              }`}
+            >
+              <span className="relative inline-flex items-center justify-center">
+                <Bell className="w-[21px] h-[21px]" strokeWidth={2} />
+                {unreadCount > 0 && (
+                  <span
+                    className={`absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold font-mono-tabular flex items-center justify-center ${
+                      activeScreen === 'home' || isScrolled
+                        ? 'bg-white text-[#1D1E23]'
+                        : 'bg-[#1D1E23] text-white'
+                    }`}
+                  >
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              aria-label="Open navigation menu"
+              aria-expanded={drawerOpen}
+              aria-controls="mobile-slide-drawer"
+              onClick={() => setDrawerOpen(true)}
+              className={`h-10 w-10 -mr-1.5 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
+                activeScreen === 'home' || isScrolled
+                  ? 'text-white'
+                  : 'text-[#1D1E23]'
+              }`}
+            >
+              <MoreVertical className="w-[21px] h-[21px]" strokeWidth={2} />
+            </button>
+          </div>
+        </header>
+
+        {/* Desktop 3-Zone Top Bar */}
+        <header className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30">
+          <span className="font-display text-lg font-bold tracking-tight text-[#1A1B20] whitespace-nowrap shrink-0">
+            PrepVault
+          </span>
+
+          <nav className="flex items-center gap-6 text-sm font-medium text-[#5A5E6B]">
+            <button
+              type="button"
+              onClick={() => onNavigate('home')}
+              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Past Questions
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('subscription')}
+              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Student Passes
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('school_admin')}
+              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              School Upload
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('super_admin')}
+              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Control Desk
+            </button>
+          </nav>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => onNavigate('notifications')}
+              aria-label={`Open notifications (${unreadCount} unread)`}
+              className={`relative min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center border transition-transform duration-150 active:scale-95 cursor-pointer ${
+                activeScreen === 'notifications'
+                  ? 'tactile-dark text-white border-transparent'
+                  : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              {unreadCount > 0 && (
+                <span
+                  className={`absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full text-[10px] font-bold font-mono-tabular flex items-center justify-center ${
+                    activeScreen === 'notifications'
+                      ? 'bg-white text-[#1D1E23]'
+                      : 'bg-[#1D1E23] text-white'
+                  }`}
+                >
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('subscription')}
+              className="tactile-dark text-white px-4 py-2 min-h-[40px] rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-transform duration-150 active:scale-95"
+            >
+              {activePlan.includesFullArchive ? activePlan.name : 'Unlock Full Pass'}
+            </button>
+
+            <button
+              ref={desktopTriggerRef}
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={accountMenuOpen}
+              aria-label="Open student account menu"
+              onClick={() => setAccountMenuOpen((prev) => !prev)}
+              className={`min-h-[40px] px-2.5 rounded-xl flex items-center gap-2 border transition-colors cursor-pointer ${
+                accountMenuOpen
+                  ? 'tactile-dark text-white border-transparent'
+                  : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
+              }`}
+            >
+              <User className="w-4 h-4 shrink-0" />
+              <span className="text-xs font-semibold max-w-[110px] truncate">
+                {student.fullName.split(' ')[0]}
+              </span>
+            </button>
+          </div>
+        </header>
+
+        {/* Desktop Student Account Popover */}
+        {accountMenuOpen && (
+          <div
+            ref={accountMenuRef}
+            role="menu"
+            aria-label="Student account menu"
+            className="hidden lg:block fixed top-[72px] right-8 z-50 w-72 rounded-2xl bg-white border border-[#1A1B20]/[0.09] shadow-[0_24px_48px_-12px_rgba(20,21,26,0.28)] p-4 space-y-3.5 page-enter"
+          >
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-full tactile-dark text-white text-sm font-bold flex items-center justify-center shrink-0">
+                {initials}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-[#1A1B20] truncate">
+                  {student.fullName}
+                </p>
+                <p className="text-xs font-mono-tabular text-[#686C78] truncate">
+                  {student.matricNumber}
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-[#F6F7F9] px-3 py-2.5 space-y-1 text-xs">
+              <p className="font-semibold text-[#1A1B20] truncate">
+                {student.department}
+              </p>
+              <p className="text-[#686C78] truncate">{student.faculty}</p>
+              <p className="text-[#686C78] truncate">{student.email}</p>
+            </div>
+
+            <TactileButton
+              type="button"
+              variant="dark"
+              size="md"
+              fullWidth
+              className="rounded-full"
+              icon={<LogOut className="w-4 h-4" />}
+              loading={isSigningOut}
+              disabled={isSigningOut}
+              onClick={handleSignOutClick}
+            >
+              Sign out
+            </TactileButton>
+          </div>
+        )}
+
+        {/* Mobile & Tablet Slide-Out Navigation Drawer (slides from right beside hamburger) */}
+        <div
+          aria-hidden={!drawerOpen}
+          className={`lg:hidden fixed inset-0 z-50 flex justify-end transition-opacity duration-200 ${
+            drawerOpen
+              ? 'opacity-100 pointer-events-auto'
+              : 'opacity-0 pointer-events-none'
+          }`}
+        >
+          {/* Dimmed Scrim */}
+          <div
+            onClick={() => setDrawerOpen(false)}
+            style={
+              isSwipingDrawer
+                ? {
+                    opacity: Math.max(
+                      0,
+                      1 - swipeOffsetX / (drawerPanelRef.current?.offsetWidth || 300)
+                    ),
+                  }
+                : undefined
+            }
+            className="absolute inset-0 bg-[#121318]/55 transition-opacity duration-150"
+          />
+
+          {/* Sliding Panel */}
+          <aside
+            ref={drawerPanelRef}
+            id="mobile-slide-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile navigation menu"
+            onTouchStart={handleDrawerTouchStart}
+            onTouchMove={handleDrawerTouchMove}
+            onTouchEnd={handleDrawerTouchEnd}
+            onTouchCancel={handleDrawerTouchEnd}
+            style={
+              isSwipingDrawer
+                ? { transform: `translate3d(${swipeOffsetX}px, 0, 0)` }
+                : undefined
+            }
+            className={`relative h-full w-[84vw] max-w-[320px] bg-white shadow-[-16px_0_48px_-12px_rgba(14,15,20,0.38)] flex flex-col justify-between overflow-y-auto ash-scroll touch-pan-y ${
+              isSwipingDrawer
+                ? 'transition-none'
+                : 'transition-transform duration-250 ease-[cubic-bezier(0.16,1,0.3,1)]'
+            } ${drawerOpen ? 'translate-x-0' : 'translate-x-full'}`}
+          >
+            <div className="p-5 space-y-5">
+              {/* Brand Header + Close Button */}
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNavigate('home');
+                    setDrawerOpen(false);
+                  }}
+                  className="flex items-center gap-3 text-left cursor-pointer min-w-0"
+                >
+                  <div className="h-10 w-10 rounded-2xl tactile-dark text-white flex items-center justify-center shrink-0">
+                    <BrandLogo className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="block font-display text-base font-bold tracking-tight text-[#1A1B20]">
+                      PrepVault
+                    </span>
+                    <span className="block text-xs text-[#686C78] truncate">
+                      University Exam Archive
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(false)}
+                  aria-label="Close navigation menu"
+                  className="min-h-[44px] min-w-[44px] rounded-2xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1A1B20] flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Student Account Card */}
+              <div className="rounded-2xl bg-[#F6F7F9] p-3.5 space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="h-11 w-11 rounded-full tactile-dark text-white text-sm font-bold flex items-center justify-center shrink-0">
+                    {initials}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-[#1A1B20] truncate">
+                      {student.fullName}
+                    </p>
+                    <p className="text-xs font-mono-tabular text-[#686C78] truncate">
+                      {student.matricNumber}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-[#1A1B20]/[0.06] space-y-0.5 text-xs">
+                  <p className="font-semibold text-[#1A1B20] truncate">
+                    {student.department}
+                  </p>
+                  <p className="text-[#686C78] truncate">{student.faculty}</p>
+                  <p className="text-[#686C78] truncate">{student.email}</p>
+                </div>
+              </div>
+
+              {/* Primary Navigation Links */}
+              <nav aria-label="Mobile drawer navigation" className="space-y-1">
+                {navItems.map((item) => {
+                  const isActive =
+                    activeScreen === item.id ||
+                    (activeScreen === 'reader' && item.id === 'home');
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        onNavigate(item.id);
+                        setDrawerOpen(false);
+                      }}
+                      className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-2xl flex items-center justify-between text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                        isActive
+                          ? 'tactile-dark text-white'
+                          : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
+                      }`}
+                    >
+                      <span className="flex items-center gap-3">
+                        {item.icon}
+                        <span>{item.label}</span>
+                      </span>
+                      {item.badge !== undefined && item.badge > 0 && (
+                        <span
+                          className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${
+                            isActive
+                              ? 'bg-white text-[#1D1E23]'
+                              : 'bg-[#1D1E23] text-white'
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            {/* Bottom Controls: Workspace Switcher, Plan Summary & Sign Out */}
+            <div className="p-5 pt-4 border-t border-[#1A1B20]/[0.07] space-y-3">
+              <CustomSelect
+                id="mobile-role-select"
+                label="Active Workspace View"
+                size="sm"
+                menuPlacement="top"
+                value={activeRole}
+                options={[
+                  { value: 'student', label: 'Student View' },
+                  { value: 'school_admin', label: 'School Admin View' },
+                  { value: 'super_admin', label: 'Super Admin View' },
+                ]}
+                onChange={(val) => {
+                  const role = val as UserRole;
+                  onRoleChange(role);
+                  if (role === 'school_admin') onNavigate('school_admin');
+                  else if (role === 'super_admin') onNavigate('super_admin');
+                  else onNavigate('home');
+                  setDrawerOpen(false);
+                }}
+              />
+
+              <button
+                type="button"
+                onClick={() => {
+                  onNavigate('subscription');
+                  setDrawerOpen(false);
+                }}
+                className="w-full text-left rounded-2xl bg-[#F6F7F9] p-3.5 hover:bg-[#ECEEF3] transition-colors cursor-pointer"
+              >
+                <p className="text-xs text-[#686C78]">Current Plan</p>
+                <p className="text-sm font-bold text-[#1A1B20] mt-0.5 truncate">
+                  {activePlan.name}
+                </p>
+                <p className="text-xs text-[#505460] mt-0.5">
+                  {activePlan.includesFullArchive
+                    ? 'Full Access Active'
+                    : 'Upgrade from ₦500'}
+                </p>
+              </button>
+
+              <TactileButton
+                type="button"
+                variant="dark"
+                size="md"
+                fullWidth
+                className="rounded-full min-h-[46px]"
+                icon={<LogOut className="w-4 h-4" />}
+                loading={isSigningOut}
+                disabled={isSigningOut}
+                onClick={handleSignOutClick}
+              >
+                Sign out
+              </TactileButton>
+            </div>
+          </aside>
+        </div>
+
+        {/* Scrollable Content */}
+        <main
+          className={`flex-1 w-full max-w-6xl mx-auto px-4 pb-24 sm:px-6 lg:px-8 lg:py-8 ${
+            activeScreen === 'home' ? 'pt-0' : 'pt-[68px] lg:pt-8'
+          }`}
+        >
+          {children}
+        </main>
+      </div>
+
+      {/* Mobile Bottom Tab Footer (<= 15% mobile height) */}
+      <nav
+        aria-label="Mobile bottom navigation"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#1A1B20]/[0.08] pb-safe"
+      >
+        <div className="grid grid-cols-5 items-center h-16 max-w-lg mx-auto px-2">
+          <button
+            type="button"
+            onClick={() => onNavigate('home')}
+            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+              activeScreen === 'home' || activeScreen === 'reader'
+                ? 'text-[#1D1E23] font-semibold'
+                : 'text-[#8C909E]'
+            }`}
+          >
+            <Home className="w-5 h-5" />
+            <span className="text-[10px] leading-none">Home</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNavigate('subscription')}
+            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+              activeScreen === 'subscription'
+                ? 'text-[#1D1E23] font-semibold'
+                : 'text-[#8C909E]'
+            }`}
+          >
+            <CreditCard className="w-5 h-5" />
+            <span className="text-[10px] leading-none">Passes</span>
+          </button>
+
+          {/* Raised Center Tactile Dark Ash Quick Action Button */}
+          <div className="flex items-center justify-center">
+            <button
+              type="button"
+              onClick={onQuickFind}
+              aria-label="Quick find past question"
+              className="-mt-5 h-12 w-12 rounded-full tactile-dark text-white flex items-center justify-center ring-4 ring-white transition-transform duration-150 active:scale-90 cursor-pointer"
+            >
+              <Search className="w-5 h-5" />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onNavigate('notifications')}
+            className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+              activeScreen === 'notifications'
+                ? 'text-[#1D1E23] font-semibold'
+                : 'text-[#8C909E]'
+            }`}
+          >
+            <div className="relative">
+              <Bell className="w-5 h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-[#1D1E23] text-white text-[9px] font-bold font-mono-tabular flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] leading-none">Alerts</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              onNavigate(activeScreen === 'school_admin' ? 'super_admin' : 'school_admin')
+            }
+            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+              activeScreen === 'school_admin' || activeScreen === 'super_admin'
+                ? 'text-[#1D1E23] font-semibold'
+                : 'text-[#8C909E]'
+            }`}
+          >
+            {activeScreen === 'super_admin' ? (
+              <ShieldCheck className="w-5 h-5" />
+            ) : (
+              <UploadCloud className="w-5 h-5" />
+            )}
+            <span className="text-[10px] leading-none">
+              {activeScreen === 'super_admin' ? 'Control' : 'Admin'}
+            </span>
+          </button>
+        </div>
+      </nav>
+    </div>
+  );
+};

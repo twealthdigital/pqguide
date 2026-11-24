@@ -1,0 +1,323 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    --surface-canvas: #F6F7F9;
+    --surface-card: #FFFFFF;
+    --surface-ash: #1D1E23;
+    --surface-ash-elevated: #272930;
+    --text-primary: #1A1B20;
+    --text-secondary: #686C78;
+    --border-hairline: rgba(26, 27, 32, 0.08);
+  }
+
+  *,
+  *::before,
+  *::after {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    background-color: var(--surface-canvas);
+    color: var(--text-primary);
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-mono-tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  button,
+  a,
+  [role="button"],
+  input,
+  select,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #1D1E23;
+    outline-offset: 2px;
+  }
+}
+
+/* Tactile skeuomorphic surface accents (lightweight, GPU-only) */
+.tactile-dark {
+  background: linear-gradient(180deg, #2A2C34 0%, #1B1C21 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 6px 16px -4px rgba(24, 25, 30, 0.28),
+    0 2px 4px -1px rgba(24, 25, 30, 0.16);
+}
+
+.tactile-dark:active {
+  background: linear-gradient(180deg, #1E2026 0%, #18191E 100%);
+  box-shadow:
+    inset 0 2px 4px rgba(0, 0, 0, 0.45),
+    0 2px 6px -2px rgba(24, 25, 30, 0.22);
+}
+
+.tactile-light {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F2F4F7 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(26, 27, 32, 0.06),
+    0 3px 10px -2px rgba(26, 27, 32, 0.08),
+    0 1px 2px rgba(26, 27, 32, 0.05);
+}
+
+.tactile-light:active {
+  background: linear-gradient(180deg, #F1F3F6 0%, #E9ECF1 100%);
+  box-shadow:
+    inset 0 2px 3px rgba(26, 27, 32, 0.08),
+    0 1px 2px rgba(26, 27, 32, 0.05);
+}
+
+.surface-elevated {
+  background-color: #FFFFFF;
+  box-shadow:
+    0 1px 2px rgba(26, 27, 32, 0.04),
+    0 8px 24px -8px rgba(26, 27, 32, 0.07);
+}
+
+/* Lightweight compositor-only shimmer for skeleton screens */
+@keyframes ashShimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+  background-color: #E8EAEE;
+}
+
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 100%
+  );
+  animation: ashShimmer 1.35s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.page-enter {
+  animation: pageEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes marqueeUpSlow {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, -50%, 0);
+  }
+}
+
+@keyframes marqueeDownSlow {
+  0% {
+    transform: translate3d(0, -50%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-marquee-up {
+  animation: marqueeUpSlow 26s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee-down {
+  animation: marqueeDownSlow 28s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee-up-long {
+  animation: marqueeUpSlow 74s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee-down-long {
+  animation: marqueeDownSlow 78s linear infinite;
+  will-change: transform;
+}
+
+@keyframes scanSweep {
+  0%, 100% {
+    transform: translate3d(0, 6px, 0);
+  }
+  50% {
+    transform: translate3d(0, 64px, 0);
+  }
+}
+
+.animate-scan-sweep {
+  animation: scanSweep 1.45s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes flyToDownload {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.85);
+  }
+  20% {
+    opacity: 1;
+    transform: translate3d(12px, -16px, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(110px, -155px, 0) scale(0.42);
+  }
+}
+
+.animate-fly-download {
+  animation: flyToDownload 1150ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes slideInPhoto {
+  0% {
+    opacity: 0;
+    transform: translate3d(-44px, 14px, 0) scale(0.88) rotate(-6deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1) rotate(-2deg);
+  }
+}
+
+.animate-slide-in-photo {
+  animation: slideInPhoto 620ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes caretBlink {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0;
+  }
+}
+
+.animate-caret-blink {
+  animation: caretBlink 820ms steps(1, end) infinite;
+}
+
+@keyframes aiBounceIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.5);
+  }
+  58% {
+    opacity: 1;
+    transform: translate3d(0, -6px, 0) scale(1.08);
+  }
+  80% {
+    transform: translate3d(0, 2px, 0) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.animate-ai-bounce {
+  animation: aiBounceIn 640ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer::after,
+  .page-enter,
+  .animate-marquee-up,
+  .animate-marquee-down,
+  .animate-marquee-up-long,
+  .animate-marquee-down-long,
+  .animate-scan-sweep,
+  .animate-fly-download,
+  .animate-slide-in-photo,
+  .animate-caret-blink,
+  .animate-ai-bounce {
+    animation: none !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+/* Custom minimal ash scrollbars across entire app */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #C2C6D2 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #C6CAD6;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #7D8292;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: #1D1E23;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+

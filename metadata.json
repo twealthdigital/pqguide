@@ -1,0 +1,6 @@
+{
+  "name": "PrepVault AAUA",
+  "description": "Fast, searchable university past questions archive starting with AAUA, featuring scan-to-PDF ingestion, text indexing, and flexible student passes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
