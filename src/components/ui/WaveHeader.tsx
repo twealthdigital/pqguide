@@ -115,7 +115,7 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
         {/* Mobile: full-bleed top banner with red-line asymmetric wave silhouette & zero horizontal shadow line.
             Tablet: matching asymmetric bottom silhouette with graceful right-edge curve.
             Desktop: floating sculpted rounded card. */}
-        <div className="relative -mx-4 sm:-mx-6 lg:mx-0 bg-[#1D1E23] px-5 pt-[calc(76px+env(safe-area-inset-top))] pb-[78px] sm:px-8 sm:pt-[calc(84px+env(safe-area-inset-top))] md:pb-[84px] lg:px-0 lg:pt-[116px] lg:pb-[84px] text-white shadow-none">
+        <div className="relative -mx-4 sm:-mx-6 lg:mx-0 bg-[#1D1E23] px-5 pt-[calc(76px+env(safe-area-inset-top))] pb-[78px] sm:px-8 sm:pt-[calc(84px+env(safe-area-inset-top))] md:pb-[84px] lg:px-0 lg:pt-[116px] lg:pb-[100px] text-white shadow-none">
           {/* Clipped background layer so anchored search dropdown can overflow cleanly below */}
           <div
             aria-hidden="true"
@@ -154,16 +154,36 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
               />
             </svg>
 
-            {/* Tablet + desktop bottom silhouette with right-edge downward curve */}
+            {/* Tablet-only bottom silhouette with right-edge downward curve */}
             <svg
               viewBox="0 0 1440 120"
               preserveAspectRatio="none"
-              className="hidden md:block absolute -bottom-px inset-x-0 z-10 w-full h-[84px]"
+              className="hidden md:block lg:hidden absolute -bottom-px inset-x-0 z-10 w-full h-[84px]"
             >
               <path
                 d="M0,0 C24,34 80,38 175,38 L1160,38 C1305,38 1398,62 1440,119 L1440,120 L0,120 Z"
                 fill="#F6F7F9"
               />
+            </svg>
+
+            {/* Desktop: flat bottom with the same right-edge swoop, plus a round bottom-left corner. */}
+            <svg
+              viewBox="0 0 1440 120"
+              preserveAspectRatio="none"
+              className="hidden lg:block absolute -bottom-px inset-x-0 z-10 w-full h-[84px]"
+            >
+              <path
+                d="M0,40 L1160,40 C1305,40 1398,64 1440,119 L1440,120 L0,120 Z"
+                fill="#F6F7F9"
+              />
+            </svg>
+            {/* Corner: fixed pixel size (never
+                stretched) so the curve stays a clean quarter circle next to the sidebar. */}
+            <svg
+              viewBox="0 0 112 168"
+              className="hidden lg:block absolute -bottom-px left-0 z-10 w-[112px] h-[168px]"
+            >
+              <path d="M0,0 A112,112 0 0 0 112,112 L112,168 L0,168 Z" fill="#F6F7F9" />
             </svg>
           </div>
 
