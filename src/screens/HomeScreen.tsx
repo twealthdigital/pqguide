@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   FileText,
   Lock,
-  ScanLine,
   Search,
   Sparkles,
 } from 'lucide-react';
@@ -402,11 +401,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             >
               <div className="flex items-center justify-between">
                 <div className="h-10 w-10 rounded-full bg-white text-[#1D1E23] flex items-center justify-center">
-                  {heroFeaturedDoc.sourceType === 'scanned_image' ? (
-                    <ScanLine className="w-5 h-5" />
-                  ) : (
-                    <FileText className="w-5 h-5" />
-                  )}
+                  <FileText className="w-5 h-5" />
                 </div>
                 <span className="font-mono-tabular text-xs text-[#A5AAB8]">
                   {heroFeaturedDoc.session}
@@ -521,8 +516,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               Past Question Papers
             </h2>
             <p className="text-xs text-[#686C78] font-mono-tabular mt-0.5">
-              {filteredDocs.length} paper{filteredDocs.length === 1 ? '' : 's'} indexed for{' '}
-              {activeSchool.code}
+              GNS papers only · {filteredDocs.length} indexed for {activeSchool.code}
               {appliedSession !== 'All' ? ` · ${appliedSession}` : ''}
               {appliedSemester !== 'All' ? ` · ${appliedSemester}` : ''}
               {appliedLevel !== 'All' ? ` · ${appliedLevel}` : ''}
@@ -575,63 +569,36 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                       }`}
                     >
                       {unlocked ? (
-                        doc.sourceType === 'scanned_image' ? (
-                          <ScanLine className="w-5 h-5" />
-                        ) : (
-                          <FileText className="w-5 h-5" />
-                        )
+                        <FileText className="w-5 h-5" />
                       ) : (
                         <Lock className="w-4 h-4" />
                       )}
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-baseline gap-2">
                         <span className="font-display text-sm sm:text-base font-bold text-[#1A1B20] whitespace-nowrap">
                           {doc.courseCode}
                         </span>
-                        <span className="text-sm font-medium text-[#3A3D47] truncate">
-                          {doc.courseTitle}
+                        <span className="text-xs font-mono-tabular text-[#686C78]">
+                          {doc.level}
                         </span>
                       </div>
-
-                      {/* Zero-pill clean metadata with typographic separators */}
-                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[#686C78]">
-                        <span className="font-mono-tabular">{doc.session}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{doc.semester}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="font-mono-tabular">{doc.level}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>
-                          {doc.sourceType === 'scanned_image'
-                            ? 'Scan-to-PDF'
-                            : 'Indexed Text'}
-                        </span>
-                        <span aria-hidden="true">·</span>
-                        <span
-                          className={
-                            doc.isFreePreview
-                              ? 'text-[#16A34A] font-semibold'
-                              : unlocked
-                              ? 'text-[#1A1B20] font-semibold'
-                              : 'text-[#686C78]'
-                          }
-                        >
-                          {doc.isFreePreview
-                            ? 'Free Preview'
-                            : unlocked
-                            ? 'Unlocked'
-                            : 'Pass Required'}
-                        </span>
-                      </div>
+                      <p className="mt-0.5 text-xs sm:text-sm text-[#3A3D47] line-clamp-2">
+                        {doc.courseTitle}
+                      </p>
                     </div>
                   </div>
 
-                  <span className="min-h-[36px] px-3.5 rounded-xl bg-[#F6F7F9] text-xs font-semibold text-[#1A1B20] flex items-center gap-1.5 shrink-0 whitespace-nowrap">
-                    {unlocked ? 'Open' : 'Unlock'}
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </span>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0 self-stretch justify-between">
+                    <span className="min-h-[36px] px-3.5 rounded-xl bg-[#F6F7F9] text-xs font-semibold text-[#1A1B20] flex items-center gap-1.5 whitespace-nowrap">
+                      {unlocked ? 'Open' : 'Unlock'}
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </span>
+                    <span className="text-[11px] font-mono-tabular text-[#686C78]">
+                      {doc.session}
+                    </span>
+                  </div>
                 </button>
               );
             })}
