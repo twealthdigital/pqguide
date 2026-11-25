@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Bell,
-  CreditCard,
+  Folder,
   Home,
   LogOut,
   MoreVertical,
@@ -226,7 +226,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     badge?: number;
   }> = [
     { id: 'home', label: 'Archive', icon: <Home className="w-5 h-5" /> },
-    { id: 'subscription', label: 'Passes', icon: <CreditCard className="w-5 h-5" /> },
+    { id: 'subscription', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
     {
       id: 'notifications',
       label: 'Alerts',
@@ -433,7 +433,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               onClick={() => onNavigate('subscription')}
               className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
-              Student Passes
+              Materials
             </button>
             <button
               type="button"
@@ -788,8 +788,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 : 'text-[#8C909E]'
             }`}
           >
-            <CreditCard className="w-5 h-5" />
-            <span className="text-[10px] leading-none">Passes</span>
+            <Folder className="w-5 h-5" />
+            <span className="text-[10px] leading-none">Materials</span>
           </button>
 
           {/* Raised Center Tactile Dark Ash Quick Action Button */}
