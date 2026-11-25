@@ -72,7 +72,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
 
       {/* Top Preview Controls */}
       <div className="relative z-10 w-full max-w-4xl flex items-center justify-between text-xs text-[#9FA4B2]">
-        <span className="font-mono-tabular">PrepVault · Archive</span>
+        <span className="font-mono-tabular">pqguide · Archive</span>
         <div className="flex items-center gap-4">
           <button
             type="button"
@@ -108,7 +108,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
         </div>
 
         <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-white">
-          PrepVault
+          pqguide
         </h1>
         <p className="mt-2.5 text-sm text-[#A5AAB8] max-w-xs leading-relaxed">
           University past questions indexed cleanly by session, semester, and course code.

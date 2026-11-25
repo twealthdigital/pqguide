@@ -615,7 +615,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </div>
 
           <p className="mt-3.5 font-display text-2xl lg:text-4xl font-extrabold tracking-tight text-white">
-            PrepVault
+            pqguide
           </p>
           <p className="mt-1 text-xs lg:text-sm text-[#A5AAB8] max-w-xs leading-relaxed">
             University past questions indexed by session, semester, faculty, and course code.

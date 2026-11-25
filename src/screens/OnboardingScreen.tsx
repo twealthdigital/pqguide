@@ -128,7 +128,7 @@ const WIDE_RIGHT_OUTER_LOOP = [
 const SLIDES: OnboardingSlide[] = [
   {
     id: 'discover',
-    title: 'Welcome to PrepVault',
+    title: 'Welcome to pqguide',
     subtitle:
       'Pick your school, academic session, and semester to pull up verified past questions in seconds.',
     ctaLabel: 'Next',

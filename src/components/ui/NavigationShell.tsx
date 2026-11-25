@@ -251,7 +251,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             </div>
             <div>
               <span className="block font-display text-base font-bold tracking-tight text-[#1A1B20]">
-                PrepVault
+                pqguide
               </span>
               <span className="block text-xs text-[#686C78]">University Exam Archive</span>
             </div>
@@ -374,7 +374,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('home')}
-            aria-label="PrepVault home"
+            aria-label="pqguide home"
             className="min-h-[40px] min-w-[40px] flex items-center justify-start cursor-pointer transition-transform duration-150 active:scale-95"
           >
             <span
@@ -435,7 +435,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         {/* Desktop 3-Zone Top Bar */}
         <header className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30">
           <span className="font-display text-lg font-bold tracking-tight text-[#1A1B20] whitespace-nowrap shrink-0">
-            PrepVault
+            pqguide
           </span>
 
           <nav className="flex items-center gap-6 text-sm font-medium text-[#5A5E6B]">
@@ -632,7 +632,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   </div>
                   <div className="min-w-0">
                     <span className="block font-display text-base font-bold tracking-tight text-[#1A1B20]">
-                      PrepVault
+                      pqguide
                     </span>
                     <span className="block text-xs text-[#686C78] truncate">
                       University Exam Archive

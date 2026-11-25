@@ -15,7 +15,7 @@ import {
   SEED_SESSIONS,
 } from '../data/seedCatalog';
 
-const STORAGE_KEY = 'prepvault_aaua_store_v1';
+const STORAGE_KEY = 'pqguide_aaua_store_v1';
 
 export interface AppStoreState {
   schools: School[];

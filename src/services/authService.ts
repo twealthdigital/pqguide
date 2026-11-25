@@ -1,9 +1,9 @@
 import type { StudentAccount } from '../core/types';
 
-const ACCOUNTS_KEY = 'prepvault_student_accounts_v1';
-const OTP_KEY = 'prepvault_student_otp_v1';
-const SESSION_KEY = 'prepvault_active_session_v1';
-const ONBOARDING_KEY = 'prepvault_onboarding_done_v1';
+const ACCOUNTS_KEY = 'pqguide_student_accounts_v1';
+const OTP_KEY = 'pqguide_student_otp_v1';
+const SESSION_KEY = 'pqguide_active_session_v1';
+const ONBOARDING_KEY = 'pqguide_onboarding_done_v1';
 
 export const AAUA_FACULTIES: Record<string, string[]> = {
   'Computing & Information Sciences': [
