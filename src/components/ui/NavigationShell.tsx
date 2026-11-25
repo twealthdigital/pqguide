@@ -26,6 +26,7 @@ import type {
 } from '../../core/types';
 import { CustomSelect } from './CustomSelect';
 import { BrandLockup } from './BrandLockup';
+import { useBackHandler } from '../../core/navGuard';
 import { BrandLogo } from './BrandLogo';
 import { TactileButton } from './TactileButton';
 
@@ -77,6 +78,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   });
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
   const [isSwipingDrawer, setIsSwipingDrawer] = useState(false);
+  useBackHandler(drawerOpen, () => setDrawerOpen(false));
+  useBackHandler(accountMenuOpen, () => setAccountMenuOpen(false));
 
   const desktopTriggerRef = useRef<HTMLButtonElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);

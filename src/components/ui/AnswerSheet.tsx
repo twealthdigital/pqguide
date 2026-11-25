@@ -1,3 +1,4 @@
+import { useBackHandler } from '../../core/navGuard';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
@@ -573,5 +574,7 @@ const AnswerDialog: React.FC<AnswerSheetProps> = ({
 
 export const AnswerSheet: React.FC<AnswerSheetProps> = (props) => {
   const isDesktop = useIsDesktop();
+  // The phone's Back button closes the answer first.
+  useBackHandler(props.open, props.onClose);
   return isDesktop ? <AnswerDialog {...props} /> : <MobileAnswerSheet {...props} />;
 };

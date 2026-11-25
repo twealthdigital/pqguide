@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useCallback, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppScreen, PastQuestionDoc, StudentAccount, StudyMaterial } from './core/types';
 import { useArchiveStore } from './hooks/useArchiveStore';
 import { archiveRepository } from './services/archiveRepository';
@@ -98,6 +98,8 @@ const entryOf = (n: NavState): NavEntry => ({
   materialId: n.materialId,
 });
 
+import { hasBackHandler, runTopBackHandler } from './core/navGuard';
+
 function AppContent() {
   const store = useArchiveStore();
   const [authenticatedStudent, setAuthenticatedStudent] = useState<StudentAccount | null>(() =>
@@ -114,6 +116,13 @@ function AppContent() {
   // while a paper or guide is open.
   const parentScreen: AppScreen = nav.stack[nav.stack.length - 1]?.screen ?? 'home';
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
+
+  // The latest nav, readable from handlers and from the phone's Back button.
+  const navRef = useRef<NavState>(nav);
+  navRef.current = nav;
+  // Where we are in the browser history, so in-app "Back" and the phone's Back agree.
+  const historyIdxRef = useRef(0);
+  const skipGuardRef = useRef(false);
 
   const unreadCount = useMemo(
     () => store.notifications.filter((n) => !n.isRead).length,
@@ -132,57 +141,118 @@ function AppContent() {
 
   const scrollTop = () => window.scrollTo({ top: 0, behavior: 'instant' });
 
-  // Tabs reset the trail. Alerts (opened from the bell) remembers where you were.
-  const handleNavigate = useCallback((screen: AppScreen) => {
-    setNav((prev) => {
-      if (prev.screen === screen) return prev;
-      const remember = screen === 'notifications' || screen === 'mock_exam';
-      return { ...prev, screen, stack: remember ? [...prev.stack, entryOf(prev)] : [] };
-    });
+  // Every move to a new screen adds a browser-history entry, so the phone's
+  // Back button / gesture walks back through the same screens.
+  const go = useCallback((next: NavState) => {
+    navRef.current = next;
+    setNav(next);
+    historyIdxRef.current += 1;
+    window.history.pushState({ nav: next, idx: historyIdxRef.current }, '');
     scrollTop();
   }, []);
+
+  useEffect(() => {
+    const existing = window.history.state as { idx?: number } | null;
+    historyIdxRef.current = typeof existing?.idx === 'number' ? existing.idx : 0;
+    window.history.replaceState({ nav: INITIAL_NAV, idx: historyIdxRef.current }, '');
+
+    const onPopState = (event: PopStateEvent) => {
+      const state = event.state as { nav?: NavState; idx?: number } | null;
+      const idx = typeof state?.idx === 'number' ? state.idx : 0;
+
+      // An open sheet / drawer / running exam takes the Back press first:
+      // stay on this screen and let it close (or ask to confirm).
+      if (skipGuardRef.current) {
+        skipGuardRef.current = false;
+      } else if (hasBackHandler()) {
+        historyIdxRef.current = idx + 1;
+        window.history.pushState({ nav: navRef.current, idx: historyIdxRef.current }, '');
+        runTopBackHandler();
+        return;
+      }
+
+      historyIdxRef.current = idx;
+      const next = state?.nav ?? INITIAL_NAV;
+      navRef.current = next;
+      setNav(next);
+      scrollTop();
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Tabs reset the trail. Alerts (opened from the bell) remembers where you were.
+  const handleNavigate = useCallback(
+    (screen: AppScreen) => {
+      const prev = navRef.current;
+      if (prev.screen === screen) return;
+      const remember = screen === 'notifications' || screen === 'mock_exam';
+      go({ ...prev, screen, stack: remember ? [...prev.stack, entryOf(prev)] : [] });
+    },
+    [go]
+  );
 
   // Back goes to exactly where the person came from (home if there is no trail).
   const handleBack = useCallback(() => {
-    setNav((prev) => {
-      const last = prev.stack[prev.stack.length - 1];
-      if (!last) return { ...INITIAL_NAV, docId: prev.docId, materialId: prev.materialId };
-      return { ...last, stack: prev.stack.slice(0, -1) };
-    });
+    if (historyIdxRef.current > 0) {
+      skipGuardRef.current = true;
+      window.setTimeout(() => {
+        skipGuardRef.current = false;
+      }, 600);
+      window.history.back();
+      return;
+    }
+    const prev = navRef.current;
+    const last = prev.stack[prev.stack.length - 1];
+    const next: NavState = last
+      ? { ...last, stack: prev.stack.slice(0, -1) }
+      : { ...INITIAL_NAV, docId: prev.docId, materialId: prev.materialId };
+    navRef.current = next;
+    setNav(next);
     scrollTop();
   }, []);
 
-  const handleOpenDocument = useCallback((doc: PastQuestionDoc) => {
-    archiveRepository.incrementView(doc.id);
-    archiveRepository.recordRecent(doc.id);
-    setNav((prev) => ({
-      screen: 'reader',
-      docId: doc.id,
-      materialId: prev.materialId,
-      stack: [...prev.stack, entryOf(prev)],
-    }));
-    scrollTop();
-  }, []);
+  const handleOpenDocument = useCallback(
+    (doc: PastQuestionDoc) => {
+      archiveRepository.incrementView(doc.id);
+      archiveRepository.recordRecent(doc.id);
+      const prev = navRef.current;
+      go({
+        screen: 'reader',
+        docId: doc.id,
+        materialId: prev.materialId,
+        stack: [...prev.stack, entryOf(prev)],
+      });
+    },
+    [go]
+  );
 
-  const handleOpenMaterial = useCallback((material: StudyMaterial) => {
-    setNav((prev) => ({
-      screen: 'material_reader',
-      docId: prev.docId,
-      materialId: material.id,
-      stack: [...prev.stack, entryOf(prev)],
-    }));
-    scrollTop();
-  }, []);
+  const handleOpenMaterial = useCallback(
+    (material: StudyMaterial) => {
+      const prev = navRef.current;
+      go({
+        screen: 'material_reader',
+        docId: prev.docId,
+        materialId: material.id,
+        stack: [...prev.stack, entryOf(prev)],
+      });
+    },
+    [go]
+  );
 
   const handleQuickFind = useCallback(() => {
-    setNav((prev) => ({ ...prev, screen: 'home', stack: [] }));
+    const prev = navRef.current;
+    if (prev.screen !== 'home') go({ ...prev, screen: 'home', stack: [] });
     setFocusSearchSignal((n) => n + 1);
-  }, []);
+  }, [go]);
 
   const handleSignOut = useCallback(() => {
     authService.clearActiveSession();
     setAuthenticatedStudent(null);
+    navRef.current = INITIAL_NAV;
     setNav(INITIAL_NAV);
+    window.history.replaceState({ nav: INITIAL_NAV, idx: historyIdxRef.current }, '');
   }, []);
 
   if (!hasCompletedOnboarding) {

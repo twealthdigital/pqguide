@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBackHandler } from '../core/navGuard';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -127,6 +128,12 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
   const [confirm, setConfirm] = useState<'finish' | 'exit' | null>(null);
   const [startState, setStartState] = useState<'idle' | 'starting' | 'started'>('idle');
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted'>('idle');
+
+  // The phone's Back button during an exam asks before leaving (press again to dismiss).
+  useBackHandler(phase === 'exam', () => {
+    if (submitState !== 'idle') return;
+    setConfirm((c) => (c === 'exit' ? null : 'exit'));
+  });
 
   const endAtRef = useRef(0);
   const startedAtRef = useRef(0);
