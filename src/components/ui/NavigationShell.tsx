@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Bell,
+  ChevronLeft,
   FileText,
   Folder,
   Headphones,
@@ -64,6 +65,13 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('pqguide:sidebar-collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
   const [isSwipingDrawer, setIsSwipingDrawer] = useState(false);
 
@@ -298,18 +306,71 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const onBanner = false;
 
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem('pqguide:sidebar-collapsed', next ? '1' : '0');
+      } catch {
+        /* storage unavailable: keep in memory only */
+      }
+      return next;
+    });
+  };
+  const sbEase = 'duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none';
+
   return (
     <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#1A1B20] flex flex-col lg:flex-row">
       {/* Desktop Left Sidebar */}
-      <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 bg-white border-r border-[#1A1B20]/[0.07] p-5 sticky top-0 h-screen justify-between">
+      <aside
+        data-collapsed={sidebarCollapsed}
+        className={`hidden lg:flex lg:flex-col lg:shrink-0 bg-white border-r border-[#1A1B20]/[0.07] p-5 sticky top-0 z-40 h-screen justify-between transition-[width] ${sbEase} ${
+          sidebarCollapsed ? 'lg:w-[84px]' : 'lg:w-64'
+        }`}
+      >
+        {/* Edge toggle: collapse / expand the side panel */}
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          aria-label={sidebarCollapsed ? 'Expand side panel' : 'Collapse side panel'}
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? 'Expand' : 'Collapse'}
+          className="absolute -right-3.5 top-[88px] z-50 h-7 w-7 rounded-full bg-white border border-[#1A1B20]/[0.1] text-[#1D1E23] shadow-[0_4px_12px_-4px_rgba(18,19,24,0.3)] flex items-center justify-center cursor-pointer hover:bg-[#1D1E23] hover:text-white active:scale-95 transition-colors duration-150"
+        >
+          <ChevronLeft
+            className={`w-4 h-4 transition-transform ${sbEase} ${sidebarCollapsed ? 'rotate-180' : ''}`}
+          />
+        </button>
+
         <div className="space-y-7">
           <button
             type="button"
             onClick={() => onNavigate('home')}
-            className="flex flex-col items-start gap-2 text-left cursor-pointer group"
+            aria-label="pqguide home"
+            className="block w-full text-left cursor-pointer group"
           >
-            <BrandLockup className="h-9 w-auto text-[#1A1B20]" />
-            <span className="block text-xs text-[#686C78]">University Exam Archive</span>
+            <span className="relative block h-11 w-full overflow-hidden">
+              <BrandLockup
+                className={`absolute left-0 top-1/2 h-9 w-auto -translate-y-1/2 origin-left text-[#1A1B20] transition-[opacity,transform] ${sbEase} ${
+                  sidebarCollapsed ? 'opacity-0 scale-75 pointer-events-none' : 'opacity-100 scale-100'
+                }`}
+              />
+              <span
+                aria-hidden="true"
+                className={`absolute left-0 top-1/2 h-11 w-11 -translate-y-1/2 rounded-[14px] bg-[#1D1E23] text-white flex items-center justify-center transition-[opacity,transform] ${sbEase} ${
+                  sidebarCollapsed ? 'opacity-100 scale-100' : 'opacity-0 scale-75 pointer-events-none'
+                }`}
+              >
+                <BrandLogo className="w-7" />
+              </span>
+            </span>
+            <span
+              className={`block overflow-hidden whitespace-nowrap text-xs text-[#686C78] transition-[max-height,opacity,margin] ${sbEase} ${
+                sidebarCollapsed ? 'max-h-0 opacity-0 mt-0' : 'max-h-6 opacity-100 mt-2'
+              }`}
+            >
+              University Exam Archive
+            </span>
           </button>
 
           <nav aria-label="Primary desktop navigation" className="space-y-1.5">
@@ -321,23 +382,27 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   key={item.id}
                   type="button"
                   onClick={() => onNavigate(item.id)}
-                  className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-2xl flex items-center justify-between text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                  title={sidebarCollapsed ? item.label : undefined}
+                  aria-label={item.label}
+                  className={`relative w-full min-h-[44px] px-3 py-2.5 rounded-2xl flex items-center text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
                     isActive
                       ? 'tactile-dark text-white'
                       : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
                   }`}
                 >
-                  <span className="flex items-center gap-3">
-                    {item.icon}
-                    <span>{item.label}</span>
+                  <span className="shrink-0">{item.icon}</span>
+                  <span
+                    className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                      sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-3'
+                    }`}
+                  >
+                    {item.label}
                   </span>
                   {item.badge !== undefined && item.badge > 0 && (
                     <span
-                      className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${
-                        isActive
-                          ? 'bg-white text-[#1D1E23]'
-                          : 'bg-[#1D1E23] text-white'
-                      }`}
+                      className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
+                        sidebarCollapsed ? 'opacity-0 w-0 px-0 overflow-hidden' : 'opacity-100'
+                      } ${isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'}`}
                     >
                       {item.badge}
                     </span>
@@ -350,6 +415,14 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
         {/* Workspace Switcher & Student Sign Out */}
         <div className="space-y-3 pt-4 border-t border-[#1A1B20]/[0.07]">
+          <div
+            className={`transition-[max-height,opacity] ${sbEase} ${
+              sidebarCollapsed
+                ? 'max-h-0 opacity-0 overflow-hidden pointer-events-none'
+                : 'max-h-28 opacity-100'
+            }`}
+            aria-hidden={sidebarCollapsed}
+          >
           <CustomSelect
             id="desktop-role-select"
             label="Active Workspace View"
@@ -369,13 +442,22 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               else onNavigate('home');
             }}
           />
+          </div>
 
-          <div className="rounded-2xl bg-[#F6F7F9] p-3 flex items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2.5 min-w-0">
+          <div
+            className={`rounded-2xl bg-[#F6F7F9] flex items-center justify-between gap-2.5 transition-[padding,background-color] ${sbEase} ${
+              sidebarCollapsed ? 'flex-col p-1 bg-transparent' : 'p-3'
+            }`}
+          >
+            <div className={`flex items-center min-w-0 ${sidebarCollapsed ? 'gap-0' : 'gap-2.5'}`}>
               <div className="h-9 w-9 rounded-full tactile-dark text-white text-xs font-bold flex items-center justify-center shrink-0">
                 {initials}
               </div>
-              <div className="min-w-0">
+              <div
+                className={`min-w-0 overflow-hidden transition-[max-width,opacity] ${sbEase} ${
+                  sidebarCollapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100'
+                }`}
+              >
                 <p className="text-xs font-bold text-[#1A1B20] truncate">
                   {student.fullName}
                 </p>
