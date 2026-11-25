@@ -87,14 +87,14 @@ export default function App() {
 
   const handleNavigate = useCallback((screen: AppScreen) => {
     setActiveScreen(screen);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
   const handleOpenDocument = useCallback((doc: PastQuestionDoc) => {
     archiveRepository.incrementView(doc.id);
     setSelectedDocId(doc.id);
     setActiveScreen('reader');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
   const handleQuickFind = useCallback(() => {
