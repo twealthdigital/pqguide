@@ -1,10 +1,13 @@
-import React, { useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { QuestionSolution } from '../../core/types';
 
 /**
- * Bottom sheet for a question's answer + explanation.
+ * Answer + explanation for a question: a bottom sheet on mobile/tablet and a
+ * centred dialog box on desktop (see AnswerDialog below).
+ *
+ * Mobile sheet:
  *
  * Built for speed: all movement is a single `translate3d` on one element,
  * written straight to the DOM while dragging (no React re-renders), and the
@@ -34,7 +37,7 @@ const DRAG_SLOP = 6;
 
 type DragMode = 'idle' | 'pending' | 'sheet' | 'scroll';
 
-export const AnswerSheet: React.FC<AnswerSheetProps> = ({
+const MobileAnswerSheet: React.FC<AnswerSheetProps> = ({
   open,
   number,
   question,
@@ -377,50 +380,198 @@ export const AnswerSheet: React.FC<AnswerSheetProps> = ({
             paddingBottom: 'calc(50vh + 28px)',
           }}
         >
-          <p className="font-serif text-[16px] leading-[1.7] text-[#1A1B20]">
-            {question}
-          </p>
-
-          {solution ? (
-            <>
-              <div className="mt-5 rounded-3xl bg-[#1D1E23] px-5 py-4 text-white">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#A5AAB8]">
-                  Answer
-                </p>
-                <p className="mt-1.5 whitespace-pre-line text-[15px] font-semibold leading-relaxed">
-                  {solution.answer}
-                </p>
-              </div>
-
-              <h3 className="mt-6 font-display text-sm font-bold text-[#1A1B20]">
-                How we got it
-              </h3>
-              <ol className="mt-3 space-y-3.5">
-                {solution.explanation.map((step, i) => (
-                  <li key={i} className="flex gap-3">
-                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EFF1F5] font-mono-tabular text-[11px] font-semibold text-[#1A1B20]">
-                      {i + 1}
-                    </span>
-                    <p className="min-w-0 flex-1 whitespace-pre-line text-sm leading-6 text-[#3A3D47]">
-                      {step}
-                    </p>
-                  </li>
-                ))}
-              </ol>
-            </>
-          ) : (
-            <div className="mt-5 rounded-3xl bg-[#F6F7F9] px-5 py-4">
-              <p className="text-sm font-semibold text-[#1A1B20]">
-                No answer yet
-              </p>
-              <p className="mt-1 text-sm leading-6 text-[#5A5E6B]">
-                The answer and explanation for this question have not been added.
-              </p>
-            </div>
-          )}
+          <AnswerBody question={question} solution={solution} />
         </div>
       </div>
     </div>,
     document.body
   );
+};
+
+/** Question text + answer + step-by-step explanation (shared by sheet and dialog). */
+const AnswerBody: React.FC<{ question: string; solution: QuestionSolution | null }> = ({
+  question,
+  solution,
+}) => (
+  <>
+    <p className="font-serif text-[16px] leading-[1.7] text-[#1A1B20]">
+      {question}
+    </p>
+
+    {solution ? (
+      <>
+        <div className="mt-5 rounded-3xl bg-[#1D1E23] px-5 py-4 text-white">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#A5AAB8]">
+            Answer
+          </p>
+          <p className="mt-1.5 whitespace-pre-line text-[15px] font-semibold leading-relaxed">
+            {solution.answer}
+          </p>
+        </div>
+
+        <h3 className="mt-6 font-display text-sm font-bold text-[#1A1B20]">
+          How we got it
+        </h3>
+        <ol className="mt-3 space-y-3.5">
+          {solution.explanation.map((step, i) => (
+            <li key={i} className="flex gap-3">
+              <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EFF1F5] font-mono-tabular text-[11px] font-semibold text-[#1A1B20]">
+                {i + 1}
+              </span>
+              <p className="min-w-0 flex-1 whitespace-pre-line text-sm leading-6 text-[#3A3D47]">
+                {step}
+              </p>
+            </li>
+          ))}
+        </ol>
+      </>
+    ) : (
+      <div className="mt-5 rounded-3xl bg-[#F6F7F9] px-5 py-4">
+        <p className="text-sm font-semibold text-[#1A1B20]">
+          No answer yet
+        </p>
+        <p className="mt-1 text-sm leading-6 text-[#5A5E6B]">
+          The answer and explanation for this question have not been added.
+        </p>
+      </div>
+    )}
+  </>
+);
+
+const DESKTOP_QUERY = '(min-width: 1024px)';
+
+const useIsDesktop = () => {
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_QUERY).matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(DESKTOP_QUERY);
+    const onChange = () => setIsDesktop(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
+};
+
+/** Desktop: a centred dialog box (fade + gentle scale) instead of a bottom sheet. */
+const AnswerDialog: React.FC<AnswerSheetProps> = ({
+  open,
+  number,
+  question,
+  solution,
+  onClose,
+  onExited,
+}) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusTo = useRef<HTMLElement | null>(null);
+  const [shown, setShown] = useState(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const onExitedRef = useRef(onExited);
+  onExitedRef.current = onExited;
+
+  // Enter / exit animation
+  useEffect(() => {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (open) {
+      returnFocusTo.current ??= document.activeElement as HTMLElement | null;
+      const raf = requestAnimationFrame(() => {
+        setShown(true);
+        dialogRef.current?.focus({ preventScroll: true });
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+    setShown(false);
+    const timer = window.setTimeout(
+      () => {
+        returnFocusTo.current?.focus?.({ preventScroll: true });
+        returnFocusTo.current = null;
+        onExitedRef.current();
+      },
+      reduce ? 0 : 220
+    );
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  // Page lock + inert background + Esc
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prev = {
+      htmlOverflow: html.style.overflow,
+      bodyOverflow: body.style.overflow,
+      bodyPad: body.style.paddingRight,
+    };
+    const scrollbar = window.innerWidth - html.clientWidth;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`;
+    const root = document.getElementById('root');
+    root?.setAttribute('inert', '');
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      html.style.overflow = prev.htmlOverflow;
+      body.style.overflow = prev.bodyOverflow;
+      body.style.paddingRight = prev.bodyPad;
+      root?.removeAttribute('inert');
+      window.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
+  const titleId = 'answer-dialog-title';
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+      <div
+        onClick={() => onClose()}
+        aria-hidden="true"
+        className={`absolute inset-0 bg-[#0E0F14]/55 transition-opacity duration-200 ease-out motion-reduce:transition-none ${
+          shown ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className={`relative flex w-full max-w-[600px] max-h-[min(80vh,720px)] flex-col rounded-[28px] bg-white outline-none shadow-[0_24px_60px_-16px_rgba(14,15,20,0.5)] transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+          shown ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'
+        }`}
+      >
+        <div className="shrink-0 flex items-center justify-between px-6 pt-5 pb-3">
+          <h2 id={titleId} className="font-display text-base font-bold text-[#1A1B20]">
+            Question {number}
+          </h2>
+          <button
+            type="button"
+            onClick={() => onClose()}
+            aria-label="Close answer"
+            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-[#F2F4F7] text-[#1A1B20] transition-colors duration-150 hover:bg-[#E6E9EF] active:scale-90"
+          >
+            <X className="h-[18px] w-[18px]" />
+          </button>
+        </div>
+
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-6 pb-6"
+          style={{ overscrollBehavior: 'contain' }}
+        >
+          <AnswerBody question={question} solution={solution} />
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+export const AnswerSheet: React.FC<AnswerSheetProps> = (props) => {
+  const isDesktop = useIsDesktop();
+  return isDesktop ? <AnswerDialog {...props} /> : <MobileAnswerSheet {...props} />;
 };
