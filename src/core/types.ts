@@ -33,6 +33,13 @@ export interface School {
   isPrimaryLaunch: boolean;
 }
 
+export interface QuestionSolution {
+  /** The short, final answer shown in the dark answer card. */
+  answer: string;
+  /** Step-by-step working, one entry per step (line breaks are preserved). */
+  explanation: string[];
+}
+
 export interface PastQuestionDoc {
   id: string;
   schoolId: string;
@@ -50,6 +57,8 @@ export interface PastQuestionDoc {
   scannedPagePreviewUrl?: string;
   extractedText: string;
   questions: string[];
+  /** Optional worked answers, index-aligned with `questions` (null = not added yet). */
+  solutions?: Array<QuestionSolution | null>;
   isFreePreview: boolean;
   uploadedBy: string;
   uploadedAt: string; // ISO string

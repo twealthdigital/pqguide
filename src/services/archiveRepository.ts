@@ -68,6 +68,12 @@ function loadState(): AppStoreState {
       const have = new Set(documents.map((d) => d.id));
       documents = [...documents, ...defaults.documents.filter((d) => !have.has(d.id))];
     }
+    // Stored copies of starter papers predate worked answers: fill them in.
+    const seedById = new Map(defaults.documents.map((d) => [d.id, d]));
+    documents = documents.map((d) => {
+      const seed = seedById.get(d.id);
+      return seed?.solutions && !d.solutions ? { ...d, solutions: seed.solutions } : d;
+    });
     const notifications = (
       Array.isArray(parsed.notifications) ? parsed.notifications : defaults.notifications
     ).filter((n) => !(n.targetDocId && RETIRED_SEED_DOC_IDS.has(n.targetDocId)));

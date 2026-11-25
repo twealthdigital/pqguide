@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  Lightbulb,
   Lock,
   Search,
 } from 'lucide-react';
@@ -9,6 +10,7 @@ import { hasArchiveAccess } from '../core/pricing';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { SurfaceCard } from '../components/ui/SurfaceCard';
 import { TactileButton } from '../components/ui/TactileButton';
+import { AnswerSheet } from '../components/ui/AnswerSheet';
 import bannerAshWaves from '../assets/images/banner_ash_waves.webp';
 
 interface PastQuestionReaderScreenProps {
@@ -17,6 +19,34 @@ interface PastQuestionReaderScreenProps {
   onNavigate: (screen: AppScreen) => void;
 }
 
+const stripLabel = (q: string) => q.replace(/^Q\d+\s*[:.)-]\s*/i, '');
+
+interface QuestionRowProps {
+  index: number;
+  text: string;
+  onOpen: (index: number) => void;
+}
+
+const QuestionRow: React.FC<QuestionRowProps> = React.memo(({ index, text, onOpen }) => (
+  <li className="flex gap-3">
+    <span className="w-6 shrink-0 pt-px font-serif text-[15px] font-bold tabular-nums text-[#1A1B20]">
+      {index + 1}.
+    </span>
+    <div className="min-w-0 flex-1">
+      <p className="font-serif text-[16px] leading-[1.7] text-[#1A1B20]">{text}</p>
+      <button
+        type="button"
+        onClick={() => onOpen(index)}
+        className="mt-3 inline-flex h-9 cursor-pointer items-center gap-2 rounded-full bg-[#1D1E23] px-4 text-xs font-semibold text-white transition-transform duration-150 active:scale-[0.96]"
+      >
+        <Lightbulb className="h-3.5 w-3.5" />
+        View answer
+      </button>
+    </div>
+  </li>
+));
+QuestionRow.displayName = 'QuestionRow';
+
 export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> = ({
   doc,
   onBack,
@@ -24,6 +54,22 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
 }) => {
   const store = useArchiveStore();
   const [inlineQuery, setInlineQuery] = useState('');
+  const [sheet, setSheet] = useState<{ index: number; open: boolean } | null>(null);
+
+  const openAnswer = useCallback((index: number) => {
+    setSheet({ index, open: true });
+  }, []);
+  const closeAnswer = useCallback(() => {
+    setSheet((cur) => (cur ? { ...cur, open: false } : cur));
+  }, []);
+  const exitedAnswer = useCallback(() => {
+    setSheet((cur) => (cur && !cur.open ? null : cur));
+  }, []);
+
+  const headerLines = useMemo(
+    () => (doc ? doc.extractedText.split('\n').map((l) => l.trim()).filter(Boolean) : []),
+    [doc]
+  );
 
   if (!doc) {
     return (
@@ -45,11 +91,10 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
 
   const isUnlocked = doc.isFreePreview || hasArchiveAccess(store.activeTierId);
 
-  const matchingQuestions = doc.questions.filter((q) =>
-    inlineQuery.trim()
-      ? q.toLowerCase().includes(inlineQuery.trim().toLowerCase())
-      : true
-  );
+  const needle = inlineQuery.trim().toLowerCase();
+  const matchingQuestions = doc.questions
+    .map((q, index) => ({ index, text: stripLabel(q) }))
+    .filter((q) => (needle ? q.text.toLowerCase().includes(needle) : true));
 
   return (
     <div className="space-y-5 page-enter">
@@ -144,29 +189,49 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
           </div>
         </SurfaceCard>
       ) : (
-        <SurfaceCard tone="white" className="p-5 sm:p-7 space-y-5">
-          {/* Exam Header Rubric */}
-          <div className="rounded-2xl bg-[#F6F7F9] p-4 text-xs sm:text-sm text-[#3A3D47] whitespace-pre-line leading-relaxed font-mono-tabular">
-            {doc.extractedText}
-          </div>
-
-          {/* Extracted Indexed Questions */}
-          <div className="divide-y divide-[#1A1B20]/[0.06]">
-            {matchingQuestions.length === 0 ? (
-              <p className="py-6 text-sm text-[#686C78] text-center">
-                No question lines match "{inlineQuery}".
+        <article className="rounded-3xl border border-[#1A1B20]/[0.08] bg-white px-5 py-6 shadow-[0_2px_12px_-6px_rgba(24,25,30,0.1)] sm:px-8 sm:py-8">
+          {/* Exam paper heading */}
+          {headerLines.length > 0 && (
+            <header className="border-b-[3px] border-double border-[#1A1B20]/50 pb-4 text-center font-serif text-[#1A1B20]">
+              <p className="text-balance text-[13px] font-bold leading-5 tracking-[0.04em]">
+                {headerLines[0]}
               </p>
-            ) : (
-              matchingQuestions.map((question, idx) => (
-                <div key={idx} className="py-4 first:pt-1 last:pb-1">
-                  <p className="text-sm sm:text-base text-[#1A1B20] leading-relaxed">
-                    {question}
-                  </p>
-                </div>
-              ))
-            )}
-          </div>
-        </SurfaceCard>
+              {headerLines.slice(1).map((line, i) => (
+                <p key={i} className="mt-0.5 text-balance text-[12px] leading-5 text-[#3A3D47]">
+                  {line}
+                </p>
+              ))}
+            </header>
+          )}
+
+          {matchingQuestions.length === 0 ? (
+            <p className="py-8 text-center text-sm text-[#686C78]">
+              No questions match "{inlineQuery}".
+            </p>
+          ) : (
+            <ol className="mt-6 space-y-7">
+              {matchingQuestions.map((q) => (
+                <QuestionRow
+                  key={q.index}
+                  index={q.index}
+                  text={q.text}
+                  onOpen={openAnswer}
+                />
+              ))}
+            </ol>
+          )}
+        </article>
+      )}
+
+      {sheet && (
+        <AnswerSheet
+          open={sheet.open}
+          number={sheet.index + 1}
+          question={stripLabel(doc.questions[sheet.index] ?? '')}
+          solution={doc.solutions?.[sheet.index] ?? null}
+          onClose={closeAnswer}
+          onExited={exitedAnswer}
+        />
       )}
     </div>
   );
