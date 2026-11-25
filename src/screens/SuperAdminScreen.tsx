@@ -9,7 +9,6 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import { formatNaira, getPlanById } from '../core/pricing';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { archiveRepository } from '../services/archiveRepository';
 import { CustomSelect, SurfaceCard, TactileButton } from '../components/ui';
@@ -28,7 +27,6 @@ export const SuperAdminScreen: React.FC = () => {
     const typedCount = totalDocs - scannedCount;
     const totalReads = store.documents.reduce((sum, d) => sum + d.viewsCount, 0);
     const activeSchools = store.schools.filter((s) => s.isActive).length;
-    const paidAccounts = store.accounts.filter((a) => a.tierId !== 'free').length;
 
     return {
       totalDocs,
@@ -36,7 +34,6 @@ export const SuperAdminScreen: React.FC = () => {
       typedCount,
       totalReads,
       activeSchools,
-      paidAccounts,
     };
   }, [store.documents, store.schools, store.accounts]);
 
@@ -129,9 +126,7 @@ export const SuperAdminScreen: React.FC = () => {
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
             {store.accounts.length}
           </p>
-          <p className="text-xs text-[#686C78] mt-1 font-mono-tabular">
-            {analytics.paidAccounts} paid pass holders
-          </p>
+          <p className="text-xs text-[#686C78] mt-1">Registered students and admins</p>
         </SurfaceCard>
 
         <SurfaceCard tone="white" className="p-4 sm:p-5">
@@ -155,7 +150,7 @@ export const SuperAdminScreen: React.FC = () => {
                 Account & Access Control
               </h2>
               <p className="text-xs text-[#686C78]">
-                Manage student & school admin accounts and active subscription tiers
+                Manage student & school admin accounts
               </p>
             </div>
             <ShieldCheck className="w-5 h-5 text-[#1D1E23]" />
@@ -163,7 +158,6 @@ export const SuperAdminScreen: React.FC = () => {
 
           <div className="divide-y divide-[#1A1B20]/[0.06]">
             {store.accounts.map((acc) => {
-              const plan = getPlanById(acc.tierId);
               return (
                 <div
                   key={acc.id}
@@ -174,10 +168,7 @@ export const SuperAdminScreen: React.FC = () => {
                       {acc.fullName}
                     </p>
                     <p className="text-xs text-[#686C78] mt-0.5">
-                      {acc.email} · {acc.schoolCode} ·{' '}
-                      <span className="font-mono-tabular">
-                        {formatNaira(plan.priceNaira)}
-                      </span>
+                      {acc.email} · {acc.schoolCode}
                     </p>
                   </div>
 
@@ -311,7 +302,7 @@ export const SuperAdminScreen: React.FC = () => {
               Recent Uploads Across Schools
             </h2>
             <p className="text-xs text-[#686C78]">
-              Control free-tier previews and remove unverified documents
+              Remove unverified documents
             </p>
           </div>
           <span className="font-mono-tabular text-xs font-semibold text-[#686C78]">
@@ -345,17 +336,6 @@ export const SuperAdminScreen: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => archiveRepository.toggleDocumentFreePreview(doc.id)}
-                  className={`min-h-[36px] px-3 rounded-xl text-xs font-semibold cursor-pointer ${
-                    doc.isFreePreview
-                      ? 'bg-[#DCFCE7] text-[#15803D]'
-                      : 'bg-[#F6F7F9] text-[#505460]'
-                  }`}
-                >
-                  {doc.isFreePreview ? 'Free Preview' : 'Paid Only'}
-                </button>
                 <button
                   type="button"
                   aria-label={`Remove ${doc.courseCode}`}

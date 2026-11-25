@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useCallback, useMemo, useState } from 'react';
-import type { AppScreen, PastQuestionDoc, StudentAccount } from './core/types';
+import type { AppScreen, PastQuestionDoc, StudentAccount, StudyMaterial } from './core/types';
 import { useArchiveStore } from './hooks/useArchiveStore';
 import { archiveRepository } from './services/archiveRepository';
 import { authService } from './services/authService';
@@ -7,6 +7,7 @@ import { NavigationShell } from './components/ui/NavigationShell';
 import { HomeScreenSkeleton } from './components/ui/Skeleton';
 import { LoadingScreen } from './screens/LoadingScreen';
 import { HomeScreen } from './screens/HomeScreen';
+import { STUDY_MATERIALS } from './data/materials';
 
 // Onboarding and auth are only needed by signed-out users, so they stay out of
 // the main bundle that returning (signed-in) users download.
@@ -34,17 +35,20 @@ const PastQuestionReaderScreen = lazy(() =>
   }))
 );
 
+const MaterialsScreen = lazy(() =>
+  import('./screens/MaterialsScreen').then((m) => ({ default: m.MaterialsScreen }))
+);
+
+const MaterialReaderScreen = lazy(() =>
+  import('./screens/MaterialReaderScreen').then((m) => ({ default: m.MaterialReaderScreen }))
+);
+
 const NotificationsScreen = lazy(() =>
   import('./screens/NotificationsScreen').then((m) => ({
     default: m.NotificationsScreen,
   }))
 );
 
-const SubscriptionScreen = lazy(() =>
-  import('./screens/SubscriptionScreen').then((m) => ({
-    default: m.SubscriptionScreen,
-  }))
-);
 
 const SchoolAdminScreen = lazy(() =>
   import('./screens/SchoolAdminScreen').then((m) => ({
@@ -69,6 +73,7 @@ export default function App() {
   );
   const [activeScreen, setActiveScreen] = useState<AppScreen>('home');
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
 
   const unreadCount = useMemo(
@@ -79,6 +84,11 @@ export default function App() {
   const selectedDoc = useMemo(
     () => store.documents.find((d) => d.id === selectedDocId) ?? null,
     [store.documents, selectedDocId]
+  );
+
+  const selectedMaterial = useMemo(
+    () => STUDY_MATERIALS.find((m) => m.id === selectedMaterialId) ?? null,
+    [selectedMaterialId]
   );
 
   const handleBootComplete = useCallback(() => {
@@ -94,6 +104,12 @@ export default function App() {
     archiveRepository.incrementView(doc.id);
     setSelectedDocId(doc.id);
     setActiveScreen('reader');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+
+  const handleOpenMaterial = useCallback((material: StudyMaterial) => {
+    setSelectedMaterialId(material.id);
+    setActiveScreen('material_reader');
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
@@ -149,7 +165,6 @@ export default function App() {
       onNavigate={handleNavigate}
       onQuickFind={handleQuickFind}
       unreadCount={unreadCount}
-      activeTierId={store.activeTierId}
       activeRole={store.activeRole}
       onRoleChange={(role) => archiveRepository.setActiveRole(role)}
       student={authenticatedStudent}
@@ -158,7 +173,6 @@ export default function App() {
       <Suspense fallback={<HomeScreenSkeleton />}>
         {activeScreen === 'home' && (
           <HomeScreen
-            onNavigate={handleNavigate}
             onOpenDocument={handleOpenDocument}
             focusSearchSignal={focusSearchSignal}
           />
@@ -168,7 +182,6 @@ export default function App() {
           <PastQuestionReaderScreen
             doc={selectedDoc}
             onBack={() => handleNavigate('home')}
-            onNavigate={handleNavigate}
           />
         )}
 
@@ -179,7 +192,16 @@ export default function App() {
           />
         )}
 
-        {activeScreen === 'subscription' && <SubscriptionScreen />}
+        {activeScreen === 'materials' && (
+          <MaterialsScreen onOpenMaterial={handleOpenMaterial} />
+        )}
+
+        {activeScreen === 'material_reader' && (
+          <MaterialReaderScreen
+            material={selectedMaterial}
+            onBack={() => handleNavigate('materials')}
+          />
+        )}
 
         {activeScreen === 'school_admin' && <SchoolAdminScreen />}
 

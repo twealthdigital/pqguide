@@ -3,12 +3,10 @@ import {
   ArrowRight,
   CheckCircle2,
   FileText,
-  Lock,
   Search,
   Sparkles,
 } from 'lucide-react';
-import type { AppScreen, PastQuestionDoc, SemesterType } from '../core/types';
-import { hasArchiveAccess } from '../core/pricing';
+import type { PastQuestionDoc, SemesterType } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { archiveRepository } from '../services/archiveRepository';
 import {
@@ -21,7 +19,6 @@ import {
 import type { SearchActionPhase } from '../components/ui/WaveHeader';
 
 interface HomeScreenProps {
-  onNavigate: (screen: AppScreen) => void;
   onOpenDocument: (doc: PastQuestionDoc) => void;
   focusSearchSignal: number;
 }
@@ -34,7 +31,6 @@ const SEMESTERS: Array<SemesterType | 'All'> = [
 ];
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
-  onNavigate,
   onOpenDocument,
   focusSearchSignal,
 }) => {
@@ -134,7 +130,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     appliedQuery,
   ]);
 
-  const userHasFullAccess = hasArchiveAccess(store.activeTierId);
 
   const handleSearchInputChange = (nextValue: string) => {
     clearTimers();
@@ -419,9 +414,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
               <div className="mt-4 flex items-center justify-between">
                 <span className="text-xs text-[#A5AAB8]">
-                  {heroFeaturedDoc.isFreePreview || userHasFullAccess
-                    ? 'Ready to read'
-                    : 'Pass required'}
+                  Ready to read
                 </span>
                 <span className="h-9 w-9 rounded-full bg-white text-[#1D1E23] flex items-center justify-center shadow-sm">
                   <ArrowRight className="w-4 h-4" />
@@ -488,22 +481,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <li className="flex items-start gap-2">
                   <Sparkles className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
                   <span>
-                    Read free previews or unlock full semester access from ₦500.
+                    Open a paper, then tap View answer under any question.
                   </span>
                 </li>
               </ol>
             </div>
 
-            <div className="mt-4">
-              <TactileButton
-                variant={userHasFullAccess ? 'light' : 'dark'}
-                size="sm"
-                fullWidth
-                onClick={() => onNavigate('subscription')}
-              >
-                {userHasFullAccess ? 'View Active Pass' : 'Unlock Full Archive'}
-              </TactileButton>
-            </div>
           </SurfaceCard>
         </div>
       </section>
@@ -552,7 +535,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         ) : (
           <div className="space-y-3">
             {filteredDocs.map((doc) => {
-              const unlocked = doc.isFreePreview || userHasFullAccess;
               return (
                 <button
                   key={doc.id}
@@ -562,17 +544,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 >
                   <div className="flex items-center gap-3.5 min-w-0 flex-1">
                     <div
-                      className={`h-11 w-11 rounded-xl flex items-center justify-center shrink-0 ${
-                        unlocked
-                          ? 'bg-[#1D1E23] text-white'
-                          : 'bg-[#EFF1F5] text-[#686C78]'
-                      }`}
+                      className="h-11 w-11 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center shrink-0"
                     >
-                      {unlocked ? (
-                        <FileText className="w-5 h-5" />
-                      ) : (
-                        <Lock className="w-4 h-4" />
-                      )}
+                      <FileText className="w-5 h-5" />
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -592,7 +566,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
                   <div className="flex flex-col items-end gap-1.5 shrink-0 self-stretch justify-between">
                     <span className="min-h-[36px] px-3.5 rounded-xl bg-[#F6F7F9] text-xs font-semibold text-[#1A1B20] flex items-center gap-1.5 whitespace-nowrap">
-                      {unlocked ? 'Open' : 'Unlock'}
+                      Open
                       <ArrowRight className="w-3.5 h-3.5" />
                     </span>
                     <span className="text-[11px] font-mono-tabular text-[#686C78]">

@@ -4,7 +4,6 @@ import type {
   ManagedAccount,
   PastQuestionDoc,
   School,
-  SubscriptionTierId,
   UserRole,
 } from '../core/types';
 import {
@@ -23,7 +22,6 @@ export interface AppStoreState {
   documents: PastQuestionDoc[];
   notifications: AppNotification[];
   accounts: ManagedAccount[];
-  activeTierId: SubscriptionTierId;
   activeRole: UserRole;
   selectedSchoolId: string;
 }
@@ -35,7 +33,6 @@ function getDefaultState(): AppStoreState {
     documents: SEED_PAST_QUESTIONS,
     notifications: SEED_NOTIFICATIONS,
     accounts: SEED_ACCOUNTS,
-    activeTierId: 'free',
     activeRole: 'student',
     selectedSchoolId: 'sch-aaua',
   };
@@ -74,16 +71,20 @@ function loadState(): AppStoreState {
       const seed = seedById.get(d.id);
       return seed?.solutions && !d.solutions ? { ...d, solutions: seed.solutions } : d;
     });
+    const seedNotifById = new Map(defaults.notifications.map((n) => [n.id, n]));
     const notifications = (
       Array.isArray(parsed.notifications) ? parsed.notifications : defaults.notifications
-    ).filter((n) => !(n.targetDocId && RETIRED_SEED_DOC_IDS.has(n.targetDocId)));
+    )
+      .filter((n) => !(n.targetDocId && RETIRED_SEED_DOC_IDS.has(n.targetDocId)))
+      // Billing notices were retired with the paid passes: swap in the current seed copy.
+      .map((n) => ((n.category as string) === 'billing' ? seedNotifById.get(n.id) ?? n : n))
+      .filter((n) => (n.category as string) !== 'billing');
     return {
       schools: Array.isArray(parsed.schools) && parsed.schools.length > 0 ? parsed.schools : defaults.schools,
       sessions: Array.isArray(parsed.sessions) && parsed.sessions.length > 0 ? parsed.sessions : defaults.sessions,
       documents,
       notifications,
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : defaults.accounts,
-      activeTierId: parsed.activeTierId ?? defaults.activeTierId,
       activeRole: parsed.activeRole ?? defaults.activeRole,
       selectedSchoolId: parsed.selectedSchoolId ?? defaults.selectedSchoolId,
     };
@@ -119,27 +120,6 @@ class ArchiveRepository {
     this.state = updater(this.state);
     saveState(this.state);
     this.listeners.forEach((l) => l());
-  }
-
-  setActiveTier(tierId: SubscriptionTierId): void {
-    this.update((prev) => ({
-      ...prev,
-      activeTierId: tierId,
-      notifications: [
-        {
-          id: `notif-${Date.now()}`,
-          title: tierId === 'free' ? 'Switched to Free Starter' : 'Subscription Pass Activated',
-          message:
-            tierId === 'free'
-              ? 'You are browsing on Free Starter preview mode.'
-              : `Your ${tierId.replace('_', ' ₦')} access pass is now active across all unlocked past questions.`,
-          category: 'billing',
-          createdAt: new Date().toISOString(),
-          isRead: false,
-        },
-        ...prev.notifications,
-      ],
-    }));
   }
 
   setActiveRole(role: UserRole): void {
@@ -208,15 +188,6 @@ class ArchiveRepository {
     this.update((prev) => ({
       ...prev,
       documents: prev.documents.filter((doc) => doc.id !== docId),
-    }));
-  }
-
-  toggleDocumentFreePreview(docId: string): void {
-    this.update((prev) => ({
-      ...prev,
-      documents: prev.documents.map((doc) =>
-        doc.id === docId ? { ...doc, isFreePreview: !doc.isFreePreview } : doc
-      ),
     }));
   }
 

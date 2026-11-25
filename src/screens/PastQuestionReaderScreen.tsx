@@ -2,12 +2,9 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Lightbulb,
-  Lock,
   Search,
 } from 'lucide-react';
-import type { AppScreen, PastQuestionDoc } from '../core/types';
-import { hasArchiveAccess } from '../core/pricing';
-import { useArchiveStore } from '../hooks/useArchiveStore';
+import type { PastQuestionDoc } from '../core/types';
 import { SurfaceCard } from '../components/ui/SurfaceCard';
 import { TactileButton } from '../components/ui/TactileButton';
 import { AnswerSheet } from '../components/ui/AnswerSheet';
@@ -16,7 +13,6 @@ import bannerAshWaves from '../assets/images/banner_ash_waves.webp';
 interface PastQuestionReaderScreenProps {
   doc: PastQuestionDoc | null;
   onBack: () => void;
-  onNavigate: (screen: AppScreen) => void;
 }
 
 const stripLabel = (q: string) => q.replace(/^Q\d+\s*[:.)-]\s*/i, '');
@@ -50,9 +46,7 @@ QuestionRow.displayName = 'QuestionRow';
 export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> = ({
   doc,
   onBack,
-  onNavigate,
 }) => {
-  const store = useArchiveStore();
   const [inlineQuery, setInlineQuery] = useState('');
   const [sheet, setSheet] = useState<{ index: number; open: boolean } | null>(null);
 
@@ -89,7 +83,6 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
     );
   }
 
-  const isUnlocked = doc.isFreePreview || hasArchiveAccess(store.activeTierId);
 
   const needle = inlineQuery.trim().toLowerCase();
   const matchingQuestions = doc.questions
@@ -134,61 +127,19 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
             {doc.session} · {doc.level}
           </p>
 
-          {isUnlocked && (
-            <div className="mt-3.5 flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-[#1A1B20]">
-              <Search className="w-4 h-4 text-[#686C78] shrink-0" />
-              <input
-                type="search"
-                value={inlineQuery}
-                onChange={(e) => setInlineQuery(e.target.value)}
-                placeholder={`Search inside ${doc.courseCode}...`}
-                className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
-              />
-            </div>
-          )}
+          <div className="mt-3.5 flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-[#1A1B20]">
+            <Search className="w-4 h-4 text-[#686C78] shrink-0" />
+            <input
+              type="search"
+              value={inlineQuery}
+              onChange={(e) => setInlineQuery(e.target.value)}
+              placeholder={`Search inside ${doc.courseCode}...`}
+              className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Paywall Gate when locked */}
-      {!isUnlocked ? (
-        <SurfaceCard tone="white" className="p-6 sm:p-8 text-center">
-          <div className="h-12 w-12 rounded-2xl bg-[#EFF1F5] text-[#1D1E23] flex items-center justify-center mx-auto mb-4">
-            <Lock className="w-5 h-5" />
-          </div>
-          <h2 className="font-display text-xl font-bold text-[#1A1B20]">
-            Unlock Full {doc.schoolCode} Past Questions
-          </h2>
-          <p className="text-sm text-[#5A5E6B] mt-2 max-w-md mx-auto leading-relaxed">
-            You are currently on the Free Starter tier. Activate a Student Pass starting at{' '}
-            <strong className="font-mono-tabular text-[#1A1B20]">₦500/month</strong> or{' '}
-            <strong className="font-mono-tabular text-[#1A1B20]">₦2,000/semester</strong> to
-            read {doc.courseCode} and every indexed paper.
-          </p>
-
-          {/* Teaser Snippet */}
-          <div className="mt-6 rounded-2xl bg-[#F6F7F9] p-4 text-left max-w-xl mx-auto border border-[#1A1B20]/[0.06]">
-            <p className="text-xs font-semibold text-[#686C78] mb-1.5">
-              First Line Preview
-            </p>
-            <p className="text-sm text-[#1A1B20] line-clamp-2">
-              {doc.questions[0] ?? doc.extractedText}
-            </p>
-          </div>
-
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <TactileButton
-              variant="dark"
-              size="lg"
-              onClick={() => onNavigate('subscription')}
-            >
-              Choose a Student Pass
-            </TactileButton>
-            <TactileButton variant="light" size="lg" onClick={onBack}>
-              Browse Free Previews
-            </TactileButton>
-          </div>
-        </SurfaceCard>
-      ) : (
         <article className="rounded-3xl border border-[#1A1B20]/[0.08] bg-white px-5 py-6 shadow-[0_2px_12px_-6px_rgba(24,25,30,0.1)] sm:px-8 sm:py-8">
           {/* Exam paper heading */}
           {headerLines.length > 0 && (
@@ -221,7 +172,6 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
             </ol>
           )}
         </article>
-      )}
 
       {sheet && (
         <AnswerSheet

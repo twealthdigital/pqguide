@@ -14,10 +14,8 @@ import {
 import type {
   AppScreen,
   StudentAccount,
-  SubscriptionTierId,
   UserRole,
 } from '../../core/types';
-import { getPlanById } from '../../core/pricing';
 import { CustomSelect } from './CustomSelect';
 import { BrandLockup } from './BrandLockup';
 import { BrandLogo } from './BrandLogo';
@@ -28,7 +26,6 @@ interface NavigationShellProps {
   onNavigate: (screen: AppScreen) => void;
   onQuickFind: () => void;
   unreadCount: number;
-  activeTierId: SubscriptionTierId;
   activeRole: UserRole;
   onRoleChange: (role: UserRole) => void;
   student: StudentAccount;
@@ -48,14 +45,12 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   onNavigate,
   onQuickFind,
   unreadCount,
-  activeTierId,
   activeRole,
   onRoleChange,
   student,
   onSignOut,
   children,
 }) => {
-  const activePlan = getPlanById(activeTierId);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -226,7 +221,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     badge?: number;
   }> = [
     { id: 'home', label: 'Archive', icon: <Home className="w-5 h-5" /> },
-    { id: 'subscription', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
+    { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
     {
       id: 'notifications',
       label: 'Alerts',
@@ -288,7 +283,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </nav>
         </div>
 
-        {/* Workspace Switcher, Plan Summary & Student Sign Out */}
+        {/* Workspace Switcher & Student Sign Out */}
         <div className="space-y-3 pt-4 border-t border-[#1A1B20]/[0.07]">
           <CustomSelect
             id="desktop-role-select"
@@ -309,20 +304,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               else onNavigate('home');
             }}
           />
-
-          <button
-            type="button"
-            onClick={() => onNavigate('subscription')}
-            className="w-full text-left rounded-2xl bg-[#F6F7F9] p-3.5 hover:bg-[#ECEEF3] transition-colors cursor-pointer"
-          >
-            <p className="text-xs text-[#686C78]">Current Plan</p>
-            <p className="text-sm font-bold text-[#1A1B20] mt-0.5 truncate">
-              {activePlan.name}
-            </p>
-            <p className="text-xs text-[#505460] mt-0.5">
-              {activePlan.includesFullArchive ? 'Full Access Active' : 'Upgrade from ₦500'}
-            </p>
-          </button>
 
           <div className="rounded-2xl bg-[#F6F7F9] p-3 flex items-center justify-between gap-2.5">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -430,7 +411,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => onNavigate('subscription')}
+              onClick={() => onNavigate('materials')}
               className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Materials
@@ -474,14 +455,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onNavigate('subscription')}
-              className="tactile-dark text-white px-4 py-2 min-h-[40px] rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-transform duration-150 active:scale-95"
-            >
-              {activePlan.includesFullArchive ? activePlan.name : 'Unlock Full Pass'}
             </button>
 
             <button
@@ -691,7 +664,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               </nav>
             </div>
 
-            {/* Bottom Controls: Workspace Switcher, Plan Summary & Sign Out */}
+            {/* Bottom Controls: Workspace Switcher & Sign Out */}
             <div className="p-5 pt-4 border-t border-[#1A1B20]/[0.07] space-y-3">
               <CustomSelect
                 id="mobile-role-select"
@@ -713,25 +686,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   setDrawerOpen(false);
                 }}
               />
-
-              <button
-                type="button"
-                onClick={() => {
-                  onNavigate('subscription');
-                  setDrawerOpen(false);
-                }}
-                className="w-full text-left rounded-2xl bg-[#F6F7F9] p-3.5 hover:bg-[#ECEEF3] transition-colors cursor-pointer"
-              >
-                <p className="text-xs text-[#686C78]">Current Plan</p>
-                <p className="text-sm font-bold text-[#1A1B20] mt-0.5 truncate">
-                  {activePlan.name}
-                </p>
-                <p className="text-xs text-[#505460] mt-0.5">
-                  {activePlan.includesFullArchive
-                    ? 'Full Access Active'
-                    : 'Upgrade from ₦500'}
-                </p>
-              </button>
 
               <TactileButton
                 type="button"
@@ -781,9 +735,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
           <button
             type="button"
-            onClick={() => onNavigate('subscription')}
+            onClick={() => onNavigate('materials')}
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              activeScreen === 'subscription'
+              activeScreen === 'materials' || activeScreen === 'material_reader'
                 ? 'text-white font-semibold'
                 : 'text-[#9CA0AE]'
             }`}

@@ -25,7 +25,6 @@ export const SchoolAdminScreen: React.FC = () => {
   const [level, setLevel] = useState<PastQuestionDoc['level']>('200L');
   const [session, setSession] = useState('2024/2025');
   const [semester, setSemester] = useState<SemesterType>('First Semester');
-  const [isFreePreview, setIsFreePreview] = useState(false);
 
   const [processing, setProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -93,7 +92,6 @@ export const SchoolAdminScreen: React.FC = () => {
       extractedText: processed.extractedText,
       questions:
         questionLines.length > 0 ? questionLines : processed.suggestedQuestions,
-      isFreePreview,
       uploadedBy: `${selectedSchool.code} School Admin`,
       uploadedAt: new Date().toISOString(),
       viewsCount: 0,
@@ -308,16 +306,6 @@ export const SchoolAdminScreen: React.FC = () => {
                   className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3 text-xs sm:text-sm text-[#1A1B20] leading-relaxed"
                 />
               </div>
-
-              <label className="flex items-center gap-2.5 text-xs font-medium text-[#1A1B20] cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isFreePreview}
-                  onChange={(e) => setIsFreePreview(e.target.checked)}
-                  className="h-4 w-4 rounded accent-[#1D1E23]"
-                />
-                <span>Allow Free Tier students to preview this paper</span>
-              </label>
 
               <TactileButton type="submit" variant="dark" size="lg" fullWidth>
                 Publish & Index to Archive

@@ -4,22 +4,12 @@ export type DocumentSourceType = 'scanned_image' | 'typed_document';
 
 export type UserRole = 'student' | 'school_admin' | 'super_admin';
 
-export type SubscriptionCadence = 'monthly' | 'semester' | 'session';
-
-export type SubscriptionTierId =
-  | 'free'
-  | 'monthly_500'
-  | 'monthly_1000'
-  | 'semester_2000'
-  | 'semester_3500'
-  | 'session_5000'
-  | 'session_8500';
-
 export type AppScreen =
   | 'home'
   | 'reader'
   | 'notifications'
-  | 'subscription'
+  | 'materials'
+  | 'material_reader'
   | 'school_admin'
   | 'super_admin';
 
@@ -31,6 +21,25 @@ export interface School {
   location: string;
   isActive: boolean;
   isPrimaryLaunch: boolean;
+}
+
+export interface MaterialSection {
+  heading: string;
+  paragraphs?: string[];
+  /** Short bullet points, shown under the paragraphs. */
+  points?: string[];
+}
+
+/** A reading guide students can study from before an exam. */
+export interface StudyMaterial {
+  id: string;
+  courseCode: string;
+  courseTitle: string;
+  level: string;
+  title: string;
+  summary: string;
+  readMinutes: number;
+  sections: MaterialSection[];
 }
 
 export interface QuestionSolution {
@@ -59,32 +68,17 @@ export interface PastQuestionDoc {
   questions: string[];
   /** Optional worked answers, index-aligned with `questions` (null = not added yet). */
   solutions?: Array<QuestionSolution | null>;
-  isFreePreview: boolean;
   uploadedBy: string;
   uploadedAt: string; // ISO string
   viewsCount: number;
   status: 'published' | 'review';
 }
 
-export interface SubscriptionPlan {
-  id: SubscriptionTierId;
-  cadence: SubscriptionCadence;
-  name: string;
-  audience: string;
-  priceNaira: number;
-  periodLabel: string;
-  includesFullArchive: boolean;
-  includesAiAccess: boolean;
-  aiNote?: string;
-  features: string[];
-  highlighted?: boolean;
-}
-
 export interface AppNotification {
   id: string;
   title: string;
   message: string;
-  category: 'upload' | 'access' | 'billing' | 'system';
+  category: 'upload' | 'access' | 'system';
   createdAt: string;
   isRead: boolean;
   targetDocId?: string;
@@ -96,7 +90,6 @@ export interface ManagedAccount {
   email: string;
   role: UserRole;
   schoolCode: string;
-  tierId: SubscriptionTierId;
   status: 'active' | 'suspended';
   lastActiveAt: string;
 }
