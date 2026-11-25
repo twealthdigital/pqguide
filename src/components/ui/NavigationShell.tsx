@@ -65,6 +65,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [userPopoverOpen, setUserPopoverOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem('pqguide:sidebar-collapsed') === '1';
@@ -77,6 +78,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const desktopTriggerRef = useRef<HTMLButtonElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const userPanelRef = useRef<HTMLDivElement | null>(null);
   const drawerPanelRef = useRef<HTMLElement | null>(null);
   const signOutTimerRef = useRef<number | null>(null);
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -306,6 +308,31 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const onBanner = false;
 
+  const userPopoverVisible = sidebarCollapsed && userPopoverOpen;
+
+  // Collapsed side panel: the avatar opens a pop-out with the user's details.
+  useEffect(() => {
+    if (!sidebarCollapsed) setUserPopoverOpen(false);
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!userPopoverVisible) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && userPanelRef.current?.contains(target)) return;
+      setUserPopoverOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setUserPopoverOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [userPopoverVisible]);
+
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
       const next = !prev;
@@ -444,39 +471,95 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           />
           </div>
 
-          <div
-            className={`rounded-2xl bg-[#F6F7F9] flex items-center justify-between gap-2.5 transition-[padding,background-color] ${sbEase} ${
-              sidebarCollapsed ? 'flex-col p-1 bg-transparent' : 'p-3'
-            }`}
-          >
-            <div className={`flex items-center min-w-0 ${sidebarCollapsed ? 'gap-0' : 'gap-2.5'}`}>
-              <div className="h-9 w-9 rounded-full tactile-dark text-white text-xs font-bold flex items-center justify-center shrink-0">
-                {initials}
-              </div>
-              <div
-                className={`min-w-0 overflow-hidden transition-[max-width,opacity] ${sbEase} ${
-                  sidebarCollapsed ? 'max-w-0 opacity-0' : 'max-w-[120px] opacity-100'
+          <div ref={userPanelRef} className="relative">
+            {/* Account card (expanded: name + matric; collapsed: avatar only, opens the pop-out) */}
+            <div
+              className={`rounded-2xl flex items-center transition-[padding,background-color] ${sbEase} ${
+                sidebarCollapsed ? 'justify-center p-1 bg-transparent' : 'p-3 bg-[#F6F7F9]'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => sidebarCollapsed && setUserPopoverOpen((open) => !open)}
+                aria-label={sidebarCollapsed ? 'Show account details' : student.fullName}
+                aria-haspopup={sidebarCollapsed ? 'dialog' : undefined}
+                aria-expanded={sidebarCollapsed ? userPopoverVisible : undefined}
+                tabIndex={sidebarCollapsed ? 0 : -1}
+                className={`h-9 w-9 rounded-full tactile-dark text-white text-xs font-bold flex items-center justify-center shrink-0 transition-transform duration-150 ${
+                  sidebarCollapsed ? 'cursor-pointer active:scale-95' : 'cursor-default'
                 }`}
               >
-                <p className="text-xs font-bold text-[#1A1B20] truncate">
-                  {student.fullName}
-                </p>
+                {initials}
+              </button>
+              <div
+                className={`min-w-0 overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                  sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
+                }`}
+              >
+                <p className="text-xs font-bold text-[#1A1B20] truncate">{student.fullName}</p>
                 <p className="text-[11px] font-mono-tabular text-[#686C78] truncate">
                   {student.matricNumber}
                 </p>
               </div>
             </div>
 
-            <button
-              type="button"
-              disabled={isSigningOut}
-              onClick={handleSignOutClick}
-              aria-label="Sign out"
-              title="Sign out"
-              className="h-9 w-9 rounded-xl bg-white border border-[#1A1B20]/[0.08] text-[#1A1B20] hover:bg-[#1D1E23] hover:text-white flex items-center justify-center shrink-0 transition-colors cursor-pointer disabled:opacity-50"
+            {/* Sign out: icon + text, sits under the account card */}
+            <div
+              className={`transition-[max-height,opacity,margin] ${sbEase} ${
+                sidebarCollapsed
+                  ? 'max-h-0 opacity-0 mt-0 overflow-hidden pointer-events-none'
+                  : 'max-h-14 opacity-100 mt-2'
+              }`}
+              aria-hidden={sidebarCollapsed}
             >
-              <LogOut className="w-4 h-4" />
-            </button>
+              <button
+                type="button"
+                disabled={isSigningOut}
+                onClick={handleSignOutClick}
+                tabIndex={sidebarCollapsed ? -1 : 0}
+                className="w-full min-h-[44px] rounded-2xl bg-white border border-[#1A1B20]/[0.08] text-sm font-semibold text-[#1A1B20] hover:bg-[#1D1E23] hover:text-white flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>{isSigningOut ? 'Signing out…' : 'Sign out'}</span>
+              </button>
+            </div>
+
+            {/* Collapsed pop-out: slides out beside the panel */}
+            <div
+              role="dialog"
+              aria-label="Account details"
+              aria-hidden={!userPopoverVisible}
+              className={`absolute bottom-0 left-full ml-[30px] w-60 origin-bottom-left rounded-2xl bg-white border border-[#1A1B20]/[0.08] shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)] p-3 transition-[opacity,transform] ${sbEase} ${
+                userPopoverVisible
+                  ? 'opacity-100 scale-100 translate-x-0'
+                  : 'opacity-0 scale-95 -translate-x-2 pointer-events-none'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0 rounded-xl bg-[#F6F7F9] p-3">
+                <div className="h-9 w-9 rounded-full tactile-dark text-white text-xs font-bold flex items-center justify-center shrink-0">
+                  {initials}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-[#1A1B20] truncate">{student.fullName}</p>
+                  <p className="text-[11px] font-mono-tabular text-[#686C78] truncate">
+                    {student.matricNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isSigningOut}
+                tabIndex={userPopoverVisible ? 0 : -1}
+                onClick={() => {
+                  setUserPopoverOpen(false);
+                  handleSignOutClick();
+                }}
+                className="mt-2 w-full min-h-[44px] rounded-xl bg-white border border-[#1A1B20]/[0.08] text-sm font-semibold text-[#1A1B20] hover:bg-[#1D1E23] hover:text-white flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>{isSigningOut ? 'Signing out…' : 'Sign out'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </aside>
