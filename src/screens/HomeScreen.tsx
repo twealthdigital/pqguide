@@ -516,7 +516,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               Past Question Papers
             </h2>
             <p className="text-xs text-[#686C78] font-mono-tabular mt-0.5">
-              GNS papers only · {filteredDocs.length} indexed for {activeSchool.code}
+              Explore free past questions
               {appliedSession !== 'All' ? ` · ${appliedSession}` : ''}
               {appliedSemester !== 'All' ? ` · ${appliedSemester}` : ''}
               {appliedLevel !== 'All' ? ` · ${appliedLevel}` : ''}
