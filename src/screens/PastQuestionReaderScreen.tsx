@@ -53,19 +53,6 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
 
   return (
     <div className="space-y-5 page-enter">
-      {/* Top Reader Navigation */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <TactileButton
-          variant="light"
-          size="sm"
-          icon={<ArrowLeft className="w-4 h-4" />}
-          onClick={onBack}
-        >
-          Back to Archive
-        </TactileButton>
-
-      </div>
-
       {/* Document Header: same dark ash wave look as the home banner, kept compact */}
       <div className="relative overflow-hidden rounded-3xl bg-[#1D1E23] px-5 py-5 text-white shadow-[0_12px_28px_-10px_rgba(24,25,30,0.36)]">
         <img
@@ -86,12 +73,34 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
           }}
         />
         <div className="relative">
-          <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">
+          <TactileButton
+            variant="light"
+            size="sm"
+            icon={<ArrowLeft className="w-4 h-4" />}
+            onClick={onBack}
+          >
+            Back to Archive
+          </TactileButton>
+
+          <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
             {doc.courseCode} — {doc.courseTitle}
           </h1>
           <p className="mt-1.5 text-xs text-[#C3C7D2] font-mono-tabular">
             {doc.session} · {doc.level}
           </p>
+
+          {isUnlocked && (
+            <div className="mt-3.5 flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-[#1A1B20]">
+              <Search className="w-4 h-4 text-[#686C78] shrink-0" />
+              <input
+                type="search"
+                value={inlineQuery}
+                onChange={(e) => setInlineQuery(e.target.value)}
+                placeholder={`Search inside ${doc.courseCode}...`}
+                className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -136,18 +145,6 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
         </SurfaceCard>
       ) : (
         <SurfaceCard tone="white" className="p-5 sm:p-7 space-y-5">
-          {/* In-paper search bar */}
-          <div className="flex items-center gap-2 rounded-xl bg-[#F6F7F9] px-3.5 py-2 border border-[#1A1B20]/[0.06]">
-            <Search className="w-4 h-4 text-[#686C78] shrink-0" />
-            <input
-              type="search"
-              value={inlineQuery}
-              onChange={(e) => setInlineQuery(e.target.value)}
-              placeholder={`Search inside ${doc.courseCode}...`}
-              className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
-            />
-          </div>
-
           {/* Exam Header Rubric */}
           <div className="rounded-2xl bg-[#F6F7F9] p-4 text-xs sm:text-sm text-[#3A3D47] whitespace-pre-line leading-relaxed font-mono-tabular">
             {doc.extractedText}
