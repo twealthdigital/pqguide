@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Bell,
   ChevronLeft,
+  ClipboardCheck,
   FileText,
   Folder,
   Headphones,
@@ -300,6 +301,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
     { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
     { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
+    { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
     { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
     { id: 'super_admin', label: 'Super Admin', icon: <ShieldCheck className="w-5 h-5" /> },
   ];
@@ -642,8 +644,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <nav aria-label="Company links" className="flex items-center gap-7 text-sm font-medium">
             {infoLinks.map((item) => {
               const active =
-                activeScreen === item.id ||
-                (item.id === 'services' && activeScreen === 'mock_exam');
+                activeScreen === item.id;
               return (
                 <button
                   key={item.id}
@@ -907,8 +908,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               >
                 {infoLinks.map((item) => {
                   const isActive =
-                    activeScreen === item.id ||
-                    (item.id === 'services' && activeScreen === 'mock_exam');
+                    activeScreen === item.id;
                   return (
                     <button
                       key={item.id}
@@ -1045,23 +1045,13 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
           <button
             type="button"
-            onClick={() =>
-              onNavigate(activeScreen === 'school_admin' ? 'super_admin' : 'school_admin')
-            }
+            onClick={() => onNavigate('mock_exam')}
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              activeScreen === 'school_admin' || activeScreen === 'super_admin'
-                ? 'text-white font-semibold'
-                : 'text-[#9CA0AE]'
+              activeScreen === 'mock_exam' ? 'text-white font-semibold' : 'text-[#9CA0AE]'
             }`}
           >
-            {activeScreen === 'super_admin' ? (
-              <ShieldCheck className="w-5 h-5" />
-            ) : (
-              <UploadCloud className="w-5 h-5" />
-            )}
-            <span className="text-[10px] leading-none">
-              {activeScreen === 'super_admin' ? 'Control' : 'Admin'}
-            </span>
+            <ClipboardCheck className="w-5 h-5" />
+            <span className="text-[10px] leading-none">Exam</span>
           </button>
         </div>
       </nav>
