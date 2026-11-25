@@ -230,7 +230,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
           <div className={card}>
             <p className="text-sm font-semibold text-[#1A1B20]">No past questions yet</p>
             <p className="mt-1 text-sm text-[#505460] leading-relaxed">
-              A practice exam is built from the past questions in the archive. Once some are
+              A practice exam is built from the past questions on Home. Once some are
               added, you can set up your exam here.
             </p>
           </div>

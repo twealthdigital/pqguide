@@ -7,4 +7,6 @@ export const SITE_INFO = {
   supportEmail: '',
   /** International format, digits only, e.g. '2348012345678' */
   supportWhatsApp: '',
+  /** Optional phone number shown for calls, e.g. '+2348012345678' */
+  supportPhone: '',
 };

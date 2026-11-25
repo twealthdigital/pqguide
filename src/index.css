@@ -525,3 +525,19 @@ input::-ms-clear {
   width: 0;
   height: 0;
 }
+
+/* Feedback send button: rolls while sending, then the check rolls in */
+@keyframes feedbackRoll {
+  to { transform: rotate(360deg); }
+}
+@keyframes feedbackCheck {
+  0% { transform: rotate(-270deg) scale(0.2); opacity: 0; }
+  70% { transform: rotate(10deg) scale(1.15); opacity: 1; }
+  100% { transform: rotate(0) scale(1); opacity: 1; }
+}
+.feedback-roll { animation: feedbackRoll 0.7s linear infinite; }
+.feedback-check { animation: feedbackCheck 0.55s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .feedback-roll { animation-duration: 1.6s; }
+  .feedback-check { animation: none; }
+}

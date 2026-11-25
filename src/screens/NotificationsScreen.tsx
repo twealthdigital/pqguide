@@ -110,7 +110,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             You are all caught up
           </p>
           <p className="text-xs text-[#686C78] mt-1">
-            New archive uploads and study material updates appear here.
+            New past question uploads and study material updates appear here.
           </p>
         </SurfaceCard>
       ) : (

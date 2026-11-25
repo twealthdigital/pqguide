@@ -1,19 +1,24 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   BookOpen,
+  Check,
   CheckCircle2,
   ClipboardCheck,
   FileText,
   Headphones,
+  Loader2,
   Mail,
   MessageCircle,
+  Phone,
   ScanLine,
   Search,
+  Send,
   Sparkles,
 } from 'lucide-react';
 import type { AppScreen } from '../core/types';
 import { SITE_INFO } from '../data/siteInfo';
+import { submitFeedback } from '../services/feedbackService';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
@@ -95,8 +100,8 @@ const AboutPage: React.FC = () => (
       </h2>
       <div className="mt-2 space-y-2.5 text-xs sm:text-sm text-[#505460] leading-relaxed">
         <p>
-          There is no guessing game behind it. pqguide looks through the past questions in the
-          archive for the course you pick and chooses the ones most likely to matter: themes that
+          There is no guessing game behind it. pqguide looks through the past questions on
+          Home for the course you pick and chooses the ones most likely to matter: themes that
           keep coming back across sessions, questions from the latest session, and anything that
           matches the topic you ask to focus on.
         </p>
@@ -114,9 +119,9 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
   <div className="space-y-4">
     <FeatureRow
       icon={<Search className="w-5 h-5" />}
-      title="Past question archive"
+      title="Past questions home"
       text="Find past questions by course code, keyword, session, semester and level."
-      action={{ label: 'Open the archive', onClick: () => onNavigate('home') }}
+      action={{ label: 'Open Home', onClick: () => onNavigate('home') }}
     />
     <FeatureRow
       icon={<FileText className="w-5 h-5" />}
@@ -139,7 +144,7 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
     <FeatureRow
       icon={<Bell className="w-5 h-5" />}
       title="Alerts"
-      text="Get notified when new past questions are added to the archive."
+      text="Get notified when new past questions are added to Home."
       action={{ label: 'See alerts', onClick: () => onNavigate('notifications') }}
     />
     <FeatureRow
@@ -170,8 +175,8 @@ const HOW_IT_WORKS: HelpItem[] = [
     id: 'find',
     title: 'Find a past question',
     text: 'On the home page, pick your academic session and semester, then search a course code (for example GNS 101) or a keyword. Results update as you type.',
-    keywords: 'search find filter session semester level course code archive',
-    action: { label: 'Open the archive', screen: 'home' },
+    keywords: 'search find filter session semester level course code home',
+    action: { label: 'Open Home', screen: 'home' },
   },
   {
     id: 'open',
@@ -412,103 +417,151 @@ const HelpPage: React.FC<{ query: string; onNavigate: (s: AppScreen) => void }> 
   );
 };
 
-const TOPICS = ['Cannot find a past question', 'Problem with an answer', 'Account or login', 'Something else'];
+type SendState = 'idle' | 'sending' | 'sent';
+
+const FeedbackForm: React.FC = () => {
+  const [message, setMessage] = useState('');
+  const [state, setState] = useState<SendState>('idle');
+  const timers = useRef<number[]>([]);
+
+  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
+
+  const canSend = message.trim().length > 0 && state === 'idle';
+
+  const handleSend = async () => {
+    if (!canSend) return;
+    setState('sending');
+    const minSpin = new Promise((r) => timers.current.push(window.setTimeout(r, 900)));
+    await Promise.all([submitFeedback(message), minSpin]);
+    setMessage('');
+    setState('sent');
+    timers.current.push(window.setTimeout(() => setState('idle'), 3000));
+  };
+
+  const busy = state !== 'idle';
+
+  return (
+    <div className={`${card} space-y-3`}>
+      <div>
+        <h2 className="font-display text-base font-bold text-[#1A1B20]">Send us feedback</h2>
+        <p className="mt-1 text-sm text-[#505460] leading-relaxed">
+          Found a problem or have an idea? Tell us below.
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="support-feedback" className="sr-only">
+          Your feedback
+        </label>
+        <textarea
+          id="support-feedback"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          disabled={busy}
+          rows={4}
+          maxLength={1000}
+          placeholder="Write your feedback here..."
+          className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 py-2.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20 resize-none disabled:opacity-60"
+        />
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={handleSend}
+          disabled={!canSend}
+          aria-label={state === 'sent' ? 'Feedback sent' : state === 'sending' ? 'Sending feedback' : 'Send feedback'}
+          aria-busy={state === 'sending'}
+          className={`feedback-send inline-flex h-11 items-center justify-center overflow-hidden font-semibold text-sm text-white select-none cursor-pointer transition-[width,background-color,border-radius,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] disabled:cursor-default ${
+            busy ? 'w-11 rounded-full' : 'w-28 rounded-full'
+          } ${state === 'sent' ? 'bg-[#16A34A]' : 'bg-[#1D1E23] hover:bg-[#2B2D35]'} ${
+            state === 'idle' && !canSend ? 'opacity-45' : ''
+          }`}
+        >
+          {state === 'idle' && (
+            <span className="inline-flex items-center gap-2">
+              <Send className="w-4 h-4" />
+              Send
+            </span>
+          )}
+          {state === 'sending' && <Loader2 className="w-5 h-5 feedback-roll" />}
+          {state === 'sent' && <Check className="w-5 h-5 feedback-check" strokeWidth={3} />}
+        </button>
+        <p className="text-xs text-[#686C78]" role="status" aria-live="polite">
+          {state === 'sent' ? 'Thanks! Your feedback has been sent.' : ''}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+const ContactRow: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  href: string;
+  external?: boolean;
+}> = ({ icon, label, value, href, external }) => (
+  <a
+    href={href}
+    {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+    className="flex items-center gap-3 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.06] px-3.5 py-3 hover:bg-[#ECEEF3] transition-colors"
+  >
+    <span className="h-9 w-9 rounded-lg bg-[#1D1E23] text-white flex items-center justify-center shrink-0">
+      {icon}
+    </span>
+    <span className="min-w-0">
+      <span className="block text-xs font-semibold text-[#686C78]">{label}</span>
+      <span className="block text-sm font-semibold text-[#1A1B20] truncate">{value}</span>
+    </span>
+  </a>
+);
 
 const SupportPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavigate }) => {
-  const { supportEmail, supportWhatsApp } = SITE_INFO;
-  const [topic, setTopic] = useState(TOPICS[0]);
-  const [message, setMessage] = useState('');
-  const hasContact = Boolean(supportEmail || supportWhatsApp);
-
-  const mailHref = supportEmail
-    ? `mailto:${supportEmail}?subject=${encodeURIComponent(`pqguide support: ${topic}`)}&body=${encodeURIComponent(message)}`
-    : '';
-  const whatsappHref = supportWhatsApp
-    ? `https://wa.me/${supportWhatsApp.replace(/\D/g, '')}?text=${encodeURIComponent(
-        `pqguide support (${topic}): ${message}`.trim()
-      )}`
-    : '';
+  const { supportEmail, supportWhatsApp, supportPhone } = SITE_INFO;
+  const hasContact = Boolean(supportEmail || supportWhatsApp || supportPhone);
 
   return (
     <div className="space-y-4">
-      {!hasContact ? (
-        <div className={card}>
-          <div className="flex items-start gap-3.5">
-            <div className="h-11 w-11 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center shrink-0">
-              <Headphones className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="font-display text-base font-bold text-[#1A1B20]">
-                Support is being set up
-              </h2>
-              <p className="mt-1 text-sm text-[#505460] leading-relaxed">
-                Contact options will appear here soon. In the meantime, the Help page answers the
-                most common questions.
-              </p>
-              <div className="mt-3">
-                <TactileButton variant="dark" size="sm" onClick={() => onNavigate('help')}>
-                  Go to Help
-                </TactileButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className={`${card} space-y-4`}>
-          <div>
-            <label htmlFor="support-topic" className="text-xs font-semibold text-[#686C78]">
-              What do you need help with?
-            </label>
-            <select
-              id="support-topic"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              className="mt-1.5 w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 py-2.5 text-sm text-[#1A1B20] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
-            >
-              {TOPICS.map((t) => (
-                <option key={t}>{t}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="support-message" className="text-xs font-semibold text-[#686C78]">
-              Your message
-            </label>
-            <textarea
-              id="support-message"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              rows={4}
-              placeholder="Tell us what happened..."
-              className="mt-1.5 w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 py-2.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20 resize-none"
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-2.5">
-            {whatsappHref && (
-              <a
-                href={whatsappHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#1D1E23] px-5 text-sm font-semibold text-white hover:bg-[#2B2D35] transition-colors"
-              >
-                <MessageCircle className="w-4 h-4" />
-                Chat on WhatsApp
-              </a>
+      <div className={`${card} space-y-3`}>
+        <h2 className="font-display text-base font-bold text-[#1A1B20]">Contact us</h2>
+        {hasContact ? (
+          <div className="space-y-2.5">
+            {supportWhatsApp && (
+              <ContactRow
+                icon={<MessageCircle className="w-4 h-4" />}
+                label="WhatsApp"
+                value={`+${supportWhatsApp.replace(/\D/g, '')}`}
+                href={`https://wa.me/${supportWhatsApp.replace(/\D/g, '')}`}
+                external
+              />
             )}
-            {mailHref && (
-              <a
-                href={mailHref}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-5 text-sm font-semibold text-[#1A1B20] hover:bg-[#ECEEF3] transition-colors"
-              >
-                <Mail className="w-4 h-4" />
-                Send an email
-              </a>
+            {supportEmail && (
+              <ContactRow
+                icon={<Mail className="w-4 h-4" />}
+                label="Email"
+                value={supportEmail}
+                href={`mailto:${supportEmail}?subject=${encodeURIComponent('pqguide support')}`}
+              />
+            )}
+            {supportPhone && (
+              <ContactRow
+                icon={<Phone className="w-4 h-4" />}
+                label="Phone"
+                value={supportPhone}
+                href={`tel:${supportPhone.replace(/[^\d+]/g, '')}`}
+              />
             )}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-sm text-[#505460] leading-relaxed">
+            Contact details will appear here soon. In the meantime, leave your feedback below or
+            check the Help page.
+          </p>
+        )}
+      </div>
+
+      <FeedbackForm />
 
       <div className={`${card} flex items-center justify-between gap-3`}>
         <p className="text-sm text-[#3A3D47]">Looking for a quick answer first?</p>

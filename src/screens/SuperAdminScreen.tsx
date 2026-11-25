@@ -217,7 +217,7 @@ export const SuperAdminScreen: React.FC = () => {
               Universities Rollout
             </h2>
             <p className="text-xs text-[#686C78]">
-              Activate schools as new archives are verified
+              Activate schools as new schools are verified
             </p>
           </div>
 

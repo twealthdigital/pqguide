@@ -297,7 +297,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     icon: React.ReactNode;
     badge?: number;
   }> = [
-    { id: 'home', label: 'Archive', icon: <Home className="w-5 h-5" /> },
+    { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
     { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
     { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
     { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
@@ -402,7 +402,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 sidebarCollapsed ? 'max-h-0 opacity-0 mt-0' : 'max-h-6 opacity-100 mt-2'
               }`}
             >
-              University Exam Archive
+              University Exam Home
             </span>
           </button>
 
@@ -822,7 +822,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 >
                   <BrandLockup className="h-8 w-auto text-[#1A1B20]" />
                   <span className="block text-xs text-[#686C78] truncate">
-                    University Exam Archive
+                    University Exam Home
                   </span>
                 </button>
 

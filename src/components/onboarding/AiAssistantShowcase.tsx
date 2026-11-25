@@ -386,7 +386,7 @@ export const AiAssistantShowcase: React.FC = () => {
     : isOpt2View
     ? 'Core concepts & key definitions'
     : isOpt3YearsLoading
-    ? 'Loading archived sessions...'
+    ? 'Loading sessions...'
     : isOpt3Years
     ? 'Select an exam year'
     : '2020 First & Second Semester';
@@ -528,7 +528,7 @@ export const AiAssistantShowcase: React.FC = () => {
                     ? 'Preparing Suggested Questions...'
                     : isOpt2Loading
                     ? 'Gathering Course Research...'
-                    : 'Loading Exam Archive...'}
+                    : 'Loading Exam Home...'}
                 </p>
               </div>
             )}

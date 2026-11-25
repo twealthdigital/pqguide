@@ -73,7 +73,7 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
           Select a past question
         </p>
         <p className="text-sm text-[#686C78] mt-1">
-          Choose any course from the archive to open its indexed questions.
+          Choose any course from Home to open its indexed questions.
         </p>
         <div className="mt-5 flex justify-center">
           <TactileButton variant="dark" onClick={onBack}>

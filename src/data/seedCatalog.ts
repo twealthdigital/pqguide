@@ -275,7 +275,7 @@ export const SEED_NOTIFICATIONS: AppNotification[] = [
     id: 'notif-1',
     title: 'New AAUA 2024/2025 Harmattan Past Questions Indexed',
     message:
-      'GNS 102 and GNS 103 general studies past questions have been scanned, indexed, and added to the searchable archive.',
+      'GNS 102 and GNS 103 general studies past questions have been scanned, indexed, and added to the searchable on Home.',
     category: 'upload',
     createdAt: '2026-11-22T16:35:00.000Z',
     isRead: false,

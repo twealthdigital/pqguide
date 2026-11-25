@@ -97,7 +97,7 @@ export const SchoolAdminScreen: React.FC = () => {
 
     archiveRepository.addDocument(newDoc);
     setPublishNotice(
-      `${newDoc.courseCode} (${newDoc.session} · ${newDoc.semester}) indexed and published to student archive.`
+      `${newDoc.courseCode} (${newDoc.session} · ${newDoc.semester}) indexed and published to student Home.`
     );
     setProcessed(null);
     setCourseCode('');
@@ -304,7 +304,7 @@ export const SchoolAdminScreen: React.FC = () => {
               </div>
 
               <TactileButton type="submit" variant="dark" size="lg" fullWidth>
-                Publish & Index to Archive
+                Publish & Index to Home
               </TactileButton>
             </form>
           )}
