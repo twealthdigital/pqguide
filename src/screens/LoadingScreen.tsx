@@ -1,102 +1,76 @@
-import React, { useEffect, useState } from 'react';
-import { BrandLockup } from '../components/ui/BrandLockup';
+import React, { useEffect, useRef, useState } from 'react';
+import { LogoShapes } from '../components/ui/BrandLogo';
+import { WORDMARK_PATH } from '../components/ui/BrandWordmark';
 
 interface LoadingScreenProps {
+  /** Fires as the splash starts to fade, so the app can mount underneath it. */
+  onReveal: () => void;
+  /** Fires once the splash has fully faded away and can be removed. */
   onComplete: () => void;
 }
 
-export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
-  const [progress, setProgress] = useState(18);
+// Eyes blink and look around (about 2.7s), the name slides out (0.9s), then a
+// short pause before the splash fades and drops away. Keep in sync with the
+// pq-boot-* animations in index.css.
+const HOLD_MS = 4000;
+const HOLD_REDUCED_MS = 700;
+const FADE_MS = 650;
+
+export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onReveal, onComplete }) => {
+  const [leaving, setLeaving] = useState(false);
+  const revealRef = useRef(onReveal);
+  const completeRef = useRef(onComplete);
+  revealRef.current = onReveal;
+  completeRef.current = onComplete;
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) return 100;
-        const step = prev < 55 ? 14 : prev < 88 ? 10 : 6;
-        return Math.min(100, prev + step);
-      });
-    }, 140);
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const fadeAt = reduced ? HOLD_REDUCED_MS : HOLD_MS;
 
-    return () => window.clearInterval(timer);
+    const fadeTimer = window.setTimeout(() => {
+      setLeaving(true);
+      revealRef.current();
+    }, fadeAt);
+    const doneTimer = window.setTimeout(() => completeRef.current(), fadeAt + FADE_MS);
+
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(doneTimer);
+    };
   }, []);
-
-  useEffect(() => {
-    if (progress < 100) return;
-    const doneTimer = window.setTimeout(() => onComplete(), 420);
-    return () => window.clearTimeout(doneTimer);
-  }, [progress, onComplete]);
-
-  const statusText =
-    progress < 45
-      ? 'Preparing archive...'
-      : progress < 85
-      ? 'Loading sessions & semesters...'
-      : 'Ready';
 
   return (
     <div
-      className="relative min-h-[100dvh] w-full overflow-hidden bg-[#1D1E23] text-white flex flex-col items-center justify-between px-6 pt-[calc(2.5rem+env(safe-area-inset-top))] pb-[calc(2.5rem+env(safe-area-inset-bottom))] select-none"
+      className={`fixed inset-0 z-[100] flex items-center justify-center overflow-hidden bg-[#1D1E23] text-white select-none transition-opacity duration-[650ms] ease-out ${
+        leaving ? 'opacity-0 pointer-events-none' : 'opacity-100'
+      }`}
       role="status"
       aria-label="Loading application"
     >
-      {/* Subtle organic wave texture matching dark ash system */}
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 1200 600"
-        className="pointer-events-none absolute inset-0 h-full w-full opacity-25"
-        preserveAspectRatio="none"
+      <div
+        className={`pq-boot-stage transition-transform duration-[650ms] ease-in ${
+          leaving ? 'translate-y-10 scale-95' : ''
+        }`}
       >
-        <path
-          d="M-50,380 C220,210 490,510 780,310 C980,175 1120,340 1260,235"
-          fill="none"
-          stroke="#464A58"
-          strokeWidth="1.4"
-        />
-        <path
-          d="M-50,430 C250,260 520,550 810,350 C1010,215 1140,380 1270,280"
-          fill="none"
-          stroke="#3A3D49"
-          strokeWidth="1.1"
-        />
-        <path
-          d="M-50,480 C280,310 550,590 840,395 C1035,260 1160,425 1280,325"
-          fill="none"
-          stroke="#31343F"
-          strokeWidth="0.9"
-        />
-      </svg>
+        <div className="pq-boot-pop">
+          <div className="pq-boot-settle flex items-center">
+            {/* Glasses mark: pupils look around, lids blink */}
+            <svg viewBox="146 298 618 287" className="pq-boot-mark" fill="none" aria-hidden="true">
+              <LogoShapes pupilClassName="pq-boot-pupil" />
+              <circle className="pq-boot-lid" cx="315" cy="411" r="79" fill="#1D1E23" stroke="currentColor" strokeWidth="6" />
+              <circle className="pq-boot-lid" cx="594.2" cy="411" r="79" fill="#1D1E23" stroke="currentColor" strokeWidth="6" />
+            </svg>
 
-      {/* Spacer keeps the emblem vertically centered */}
-      <div aria-hidden="true" />
-
-      {/* Center Brand Emblem & Smooth Progress */}
-      <div className="relative z-10 w-full max-w-sm flex flex-col items-center text-center">
-        <h1 className="text-white mb-6">
-          <BrandLockup className="h-14 sm:h-16 w-auto" />
-        </h1>
-
-        <p className="mt-2.5 text-sm text-[#A5AAB8] max-w-xs leading-relaxed">
-          University past questions indexed cleanly by session, semester, and course code.
-        </p>
-
-        {/* GPU-only scaleX progress bar */}
-        <div className="mt-9 w-56 h-1.5 rounded-full bg-white/10 overflow-hidden">
-          <div
-            className="h-full w-full bg-white rounded-full origin-left transition-transform duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
-            style={{ transform: `scaleX(${progress / 100})` }}
-          />
+            {/* Name wipes out from behind the mark, pushing it to the side */}
+            <div className="pq-boot-name">
+              <svg viewBox="764 298 870 287" className="pq-boot-word" aria-hidden="true">
+                <path fill="currentColor" fillRule="evenodd" d={WORDMARK_PATH} />
+              </svg>
+            </div>
+          </div>
         </div>
-
-        <div className="mt-3 flex items-center gap-2 text-xs text-[#9FA4B2]">
-          <span>{statusText}</span>
-          <span aria-hidden="true">·</span>
-          <span className="font-mono-tabular text-white/90">{progress}%</span>
-        </div>
+        <span className="sr-only">pqguide</span>
       </div>
-
-      <p className="relative z-10 text-xs text-[#7E8392]">
-        Built for fast access on every device
-      </p>
     </div>
   );
 };

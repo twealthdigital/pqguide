@@ -277,7 +277,170 @@
   will-change: transform, opacity;
 }
 
+/* Boot splash: logo pops in, eyes blink and look up then down, the mark slides
+   aside while the name comes out. Base styles are the final (full logo) state,
+   so reduced motion simply shows the finished logo. */
+.pq-boot-stage {
+  --u: calc(min(86vw, 560px) / 1488);
+}
+
+.pq-boot-mark {
+  display: block;
+  flex: none;
+  width: calc(618 * var(--u));
+  height: calc(287 * var(--u));
+}
+
+.pq-boot-name {
+  flex: none;
+  overflow: hidden;
+  width: calc(870 * var(--u));
+  height: calc(287 * var(--u));
+  animation: pqBootName 900ms cubic-bezier(0.65, 0, 0.25, 1) 2700ms both;
+}
+
+.pq-boot-word {
+  display: block;
+  width: calc(870 * var(--u));
+  height: calc(287 * var(--u));
+  animation: pqBootNameIn 900ms cubic-bezier(0.65, 0, 0.25, 1) 2700ms both;
+}
+
+.pq-boot-pop {
+  animation: pqBootPop 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.pq-boot-settle {
+  animation: pqBootSettle 900ms cubic-bezier(0.65, 0, 0.25, 1) 2700ms both;
+}
+
+.pq-boot-pupil {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pqBootLook 2700ms ease-in-out both;
+}
+
+.pq-boot-lid {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation: pqBootLid 2700ms ease-in-out both;
+}
+
+@keyframes pqBootPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pqBootSettle {
+  from {
+    transform: scale(1.9);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes pqBootName {
+  from {
+    width: 0;
+  }
+  to {
+    width: calc(870 * var(--u));
+  }
+}
+
+@keyframes pqBootNameIn {
+  from {
+    opacity: 0;
+    transform: translateX(calc(-90 * var(--u)));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Pupils: rest, look up (and a touch left), look down (and a touch right),
+   then settle back to centre while the closing blink hides the move. */
+@keyframes pqBootLook {
+  0%,
+  40.7% {
+    transform: translate(0, 0);
+  }
+  51.9%,
+  64.8% {
+    transform: translate(-10px, -34px);
+  }
+  77.8%,
+  88.9% {
+    transform: translate(10px, 34px);
+  }
+  95.4%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+/* Eyelids: one blink at about 0.7s, another at about 2.45s. */
+@keyframes pqBootLid {
+  0%,
+  25.9% {
+    opacity: 0;
+    transform: scaleY(0);
+  }
+  26% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  29.6% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  35.2% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  35.3%,
+  90.7% {
+    opacity: 0;
+    transform: scaleY(0);
+  }
+  90.8% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  94.8% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  99.9% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .pq-boot-pop,
+  .pq-boot-settle,
+  .pq-boot-name,
+  .pq-boot-word,
+  .pq-boot-pupil,
+  .pq-boot-lid,
   .skeleton-shimmer::after,
   .page-enter,
   .animate-marquee-up,

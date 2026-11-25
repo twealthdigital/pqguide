@@ -5,7 +5,7 @@ interface BrandLogoProps {
 }
 
 /** Raw glasses shapes in the shared 146 298 618 287 coordinate space (currentColor). */
-export const LogoShapes: React.FC = () => (
+export const LogoShapes: React.FC<{ pupilClassName?: string }> = ({ pupilClassName }) => (
   <>
       <circle cx="315.0" cy="411.0" r="96.7" fill="none" stroke="currentColor" strokeWidth="31.9"/>
       <circle cx="594.2" cy="411.0" r="96.7" fill="none" stroke="currentColor" strokeWidth="31.9"/>
@@ -15,7 +15,7 @@ export const LogoShapes: React.FC = () => (
       <path d="M676 380H708V525H672V440H676Z" fill="currentColor"/>
       <path d="M659 489L705 553" fill="none" stroke="currentColor" strokeWidth="36" strokeLinecap="round"/>
       <path d="M260.0 403A43.2 43.2 0 0 1 286.0 367M539.8 403A43.2 43.2 0 0 1 565.8 367" fill="none" stroke="currentColor" strokeOpacity=".12" strokeWidth="17.2" strokeLinecap="round"/>
-      <circle cx="325.7" cy="412.1" r="20.2" fill="currentColor"/><circle cx="605.8" cy="412" r="20.2" fill="currentColor"/>
+      <circle className={pupilClassName} cx="325.7" cy="412.1" r="20.2" fill="currentColor"/><circle className={pupilClassName} cx="605.8" cy="412" r="20.2" fill="currentColor"/>
   </>
 );
 

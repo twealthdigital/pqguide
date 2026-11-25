@@ -94,12 +94,11 @@ const entryOf = (n: NavState): NavEntry => ({
   materialId: n.materialId,
 });
 
-export default function App() {
+function AppContent() {
   const store = useArchiveStore();
   const [authenticatedStudent, setAuthenticatedStudent] = useState<StudentAccount | null>(() =>
     authService.getActiveSession()
   );
-  const [isBooting, setIsBooting] = useState(() => authService.getActiveSession() === null);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
     () => authService.hasCompletedOnboarding() || authService.getActiveSession() !== null
   );
@@ -126,10 +125,6 @@ export default function App() {
     () => STUDY_MATERIALS.find((m) => m.id === selectedMaterialId) ?? null,
     [selectedMaterialId]
   );
-
-  const handleBootComplete = useCallback(() => {
-    setIsBooting(false);
-  }, []);
 
   const scrollTop = () => window.scrollTo({ top: 0, behavior: 'instant' });
 
@@ -185,10 +180,6 @@ export default function App() {
     setAuthenticatedStudent(null);
     setNav(INITIAL_NAV);
   }, []);
-
-  if (isBooting) {
-    return <LoadingScreen onComplete={handleBootComplete} />;
-  }
 
   if (!hasCompletedOnboarding) {
     return (
@@ -283,5 +274,27 @@ export default function App() {
         {activeScreen === 'super_admin' && <SuperAdminScreen />}
       </Suspense>
     </NavigationShell>
+  );
+}
+
+type BootPhase = 'splash' | 'reveal' | 'done';
+
+export default function App() {
+  // Signed-out visitors get the splash. The app mounts underneath it as the
+  // splash starts to fade, so the fade reveals the real first screen.
+  const [phase, setPhase] = useState<BootPhase>(() =>
+    authService.getActiveSession() === null ? 'splash' : 'done'
+  );
+
+  return (
+    <>
+      {phase !== 'splash' && <AppContent />}
+      {phase !== 'done' && (
+        <LoadingScreen
+          onReveal={() => setPhase((p) => (p === 'splash' ? 'reveal' : p))}
+          onComplete={() => setPhase('done')}
+        />
+      )}
+    </>
   );
 }
