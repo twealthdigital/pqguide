@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   ArrowRight,
@@ -124,15 +125,18 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
   const [usedSeconds, setUsedSeconds] = useState(0);
   const [endedByTimer, setEndedByTimer] = useState(false);
   const [confirm, setConfirm] = useState<'finish' | 'exit' | null>(null);
+  const [startState, setStartState] = useState<'idle' | 'starting' | 'started'>('idle');
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted'>('idle');
 
   const endAtRef = useRef(0);
   const startedAtRef = useRef(0);
+  const startTimersRef = useRef<number[]>([]);
   const submitTimersRef = useRef<number[]>([]);
   const finishedRef = useRef(false);
 
   useEffect(() => {
     return () => {
+      startTimersRef.current.forEach((t) => window.clearTimeout(t));
       submitTimersRef.current.forEach((t) => window.clearTimeout(t));
     };
   }, []);
@@ -192,7 +196,12 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
   const startExam = useCallback(
     (nextSpec: ExamSpec) => {
       const built = buildExam(docs, nextSpec);
-      if (built.questions.length === 0) return;
+      if (built.questions.length === 0) {
+        setStartState('idle');
+        return;
+      }
+      startTimersRef.current.forEach((t) => window.clearTimeout(t));
+      startTimersRef.current = [];
       submitTimersRef.current.forEach((t) => window.clearTimeout(t));
       submitTimersRef.current = [];
       finishedRef.current = false;
@@ -202,6 +211,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
       setMarks({});
       setCurrent(0);
       setConfirm(null);
+      setStartState('idle');
       setSubmitState('idle');
       setEndedByTimer(false);
       setUsedSeconds(0);
@@ -275,15 +285,25 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
   }, [phase, completeSubmission]);
 
   const handleStart = () => {
+    if (pool === 0 || startState !== 'idle') return;
     const safeCount = Math.max(1, Math.min(50, questionCount || 5));
     const safeMinutes = Math.max(1, Math.min(240, minutes || 30));
-    startExam({
+    const nextSpec: ExamSpec = {
       examType,
       courseCode,
       questionCount: safeCount,
       minutes: safeMinutes,
       focus: focus.trim(),
-    });
+    };
+    setStartState('starting');
+    const t1 = window.setTimeout(() => {
+      setStartState('started');
+      const t2 = window.setTimeout(() => {
+        startExam(nextSpec);
+      }, 450);
+      startTimersRef.current.push(t2);
+    }, 700);
+    startTimersRef.current.push(t1);
   };
 
   const answeredCount = exam
@@ -684,9 +704,34 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
               </p>
             </div>
 
-            <TactileButton variant="dark" size="lg" fullWidth onClick={handleStart} disabled={pool === 0}>
-              Start exam
-            </TactileButton>
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={handleStart}
+                disabled={pool === 0 || startState !== 'idle'}
+                aria-label={
+                  startState === 'started'
+                    ? 'Exam ready'
+                    : startState === 'starting'
+                      ? 'Starting exam'
+                      : 'Start exam'
+                }
+                aria-busy={startState === 'starting'}
+                className={`inline-flex h-12 items-center justify-center overflow-hidden font-semibold text-sm text-white select-none cursor-pointer transition-[width,background-color,border-radius,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] disabled:cursor-default ${
+                  startState !== 'idle'
+                    ? 'w-12 rounded-full'
+                    : 'w-full rounded-2xl shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)]'
+                } ${
+                  startState === 'started'
+                    ? 'bg-[#16A34A]'
+                    : 'bg-[#1D1E23] hover:bg-[#2B2D35] active:scale-[0.99]'
+                } ${pool === 0 ? 'opacity-45' : ''}`}
+              >
+                {startState === 'idle' && <span>Start exam</span>}
+                {startState === 'starting' && <Loader2 className="w-5 h-5 feedback-roll" />}
+                {startState === 'started' && <Check className="w-5 h-5 feedback-check" strokeWidth={3} />}
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -736,62 +781,66 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
       }
     };
 
-    const confirmDialog = confirm && (
-      <div
-        className="fixed inset-0 z-50 bg-[#121318]/50 backdrop-blur-[2px] flex items-center justify-center p-4"
-        onClick={() => {
-          if (!isBusySubmitting) setConfirm(null);
-        }}
-      >
+    const confirmDialog =
+      confirm &&
+      typeof document !== 'undefined' &&
+      createPortal(
         <div
-          role="alertdialog"
-          aria-modal="true"
-          aria-label="Confirm"
-          onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-sm rounded-2xl bg-white p-5 border border-[#1A1B20]/[0.08] shadow-[0_24px_48px_-12px_rgba(14,15,20,0.35)] space-y-4 page-enter"
+          className="fixed inset-0 z-[70] bg-[#121318]/50 backdrop-blur-[2px] flex items-center justify-center p-4"
+          onClick={() => {
+            if (!isBusySubmitting) setConfirm(null);
+          }}
         >
-          {confirm === 'exit' ? (
-            <div className="space-y-1">
-              <p className="font-display text-base font-bold text-[#1A1B20]">Leave this exam?</p>
-              <p className="text-sm text-[#505460] leading-relaxed">
-                Your current answers will not be saved.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              <p className="font-display text-base font-bold text-[#1A1B20]">
-                {unanswered > 0
-                  ? `${unanswered} unanswered question${unanswered === 1 ? '' : 's'}`
-                  : 'Submit exam?'}
-              </p>
-              <p className="text-sm text-[#505460] leading-relaxed">
-                {unanswered > 0
-                  ? `You have answered ${answeredCount} of ${total} questions. Submit anyway?`
-                  : 'Submit your answers now and view your performance.'}
-              </p>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Confirm"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl bg-white p-5 border border-[#1A1B20]/[0.08] shadow-[0_24px_48px_-12px_rgba(14,15,20,0.35)] space-y-4 page-enter"
+          >
             {confirm === 'exit' ? (
-              <TactileButton variant="dark" size="sm" onClick={onBack}>
-                Leave exam
-              </TactileButton>
+              <div className="space-y-1">
+                <p className="font-display text-base font-bold text-[#1A1B20]">Leave this exam?</p>
+                <p className="text-sm text-[#505460] leading-relaxed">
+                  Your current answers will not be saved.
+                </p>
+              </div>
             ) : (
-              renderAnimatedSubmitButton(() => triggerAnimatedSubmit(false), 'Submit exam')
+              <div className="space-y-1">
+                <p className="font-display text-base font-bold text-[#1A1B20]">
+                  {unanswered > 0
+                    ? `${unanswered} unanswered question${unanswered === 1 ? '' : 's'}`
+                    : 'Submit exam?'}
+                </p>
+                <p className="text-sm text-[#505460] leading-relaxed">
+                  {unanswered > 0
+                    ? `You have answered ${answeredCount} of ${total} questions. Submit anyway?`
+                    : 'Submit your answers now and view your performance.'}
+                </p>
+              </div>
             )}
-            <TactileButton
-              variant="light"
-              size="sm"
-              disabled={isBusySubmitting}
-              onClick={() => setConfirm(null)}
-            >
-              Keep going
-            </TactileButton>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {confirm === 'exit' ? (
+                <TactileButton variant="dark" size="sm" onClick={onBack}>
+                  Leave exam
+                </TactileButton>
+              ) : (
+                renderAnimatedSubmitButton(() => triggerAnimatedSubmit(false), 'Submit exam')
+              )}
+              <TactileButton
+                variant="light"
+                size="sm"
+                disabled={isBusySubmitting}
+                onClick={() => setConfirm(null)}
+              >
+                Keep going
+              </TactileButton>
+            </div>
           </div>
-        </div>
-      </div>
-    );
+        </div>,
+        document.body
+      );
 
     // CBT Mode: One question at a time with A–D options
     if (exam.examType === 'cbt') {
