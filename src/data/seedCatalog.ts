@@ -273,9 +273,9 @@ export const SEED_PAST_QUESTIONS: PastQuestionDoc[] = [
 export const SEED_NOTIFICATIONS: AppNotification[] = [
   {
     id: 'notif-1',
-    title: 'New AAUA 2024/2025 Harmattan Papers Indexed',
+    title: 'New AAUA 2024/2025 Harmattan Past Questions Indexed',
     message:
-      'GNS 102 and GNS 103 general studies papers have been scanned, indexed, and added to the searchable archive.',
+      'GNS 102 and GNS 103 general studies past questions have been scanned, indexed, and added to the searchable archive.',
     category: 'upload',
     createdAt: '2026-11-22T16:35:00.000Z',
     isRead: false,
@@ -285,7 +285,7 @@ export const SEED_NOTIFICATIONS: AppNotification[] = [
     id: 'notif-2',
     title: 'AAUA Portal Live for All Departments',
     message:
-      'Filter instantly by Academic Session, Semester, and Course Code. Every paper is free to read.',
+      'Filter instantly by Academic Session, Semester, and Course Code. Every past question is free to read.',
     category: 'system',
     createdAt: '2026-11-21T08:00:00.000Z',
     isRead: false,

@@ -13,6 +13,7 @@ import {
   SEED_SCHOOLS,
   SEED_SESSIONS,
 } from '../data/seedCatalog';
+import { courseHeading } from '../core/docTitle';
 
 const STORAGE_KEY = 'pqguide_aaua_store_v1';
 
@@ -183,7 +184,7 @@ class ArchiveRepository {
           {
             id: `notif-${Date.now()}`,
             title: `Uploaded ${doc.courseCode} (${doc.session})`,
-            message: `${doc.courseTitle} — ${doc.semester} was processed via ${
+            message: `${courseHeading(doc)} — ${doc.semester} was processed via ${
               doc.sourceType === 'scanned_image' ? 'Scan-to-PDF' : 'Text Extraction'
             } and indexed.`,
             category: 'upload',
@@ -267,7 +268,7 @@ class ArchiveRepository {
         {
           id: `notif-${Date.now()}`,
           title: 'Starter Samples Cleared',
-          message: 'All demo seed past questions were removed. Upload real papers via School Admin.',
+          message: 'All demo seed past questions were removed. Upload real past questions via School Admin.',
           category: 'system',
           createdAt: new Date().toISOString(),
           isRead: false,

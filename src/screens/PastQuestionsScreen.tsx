@@ -4,6 +4,7 @@ import type { PastQuestionDoc } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { SearchField } from '../components/ui/SearchField';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
+import { courseSubtitle } from '../core/docTitle';
 
 interface PastQuestionsScreenProps {
   onOpenDocument: (doc: PastQuestionDoc) => void;
@@ -29,7 +30,7 @@ const DocRow: React.FC<{ doc: PastQuestionDoc; onOpen: (doc: PastQuestionDoc) =>
           </span>
           <span className="text-xs font-mono-tabular text-[#686C78]">{doc.level}</span>
         </div>
-        <p className="mt-0.5 text-xs sm:text-sm text-[#3A3D47] line-clamp-2">{doc.courseTitle}</p>
+        <p className="mt-0.5 text-xs sm:text-sm text-[#3A3D47] line-clamp-2">{courseSubtitle(doc)}</p>
       </div>
     </div>
 

@@ -47,9 +47,6 @@ export const SchoolAdminScreen: React.FC = () => {
       setSession(result.suggestedSession);
       setSemester(result.suggestedSemester);
       setEditableText(result.suggestedQuestions.join('\n'));
-      if (!courseTitle.trim()) {
-        setCourseTitle(`${result.suggestedCourseCode} Examination Paper`);
-      }
     } catch (err) {
       setErrorMsg(
         err instanceof Error ? err.message : 'Could not process uploaded file.'
@@ -79,7 +76,7 @@ export const SchoolAdminScreen: React.FC = () => {
       schoolId: selectedSchool.id,
       schoolCode: selectedSchool.code,
       courseCode: courseCode.trim().toUpperCase() || 'CSC 101',
-      courseTitle: courseTitle.trim() || 'University Examination Past Question',
+      courseTitle: courseTitle.trim() || 'Past Question',
       department: department.trim() || 'General Studies',
       faculty: faculty.trim() || 'Academic Affairs',
       level,
@@ -232,11 +229,10 @@ export const SchoolAdminScreen: React.FC = () => {
 
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-medium text-[#686C78] mb-1">
-                    Course Title
+                    Course Title (optional)
                   </label>
                   <input
                     type="text"
-                    required
                     value={courseTitle}
                     onChange={(e) => setCourseTitle(e.target.value)}
                     placeholder="e.g. Computer Programming I"
@@ -322,7 +318,7 @@ export const SchoolAdminScreen: React.FC = () => {
                 Recent Uploads
               </h2>
               <p className="text-xs text-[#686C78]">
-                Latest indexed papers from school uploaders
+                Latest indexed past questions from school uploaders
               </p>
             </div>
             <span className="font-mono-tabular text-xs font-semibold text-[#1A1B20]">

@@ -135,16 +135,16 @@ const SLIDES: OnboardingSlide[] = [
   },
   {
     id: 'scan',
-    title: 'Clear Scans & Typed Papers',
+    title: 'Clear Scans & Typed Past Questions',
     subtitle:
-      'Photo uploads convert into crisp Scan-to-PDF sheets while typed papers are indexed for instant keyword search.',
+      'Photo uploads convert into crisp Scan-to-PDF sheets while typed past questions are indexed for instant keyword search.',
     ctaLabel: 'Next',
   },
   {
     id: 'ai',
     title: 'Smart AI Study Companion',
     subtitle:
-      'Pick any course to predict likely questions, research core topics, or practice full past papers by year.',
+      'Pick any course to predict likely questions, research core topics, or practice full past questions by year.',
     ctaLabel: 'Continue',
   },
 ];

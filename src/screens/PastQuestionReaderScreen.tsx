@@ -9,6 +9,7 @@ import { SurfaceCard } from '../components/ui/SurfaceCard';
 import { TactileButton } from '../components/ui/TactileButton';
 import { AnswerSheet } from '../components/ui/AnswerSheet';
 import bannerAshWaves from '../assets/images/banner_ash_waves.webp';
+import { courseHeading } from '../core/docTitle';
 
 interface PastQuestionReaderScreenProps {
   doc: PastQuestionDoc | null;
@@ -69,7 +70,7 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
     return (
       <SurfaceCard tone="white" className="text-center py-12 page-enter">
         <p className="font-display text-lg font-bold text-[#1A1B20]">
-          Select a past question paper
+          Select a past question
         </p>
         <p className="text-sm text-[#686C78] mt-1">
           Choose any course from the archive to open its indexed questions.
@@ -121,7 +122,7 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
           </TactileButton>
 
           <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
-            {doc.courseCode} — {doc.courseTitle}
+            {courseHeading(doc)}
           </h1>
           <p className="mt-1.5 text-xs text-[#C3C7D2] font-mono-tabular">
             {doc.session} · {doc.level}

@@ -369,7 +369,7 @@ export const AiAssistantShowcase: React.FC = () => {
     ? 'Research · CSC 201'
     : isOpt3YearsLoading || isOpt3Years
     ? 'All Past Questions'
-    : 'CSC 201 · 2020 Paper';
+    : 'CSC 201 · 2020 Past Question';
 
   const headerSubtitle = isCourseSelect
     ? 'Pick a course to start studying'
@@ -730,7 +730,7 @@ export const AiAssistantShowcase: React.FC = () => {
               <div className="w-full h-full rounded-xl bg-white border border-[#1A1B20]/[0.07] p-2.5 flex flex-col text-left page-enter">
                 <div className="flex items-center justify-between border-b border-[#1A1B20]/10 pb-1.5 shrink-0">
                   <span className="font-display text-[11px] font-bold text-[#1A1B20]">
-                    AAUA · CSC 201 (2020 Paper)
+                    AAUA · CSC 201 (2020 Past Question)
                   </span>
                   <span className="font-mono-tabular text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#1D1E23] text-white">
                     2020

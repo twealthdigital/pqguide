@@ -17,6 +17,7 @@ import {
   WaveHeader,
 } from '../components/ui';
 import type { SearchActionPhase } from '../components/ui/WaveHeader';
+import { courseSubtitle } from '../core/docTitle';
 
 interface HomeScreenProps {
   onOpenDocument: (doc: PastQuestionDoc) => void;
@@ -377,7 +378,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       />
 
       {/* Featured Cards Row (Dark Ash Wave Card + Soft Ash Card matching Master Task Management UI) */}
-      <section aria-label="Quick actions and featured papers">
+      <section aria-label="Quick actions and featured past questions">
         <div className="flex items-center justify-between mb-3.5">
           <h2 className="font-display text-lg font-bold text-[#1A1B20]">
             Featured & Quick Actions
@@ -408,7 +409,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   {heroFeaturedDoc.courseCode} · {heroFeaturedDoc.level}
                 </h3>
                 <p className="text-xs text-[#B6BAC6] mt-1 line-clamp-2">
-                  {heroFeaturedDoc.courseTitle}
+                  {courseSubtitle(heroFeaturedDoc)}
                 </p>
               </div>
 
@@ -445,7 +446,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   {secondaryHighlightDoc.courseCode} · {secondaryHighlightDoc.level}
                 </h3>
                 <p className="text-xs text-[#5A5E6B] mt-1 line-clamp-2">
-                  {secondaryHighlightDoc.courseTitle}
+                  {courseSubtitle(secondaryHighlightDoc)}
                 </p>
               </div>
 
@@ -481,7 +482,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <li className="flex items-start gap-2">
                   <Sparkles className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
                   <span>
-                    Open a paper, then tap View answer under any question.
+                    Open a past question, then tap View answer under any question.
                   </span>
                 </li>
               </ol>
@@ -492,11 +493,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </section>
 
       {/* Searchable Past Questions List */}
-      <section ref={resultsRef} aria-label="Past question papers">
+      <section ref={resultsRef} aria-label="Past questions">
         <div className="flex items-center justify-between mb-3.5">
           <div>
             <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              Past Question Papers
+              Past Questions
             </h2>
             <p className="text-xs text-[#686C78] font-mono-tabular mt-0.5">
               Explore free past questions
@@ -521,14 +522,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         ) : filteredDocs.length === 0 ? (
           <SurfaceCard tone="white" className="text-center py-10 px-6">
             <p className="font-display text-base font-bold text-[#1A1B20]">
-              No matching papers found
+              No matching past questions found
             </p>
             <p className="text-sm text-[#686C78] mt-1 max-w-md mx-auto">
               Try clearing your session or semester filter, or search another course code.
             </p>
             <div className="mt-5 flex justify-center">
               <TactileButton variant="dark" size="sm" onClick={resetFilters}>
-                Show All {activeSchool.code} Papers
+                Show All {activeSchool.code} Past Questions
               </TactileButton>
             </div>
           </SurfaceCard>
@@ -559,7 +560,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs sm:text-sm text-[#3A3D47] line-clamp-2">
-                        {doc.courseTitle}
+                        {courseSubtitle(doc)}
                       </p>
                     </div>
                   </div>

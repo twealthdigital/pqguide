@@ -1134,7 +1134,7 @@ export const ScanToPdfShowcase: React.FC = () => {
                           AAUA · CSC 201 (2023/2024)
                         </p>
                         <p className="text-[10px] text-[#9A9FAD]">
-                          Indexed Digital Exam Paper
+                          Indexed Digital Past Question
                         </p>
                       </div>
                       <span className="font-mono-tabular text-[9px] font-bold px-1.5 py-0.5 rounded bg-white text-[#1D1E23]">

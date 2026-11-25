@@ -64,12 +64,12 @@ const AboutPage: React.FC = () => (
     <div className={card}>
       <p className="text-sm sm:text-base text-[#3A3D47] leading-relaxed">
         pqguide is a fast, simple home for university past questions. Search a course code, open the
-        paper and revise with worked answers, all in one place and quick even on a slow connection.
+        past question and revise with worked answers, all in one place and quick even on a slow connection.
       </p>
     </div>
     <FeatureRow
       icon={<CheckCircle2 className="w-5 h-5" />}
-      title="Verified papers"
+      title="Verified past questions"
       text="Past questions are added by school admins and checked before they are published."
     />
     <FeatureRow
@@ -90,13 +90,13 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
     <FeatureRow
       icon={<Search className="w-5 h-5" />}
       title="Past question archive"
-      text="Find papers by course code, keyword, session, semester and level."
+      text="Find past questions by course code, keyword, session, semester and level."
       action={{ label: 'Open the archive', onClick: () => onNavigate('home') }}
     />
     <FeatureRow
       icon={<FileText className="w-5 h-5" />}
       title="Worked answers"
-      text="Open a paper, then tap View answer under a question to see how it is solved."
+      text="Open a past question, then tap View answer under a question to see how it is solved."
       action={{ label: 'Browse past questions', onClick: () => onNavigate('past_questions') }}
     />
     <FeatureRow
@@ -108,13 +108,13 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
     <FeatureRow
       icon={<Bell className="w-5 h-5" />}
       title="Alerts"
-      text="Get notified when new papers are added to the archive."
+      text="Get notified when new past questions are added to the archive."
       action={{ label: 'See alerts', onClick: () => onNavigate('notifications') }}
     />
     <FeatureRow
       icon={<ScanLine className="w-5 h-5" />}
       title="Scan-to-PDF uploads for schools"
-      text="School admins can scan or upload papers and have them indexed automatically."
+      text="School admins can scan or upload past questions and have them indexed automatically."
       action={{ label: 'School admin', onClick: () => onNavigate('school_admin') }}
     />
   </div>
@@ -122,23 +122,23 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
 
 const FAQ: Array<{ q: string; a: string }> = [
   {
-    q: 'I cannot find a paper',
+    q: 'I cannot find a past question',
     a: 'Search with just the course code (for example GNS 101) and clear any session, semester or level filters. If it is still missing, it may not have been uploaded yet.',
   },
   {
     q: 'How do I see the answer to a question?',
-    a: 'Open the paper, then tap View answer under the question. Answers are added by admins, so a few questions may not have one yet.',
+    a: 'Open the past question, then tap View answer under the question. Answers are added by admins, so a few questions may not have one yet.',
   },
   {
-    q: 'Where are the papers I opened recently?',
-    a: 'Tap PQs on the bottom bar (Past Questions on desktop). Your recently opened papers are listed at the top.',
+    q: 'Where are the past questions I opened recently?',
+    a: 'Tap PQs on the bottom bar (Past Questions on desktop). Your recently opened past questions are listed at the top.',
   },
   {
     q: 'How do I go back?',
-    a: 'Use the Back button at the top of a paper or guide. It takes you to the screen you came from.',
+    a: 'Use the Back button at the top of a past question or guide. It takes you to the screen you came from.',
   },
   {
-    q: 'How do I know when a new paper is added?',
+    q: 'How do I know when a new past question is added?',
     a: 'Tap the bell at the top of the screen to see your alerts.',
   },
 ];
@@ -151,7 +151,7 @@ const HelpPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavigate
         {[
           'Pick your academic session and semester.',
           'Search a course code or keyword, for example GNS 101.',
-          'Open a paper, then tap View answer under any question.',
+          'Open a past question, then tap View answer under any question.',
         ].map((step, i) => (
           <li key={step} className="flex items-start gap-3 text-sm text-[#3A3D47]">
             <span className="h-6 w-6 rounded-full bg-[#1D1E23] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-px">
@@ -193,7 +193,7 @@ const HelpPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavigate
   </div>
 );
 
-const TOPICS = ['Cannot find a paper', 'Problem with an answer', 'Account or login', 'Something else'];
+const TOPICS = ['Cannot find a past question', 'Problem with an answer', 'Account or login', 'Something else'];
 
 const SupportPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavigate }) => {
   const { supportEmail, supportWhatsApp } = SITE_INFO;

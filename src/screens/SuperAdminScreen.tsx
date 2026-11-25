@@ -12,6 +12,7 @@ import {
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { archiveRepository } from '../services/archiveRepository';
 import { CustomSelect, SurfaceCard, TactileButton } from '../components/ui';
+import { courseHeading } from '../core/docTitle';
 
 export const SuperAdminScreen: React.FC = () => {
   const store = useArchiveStore();
@@ -96,7 +97,7 @@ export const SuperAdminScreen: React.FC = () => {
       >
         <SurfaceCard tone="white" className="p-4 sm:p-5">
           <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Indexed Papers</span>
+            <span className="text-xs font-medium">Indexed Past Questions</span>
             <FileText className="w-4 h-4" />
           </div>
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
@@ -109,7 +110,7 @@ export const SuperAdminScreen: React.FC = () => {
 
         <SurfaceCard tone="white" className="p-4 sm:p-5">
           <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Paper Opens</span>
+            <span className="text-xs font-medium">Past Question Opens</span>
             <Eye className="w-4 h-4" />
           </div>
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
@@ -326,7 +327,7 @@ export const SuperAdminScreen: React.FC = () => {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-[#1A1B20] truncate">
-                    {doc.schoolCode} · {doc.courseCode} — {doc.courseTitle}
+                    {doc.schoolCode} · {courseHeading(doc)}
                   </p>
                   <p className="text-xs text-[#686C78] font-mono-tabular truncate">
                     {doc.session} · {doc.semester} · Uploaded by {doc.uploadedBy} ·{' '}
