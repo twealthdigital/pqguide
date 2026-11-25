@@ -58,6 +58,10 @@ const NotificationsScreen = lazy(() =>
 );
 
 
+const MockExamScreen = lazy(() =>
+  import('./screens/MockExamScreen').then((m) => ({ default: m.MockExamScreen }))
+);
+
 const SchoolAdminScreen = lazy(() =>
   import('./screens/SchoolAdminScreen').then((m) => ({
     default: m.SchoolAdminScreen,
@@ -133,7 +137,7 @@ export default function App() {
   const handleNavigate = useCallback((screen: AppScreen) => {
     setNav((prev) => {
       if (prev.screen === screen) return prev;
-      const remember = screen === 'notifications';
+      const remember = screen === 'notifications' || screen === 'mock_exam';
       return { ...prev, screen, stack: remember ? [...prev.stack, entryOf(prev)] : [] };
     });
     scrollTop();
@@ -264,6 +268,8 @@ export default function App() {
             onBack={handleBack}
           />
         )}
+
+        {activeScreen === 'mock_exam' && <MockExamScreen onBack={handleBack} />}
 
         {(activeScreen === 'about' ||
           activeScreen === 'services' ||

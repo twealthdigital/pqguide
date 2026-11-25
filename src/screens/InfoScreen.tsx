@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Bell,
   BookOpen,
   CheckCircle2,
+  ClipboardCheck,
   FileText,
   Headphones,
   Mail,
@@ -14,6 +15,7 @@ import {
 import type { AppScreen } from '../core/types';
 import { SITE_INFO } from '../data/siteInfo';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
+import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
 
 export type InfoPage = 'about' | 'services' | 'help' | 'support';
@@ -26,7 +28,7 @@ interface InfoScreenProps {
 const HEADERS: Record<InfoPage, { title: string; subtitle: string }> = {
   about: { title: 'About pqguide', subtitle: 'The Past Questions Guide' },
   services: { title: 'Services', subtitle: 'What you can do on pqguide' },
-  help: { title: 'Help', subtitle: 'Quick answers to get you going' },
+  help: { title: 'Help', subtitle: 'How it works, and quick answers' },
   support: { title: 'Customer Support', subtitle: 'We are here to help' },
 };
 
@@ -82,6 +84,29 @@ const AboutPage: React.FC = () => (
       title="Free to read"
       text="Reading guides for general courses are free for every student."
     />
+    <FeatureRow
+      icon={<ClipboardCheck className="w-5 h-5" />}
+      title="Practice exams made for you"
+      text="Choose a course, how many questions and how much time you have. pqguide predicts an exam from real past questions and times you while you answer."
+    />
+    <div className={card}>
+      <h2 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">
+        How the exam prediction works
+      </h2>
+      <div className="mt-2 space-y-2.5 text-xs sm:text-sm text-[#505460] leading-relaxed">
+        <p>
+          There is no guessing game behind it. pqguide looks through the past questions in the
+          archive for the course you pick and chooses the ones most likely to matter: themes that
+          keep coming back across sessions, questions from the latest session, and anything that
+          matches the topic you ask to focus on.
+        </p>
+        <p>
+          You answer under a timer, then see the model answer for each question and mark yourself
+          to get a score. It is a practice guide, not a promise of what your lecturer will set, so
+          use it alongside your notes and the reading guides.
+        </p>
+      </div>
+    </div>
   </div>
 );
 
@@ -98,6 +123,12 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
       title="Worked answers"
       text="Open a past question, then tap View answer under a question to see how it is solved."
       action={{ label: 'Browse past questions', onClick: () => onNavigate('past_questions') }}
+    />
+    <FeatureRow
+      icon={<ClipboardCheck className="w-5 h-5" />}
+      title="Practice exams"
+      text="Set up an exam your way: pick the course, number of questions, time and a topic to focus on. pqguide predicts the exam from past questions, times you, then shows the model answers so you can mark yourself."
+      action={{ label: 'Start a practice exam', onClick: () => onNavigate('mock_exam') }}
     />
     <FeatureRow
       icon={<BookOpen className="w-5 h-5" />}
@@ -120,78 +151,266 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
   </div>
 );
 
-const FAQ: Array<{ q: string; a: string }> = [
+interface HelpAction {
+  label: string;
+  screen: AppScreen;
+}
+
+interface HelpItem {
+  id: string;
+  title: string;
+  text: string;
+  /** Extra words people might search for. */
+  keywords?: string;
+  action?: HelpAction;
+}
+
+const HOW_IT_WORKS: HelpItem[] = [
   {
-    q: 'I cannot find a past question',
-    a: 'Search with just the course code (for example GNS 101) and clear any session, semester or level filters. If it is still missing, it may not have been uploaded yet.',
+    id: 'find',
+    title: 'Find a past question',
+    text: 'On the home page, pick your academic session and semester, then search a course code (for example GNS 101) or a keyword. Results update as you type.',
+    keywords: 'search find filter session semester level course code archive',
+    action: { label: 'Open the archive', screen: 'home' },
   },
   {
-    q: 'How do I see the answer to a question?',
-    a: 'Open the past question, then tap View answer under the question. Answers are added by admins, so a few questions may not have one yet.',
+    id: 'open',
+    title: 'Open it and read',
+    text: 'Tap a past question to open it. Every question is laid out clearly, and you can use the search bar at the top to find words inside it.',
+    keywords: 'open read view inside search',
+    action: { label: 'Browse past questions', screen: 'past_questions' },
   },
   {
-    q: 'Where are the past questions I opened recently?',
-    a: 'Tap PQs on the bottom bar (Past Questions on desktop). Your recently opened past questions are listed at the top.',
+    id: 'answer',
+    title: 'See how it is solved',
+    text: 'Under each question, tap View answer. You get the answer and a step-by-step explanation. If a question has no answer yet, it will say so.',
+    keywords: 'answer solution explanation worked steps view answer',
   },
   {
-    q: 'How do I go back?',
-    a: 'Use the Back button at the top of a past question or guide. It takes you to the screen you came from.',
+    id: 'guides',
+    title: 'Study with reading guides',
+    text: 'Materials has free reading guides for general courses. Open one and search inside it to jump to what you need.',
+    keywords: 'materials guides notes study read learn',
+    action: { label: 'Open materials', screen: 'materials' },
   },
   {
-    q: 'How do I know when a new past question is added?',
-    a: 'Tap the bell at the top of the screen to see your alerts.',
+    id: 'exam',
+    title: 'Practice with an exam',
+    text: 'Go to Services and start a practice exam. Choose the course, number of questions, time and a topic to focus on. Answer under the timer, then compare with the model answers and mark yourself to get a score.',
+    keywords: 'exam practice mock test timer predict prediction quiz score',
+    action: { label: 'Start a practice exam', screen: 'mock_exam' },
+  },
+  {
+    id: 'alerts',
+    title: 'Get alerts',
+    text: 'Tap the bell at the top of the screen to see when new past questions are added.',
+    keywords: 'alerts notifications bell new added',
+    action: { label: 'See alerts', screen: 'notifications' },
+  },
+  {
+    id: 'back',
+    title: 'Go back',
+    text: 'Use the Back button at the top of a past question, guide or exam. It takes you to the screen you came from.',
+    keywords: 'back return previous navigate',
   },
 ];
 
-const HelpPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavigate }) => (
-  <div className="space-y-5">
-    <section aria-label="Quick start" className={card}>
-      <h2 className="font-display text-base font-bold text-[#1A1B20]">Quick start</h2>
-      <ol className="mt-3 space-y-3">
-        {[
-          'Pick your academic session and semester.',
-          'Search a course code or keyword, for example GNS 101.',
-          'Open a past question, then tap View answer under any question.',
-        ].map((step, i) => (
-          <li key={step} className="flex items-start gap-3 text-sm text-[#3A3D47]">
-            <span className="h-6 w-6 rounded-full bg-[#1D1E23] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-px">
-              {i + 1}
-            </span>
-            <span className="leading-relaxed">{step}</span>
-          </li>
-        ))}
-      </ol>
-    </section>
+const FAQ: HelpItem[] = [
+  {
+    id: 'faq-missing',
+    title: 'I cannot find a past question',
+    text: 'Search with just the course code (for example GNS 101) and clear any session, semester or level filters. If it is still missing, it may not have been uploaded yet.',
+    keywords: 'missing not found search cannot find course code filters',
+  },
+  {
+    id: 'faq-answer',
+    title: 'How do I see the answer to a question?',
+    text: 'Open the past question, then tap View answer under the question. Answers are added by admins, so a few questions may not have one yet.',
+    keywords: 'answer solution view answer explanation',
+  },
+  {
+    id: 'faq-recent',
+    title: 'Where are the past questions I opened recently?',
+    text: 'Tap PQs on the bottom bar (Past Questions on desktop). Your recently opened past questions are listed at the top.',
+    keywords: 'recent history opened pqs',
+  },
+  {
+    id: 'faq-alerts',
+    title: 'How do I know when a new past question is added?',
+    text: 'Tap the bell at the top of the screen to see your alerts.',
+    keywords: 'alerts notifications bell new',
+  },
+  {
+    id: 'faq-exam-how',
+    title: 'How does the practice exam work?',
+    text: 'You choose a course, how many questions, how long you have and, if you like, a topic to focus on. pqguide builds the exam from real past questions, runs a countdown while you type your answers, then shows the model answers so you can mark yourself.',
+    keywords: 'exam practice mock test timer countdown setup',
+    action: { label: 'Start a practice exam', screen: 'mock_exam' },
+  },
+  {
+    id: 'faq-exam-accurate',
+    title: 'Will the real exam look like the practice exam?',
+    text: 'It is a prediction, not a promise. Questions are chosen from past questions, favouring themes that keep coming back and the latest session. Use it to practise and find weak spots, and keep studying your notes and guides too.',
+    keywords: 'exam prediction accurate real predict likely',
+  },
+  {
+    id: 'faq-exam-fewer',
+    title: 'Why did I get fewer questions than I chose?',
+    text: 'An exam can only use the questions that exist for that course. If you asked for more than are available, you get all of them.',
+    keywords: 'exam fewer questions less number available',
+  },
+  {
+    id: 'faq-exam-saved',
+    title: 'Are my exam answers saved?',
+    text: 'No. Your answers stay on your screen for that attempt only. Once you leave the exam or start a new one, they are gone.',
+    keywords: 'exam answers saved history score keep',
+  },
+  {
+    id: 'faq-exam-time',
+    title: 'What happens when the time runs out?',
+    text: 'Your exam is submitted automatically with the answers you have typed, and you go straight to the results.',
+    keywords: 'exam time up timer ends submit automatic',
+  },
+];
 
-    <section aria-label="Common questions" className="space-y-2.5">
-      <h2 className="font-display text-base font-bold text-[#1A1B20]">Common questions</h2>
-      {FAQ.map((item) => (
-        <details
-          key={item.q}
-          className="group rounded-2xl bg-white border border-[#1A1B20]/[0.06] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)] open:shadow-[0_8px_20px_-6px_rgba(24,25,30,0.1)]"
-        >
-          <summary className="cursor-pointer list-none px-4 py-3.5 flex items-center justify-between gap-3 text-sm font-semibold text-[#1A1B20] [&::-webkit-details-marker]:hidden">
-            {item.q}
-            <span
-              aria-hidden="true"
-              className="text-[#686C78] text-lg leading-none transition-transform group-open:rotate-45"
-            >
-              +
-            </span>
-          </summary>
-          <p className="px-4 pb-4 -mt-1 text-sm text-[#505460] leading-relaxed">{item.a}</p>
-        </details>
-      ))}
-    </section>
+const matchesQuery = (item: HelpItem, needle: string) => {
+  const haystack = `${item.title} ${item.text} ${item.keywords ?? ''}`.toLowerCase();
+  return needle
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => haystack.includes(word));
+};
 
-    <div className={`${card} flex items-center justify-between gap-3`}>
-      <p className="text-sm text-[#3A3D47]">Still stuck? Our support team can help.</p>
-      <TactileButton variant="dark" size="sm" onClick={() => onNavigate('support')}>
-        Contact support
-      </TactileButton>
+const HelpActionLink: React.FC<{ action?: HelpAction; onNavigate: (s: AppScreen) => void }> = ({
+  action,
+  onNavigate,
+}) =>
+  action ? (
+    <button
+      type="button"
+      onClick={() => onNavigate(action.screen)}
+      className="mt-2.5 text-xs font-semibold text-[#1A1B20] underline underline-offset-4 decoration-[#1A1B20]/30 hover:decoration-[#1A1B20] cursor-pointer"
+    >
+      {action.label}
+    </button>
+  ) : null;
+
+const StepCard: React.FC<{
+  item: HelpItem;
+  number?: number;
+  onNavigate: (s: AppScreen) => void;
+}> = ({ item, number, onNavigate }) => (
+  <li className={`${card} flex items-start gap-3.5`}>
+    {number !== undefined && (
+      <span className="h-8 w-8 rounded-full bg-[#1D1E23] text-white text-xs font-bold flex items-center justify-center shrink-0">
+        {number}
+      </span>
+    )}
+    <div className="min-w-0 flex-1">
+      <h3 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">{item.title}</h3>
+      <p className="mt-0.5 text-xs sm:text-sm text-[#505460] leading-relaxed">{item.text}</p>
+      <HelpActionLink action={item.action} onNavigate={onNavigate} />
     </div>
-  </div>
+  </li>
 );
+
+const FaqItem: React.FC<{
+  item: HelpItem;
+  defaultOpen?: boolean;
+  onNavigate: (s: AppScreen) => void;
+}> = ({ item, defaultOpen, onNavigate }) => (
+  <details
+    open={defaultOpen}
+    className="group rounded-2xl bg-white border border-[#1A1B20]/[0.06] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)] open:shadow-[0_8px_20px_-6px_rgba(24,25,30,0.1)]"
+  >
+    <summary className="cursor-pointer list-none px-4 py-3.5 flex items-center justify-between gap-3 text-sm font-semibold text-[#1A1B20] [&::-webkit-details-marker]:hidden">
+      {item.title}
+      <span
+        aria-hidden="true"
+        className="text-[#686C78] text-lg leading-none transition-transform group-open:rotate-45"
+      >
+        +
+      </span>
+    </summary>
+    <div className="px-4 pb-4 -mt-1">
+      <p className="text-sm text-[#505460] leading-relaxed">{item.text}</p>
+      <HelpActionLink action={item.action} onNavigate={onNavigate} />
+    </div>
+  </details>
+);
+
+const HelpPage: React.FC<{ query: string; onNavigate: (s: AppScreen) => void }> = ({
+  query,
+  onNavigate,
+}) => {
+  const needle = query.trim().toLowerCase();
+
+  const steps = useMemo(
+    () => HOW_IT_WORKS.filter((item) => !needle || matchesQuery(item, needle)),
+    [needle]
+  );
+  const faqs = useMemo(
+    () => FAQ.filter((item) => !needle || matchesQuery(item, needle)),
+    [needle]
+  );
+  const nothing = needle && steps.length === 0 && faqs.length === 0;
+
+  return (
+    <div className="space-y-5">
+      {nothing ? (
+        <div className={`${card} text-center py-8`} role="status">
+          <p className="text-sm font-semibold text-[#1A1B20]">
+            Nothing found for &ldquo;{query.trim()}&rdquo;
+          </p>
+          <p className="mt-1 text-sm text-[#505460]">
+            Try a simpler word like exam, answer, search or login.
+          </p>
+        </div>
+      ) : (
+        <>
+          {steps.length > 0 && (
+            <section aria-label="How it works" className="space-y-2.5">
+              <h2 className="font-display text-base font-bold text-[#1A1B20]">How it works</h2>
+              <ol className="space-y-2.5">
+                {steps.map((item, i) => (
+                  <StepCard
+                    key={item.id}
+                    item={item}
+                    number={needle ? undefined : i + 1}
+                    onNavigate={onNavigate}
+                  />
+                ))}
+              </ol>
+            </section>
+          )}
+
+          {faqs.length > 0 && (
+            <section aria-label="Common questions" className="space-y-2.5">
+              <h2 className="font-display text-base font-bold text-[#1A1B20]">Common questions</h2>
+              {faqs.map((item) => (
+                <FaqItem
+                  key={item.id}
+                  item={item}
+                  defaultOpen={Boolean(needle)}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </section>
+          )}
+        </>
+      )}
+
+      <div className={`${card} flex items-center justify-between gap-3`}>
+        <p className="text-sm text-[#3A3D47]">
+          {nothing ? 'Cannot find what you need? Ask our support team.' : 'Still stuck? Our support team can help.'}
+        </p>
+        <TactileButton variant="dark" size="sm" onClick={() => onNavigate('support')}>
+          Contact support
+        </TactileButton>
+      </div>
+    </div>
+  );
+};
 
 const TOPICS = ['Cannot find a past question', 'Problem with an answer', 'Account or login', 'Something else'];
 
@@ -303,16 +522,31 @@ const SupportPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavig
 
 export const InfoScreen: React.FC<InfoScreenProps> = ({ page, onNavigate }) => {
   const header = HEADERS[page];
+  const [helpQuery, setHelpQuery] = useState('');
+
+  // Each visit to Help starts with an empty search.
+  useEffect(() => {
+    setHelpQuery('');
+  }, [page]);
+
   return (
     <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
       <DarkHeaderCard>
         <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">{header.title}</h1>
         <p className="mt-1.5 text-xs text-[#C3C7D2]">{header.subtitle}</p>
+        {page === 'help' && (
+          <SearchField
+            value={helpQuery}
+            onChange={setHelpQuery}
+            placeholder="Search help (e.g. exam, answer, alerts)..."
+            ariaLabel="Search help"
+          />
+        )}
       </DarkHeaderCard>
 
       {page === 'about' && <AboutPage />}
       {page === 'services' && <ServicesPage onNavigate={onNavigate} />}
-      {page === 'help' && <HelpPage onNavigate={onNavigate} />}
+      {page === 'help' && <HelpPage query={helpQuery} onNavigate={onNavigate} />}
       {page === 'support' && <SupportPage onNavigate={onNavigate} />}
     </div>
   );

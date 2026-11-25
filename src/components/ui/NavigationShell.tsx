@@ -635,7 +635,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         >
           <nav aria-label="Company links" className="flex items-center gap-7 text-sm font-medium">
             {infoLinks.map((item) => {
-              const active = activeScreen === item.id;
+              const active =
+                activeScreen === item.id ||
+                (item.id === 'services' && activeScreen === 'mock_exam');
               return (
                 <button
                   key={item.id}
@@ -898,7 +900,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 className="space-y-1 pt-4 border-t border-[#1A1B20]/[0.07]"
               >
                 {infoLinks.map((item) => {
-                  const isActive = activeScreen === item.id;
+                  const isActive =
+                    activeScreen === item.id ||
+                    (item.id === 'services' && activeScreen === 'mock_exam');
                   return (
                     <button
                       key={item.id}
