@@ -41,15 +41,17 @@ export const SearchField: React.FC<SearchFieldProps> = ({
 
   // Editing the text again returns the button to its search icon.
   useEffect(() => {
-    if (phase === 'done') {
+    if (phase !== 'idle') {
       clearTimer();
       setPhase('idle');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
+  const hasText = value.trim().length > 0;
+
   const runSearch = () => {
-    if (phase === 'loading') return;
+    if (!hasText || phase === 'loading') return;
     clearTimer();
     setPhase('loading');
     timerRef.current = window.setTimeout(() => {
@@ -71,6 +73,7 @@ export const SearchField: React.FC<SearchFieldProps> = ({
       role="search"
       onSubmit={(e) => {
         e.preventDefault();
+        if (!hasText) return;
         inputRef.current?.blur();
         runSearch();
       }}
@@ -91,10 +94,15 @@ export const SearchField: React.FC<SearchFieldProps> = ({
       <button
         type="submit"
         disabled={phase === 'loading'}
+        aria-disabled={!hasText}
         aria-label={
           phase === 'loading' ? 'Searching' : phase === 'done' ? 'Search complete' : 'Search'
         }
-        className="relative h-9 w-9 min-h-[36px] min-w-[36px] shrink-0 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center transition-colors duration-200 hover:bg-[#2B2D35] active:scale-95 cursor-pointer disabled:cursor-wait"
+        className={`relative h-9 w-9 min-h-[36px] min-w-[36px] shrink-0 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center transition-colors duration-200 active:scale-95 disabled:cursor-wait ${
+          hasText
+            ? 'hover:bg-[#2B2D35] cursor-pointer'
+            : 'opacity-40 cursor-not-allowed active:scale-100'
+        }`}
       >
         <span aria-hidden="true" className={iconLayer(phase === 'idle', '-rotate-45')}>
           <Search className="w-4 h-4" />
