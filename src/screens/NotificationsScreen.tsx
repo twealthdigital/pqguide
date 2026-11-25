@@ -18,6 +18,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 }) => {
   const store = useArchiveStore();
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const [openedId, setOpenedId] = useState<string | null>(null);
 
   const unreadCount = useMemo(
     () => store.notifications.filter((n) => !n.isRead).length,
@@ -33,6 +34,11 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   );
 
   const handleOpenNotification = (notif: AppNotification) => {
+    // Always land on "All" so the message you just opened never vanishes from
+    // under you (Unread drops it the moment it is marked read), and so Back
+    // from the reader returns to the All side.
+    setFilter('all');
+    setOpenedId(notif.id);
     archiveRepository.markNotificationRead(notif.id);
     if (notif.targetDocId) {
       const targetDoc = store.documents.find((d) => d.id === notif.targetDocId);
@@ -118,7 +124,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                 notif.isRead
                   ? 'bg-white border-[#1A1B20]/[0.06]'
                   : 'bg-white border-[#1D1E23]/25 shadow-[0_6px_18px_-8px_rgba(24,25,30,0.14)]'
-              }`}
+              } ${openedId === notif.id ? 'ring-2 ring-[#1D1E23]/20' : ''}`}
             >
               <div className="flex items-start gap-3.5 min-w-0">
                 <div
