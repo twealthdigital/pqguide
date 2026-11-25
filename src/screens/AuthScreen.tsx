@@ -172,8 +172,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
   useEffect(() => {
     mountedRef.current = true;
+    const onPop = (e: PopStateEvent) => {
+      const st = e.state as { __pqgOut?: string; __pqgAuthView?: AuthView } | null;
+      if (st?.__pqgOut === 'auth') {
+        setView(st.__pqgAuthView ?? 'signin');
+        setErrorMsg(null);
+        setInfoMsg(null);
+      }
+    };
+    window.addEventListener('popstate', onPop);
     return () => {
       mountedRef.current = false;
+      window.removeEventListener('popstate', onPop);
       timersRef.current.forEach((id) => window.clearTimeout(id));
       timersRef.current = [];
     };
@@ -289,6 +299,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
   const switchView = (next: AuthView, keepNotices = false) => {
     if (isBusy) return;
+    if (next !== view && typeof window !== 'undefined') {
+      window.history.pushState({ __pqgOut: 'auth', __pqgAuthView: next }, '');
+    }
     setView(next);
     setErrorMsg(null);
     if (!keepNotices) {

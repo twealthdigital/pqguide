@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBackHandler } from '../core/navGuard';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -31,6 +30,7 @@ import {
   type ExamSpec,
   type ExamType,
 } from '../core/mockExam';
+import { useBackHandler } from '../core/navGuard';
 import { saveExamPerformance } from '../core/performanceStore';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { CustomSelect } from '../components/ui/CustomSelect';
@@ -129,17 +129,17 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
   const [startState, setStartState] = useState<'idle' | 'starting' | 'started'>('idle');
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted'>('idle');
 
-  // The phone's Back button during an exam asks before leaving (press again to dismiss).
-  useBackHandler(phase === 'exam', () => {
-    if (submitState !== 'idle') return;
-    setConfirm((c) => (c === 'exit' ? null : 'exit'));
-  });
-
   const endAtRef = useRef(0);
   const startedAtRef = useRef(0);
   const startTimersRef = useRef<number[]>([]);
   const submitTimersRef = useRef<number[]>([]);
   const finishedRef = useRef(false);
+
+  // The phone's Back button during an exam asks before leaving (press again to dismiss).
+  useBackHandler(phase === 'exam', () => {
+    if (submitState !== 'idle' || finishedRef.current) return;
+    setConfirm((c) => (c !== null ? null : 'exit'));
+  });
 
   useEffect(() => {
     return () => {
@@ -829,7 +829,14 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
 
             <div className="flex flex-wrap items-center gap-2.5">
               {confirm === 'exit' ? (
-                <TactileButton variant="dark" size="sm" onClick={onBack}>
+                <TactileButton
+                  variant="dark"
+                  size="sm"
+                  onClick={() => {
+                    setConfirm(null);
+                    onBack();
+                  }}
+                >
                   Leave exam
                 </TactileButton>
               ) : (

@@ -1,5 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppScreen, PastQuestionDoc, StudentAccount, StudyMaterial } from './core/types';
+import { hasBackHandler, runTopBackHandler } from './core/navGuard';
+import type { PerformanceSubView } from './screens/PerformanceScreen';
 import { useArchiveStore } from './hooks/useArchiveStore';
 import { archiveRepository } from './services/archiveRepository';
 import { authService } from './services/authService';
@@ -90,15 +92,19 @@ interface NavState extends NavEntry {
   stack: NavEntry[];
 }
 
+interface PerfNavState {
+  view: PerformanceSubView;
+  selectedId: string | null;
+}
+
 const INITIAL_NAV: NavState = { screen: 'home', docId: null, materialId: null, stack: [] };
+const INITIAL_PERF: PerfNavState = { view: 'list', selectedId: null };
 
 const entryOf = (n: NavState): NavEntry => ({
   screen: n.screen,
   docId: n.docId,
   materialId: n.materialId,
 });
-
-import { hasBackHandler, runTopBackHandler } from './core/navGuard';
 
 function AppContent() {
   const store = useArchiveStore();
@@ -109,20 +115,24 @@ function AppContent() {
     () => authService.hasCompletedOnboarding() || authService.getActiveSession() !== null
   );
   const [nav, setNav] = useState<NavState>(INITIAL_NAV);
+  const [perf, setPerf] = useState<PerfNavState>(INITIAL_PERF);
+  const [focusSearchSignal, setFocusSearchSignal] = useState(0);
+
+  const authRef = useRef(authenticatedStudent);
+  authRef.current = authenticatedStudent;
+  const navRef = useRef<NavState>(nav);
+  navRef.current = nav;
+  const perfRef = useRef<PerfNavState>(perf);
+  perfRef.current = perf;
+  const historyIdxRef = useRef(0);
+  const skipGuardRef = useRef(false);
+
   const activeScreen = nav.screen;
   const selectedDocId = nav.docId;
   const selectedMaterialId = nav.materialId;
   // The screen "Back" would return to; also decides which tab stays highlighted
   // while a paper or guide is open.
   const parentScreen: AppScreen = nav.stack[nav.stack.length - 1]?.screen ?? 'home';
-  const [focusSearchSignal, setFocusSearchSignal] = useState(0);
-
-  // The latest nav, readable from handlers and from the phone's Back button.
-  const navRef = useRef<NavState>(nav);
-  navRef.current = nav;
-  // Where we are in the browser history, so in-app "Back" and the phone's Back agree.
-  const historyIdxRef = useRef(0);
-  const skipGuardRef = useRef(false);
 
   const unreadCount = useMemo(
     () => store.notifications.filter((n) => !n.isRead).length,
@@ -141,40 +151,90 @@ function AppContent() {
 
   const scrollTop = () => window.scrollTo({ top: 0, behavior: 'instant' });
 
-  // Every move to a new screen adds a browser-history entry, so the phone's
-  // Back button / gesture walks back through the same screens.
-  const go = useCallback((next: NavState) => {
-    navRef.current = next;
-    setNav(next);
-    historyIdxRef.current += 1;
-    window.history.pushState({ nav: next, idx: historyIdxRef.current }, '');
-    scrollTop();
-  }, []);
+  // Every move to a new screen or Performance sub-view adds a browser-history entry,
+  // so the phone's Back button / gesture walks back through the same views.
+  const go = useCallback(
+    (nextNav: NavState, nextPerf: PerfNavState = INITIAL_PERF, scroll = true) => {
+      navRef.current = nextNav;
+      perfRef.current = nextPerf;
+      setNav(nextNav);
+      setPerf(nextPerf);
+      historyIdxRef.current += 1;
+      window.history.pushState(
+        { nav: nextNav, perf: nextPerf, idx: historyIdxRef.current },
+        ''
+      );
+      if (scroll) scrollTop();
+    },
+    []
+  );
 
   useEffect(() => {
-    const existing = window.history.state as { idx?: number } | null;
-    historyIdxRef.current = typeof existing?.idx === 'number' ? existing.idx : 0;
-    window.history.replaceState({ nav: INITIAL_NAV, idx: historyIdxRef.current }, '');
+    if (authenticatedStudent) {
+      const existing = window.history.state as { idx?: number; __pqgOut?: string } | null;
+      historyIdxRef.current =
+        existing && !existing.__pqgOut && typeof existing.idx === 'number' ? existing.idx : 0;
+      navRef.current = INITIAL_NAV;
+      perfRef.current = INITIAL_PERF;
+      setNav(INITIAL_NAV);
+      setPerf(INITIAL_PERF);
+      window.history.replaceState(
+        { nav: INITIAL_NAV, perf: INITIAL_PERF, idx: historyIdxRef.current },
+        ''
+      );
+    } else {
+      window.history.replaceState(
+        { __pqgOut: hasCompletedOnboarding ? 'auth' : 'onboarding', idx: 0 },
+        ''
+      );
+    }
+    // Reset baseline history state cleanly at sign-in / sign-out transitions
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticatedStudent]);
 
+  useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
-      const state = event.state as { nav?: NavState; idx?: number } | null;
-      const idx = typeof state?.idx === 'number' ? state.idx : 0;
+      const st = event.state as {
+        __pqgOut?: 'onboarding' | 'auth';
+        nav?: NavState;
+        perf?: PerfNavState;
+        idx?: number;
+      } | null;
 
-      // An open sheet / drawer / running exam takes the Back press first:
+      if (!authRef.current) {
+        if (st?.__pqgOut === 'onboarding') {
+          authService.setOnboardingCompleted(false);
+          setHasCompletedOnboarding(false);
+        } else if (st?.__pqgOut === 'auth') {
+          authService.setOnboardingCompleted(true);
+          setHasCompletedOnboarding(true);
+        }
+        return;
+      }
+
+      const idx = typeof st?.idx === 'number' ? st.idx : 0;
+
+      // An open sheet / drawer / menu / running exam takes the Back press first:
       // stay on this screen and let it close (or ask to confirm).
       if (skipGuardRef.current) {
         skipGuardRef.current = false;
       } else if (hasBackHandler()) {
         historyIdxRef.current = idx + 1;
-        window.history.pushState({ nav: navRef.current, idx: historyIdxRef.current }, '');
+        window.history.pushState(
+          { nav: navRef.current, perf: perfRef.current, idx: historyIdxRef.current },
+          ''
+        );
         runTopBackHandler();
         return;
       }
 
       historyIdxRef.current = idx;
-      const next = state?.nav ?? INITIAL_NAV;
-      navRef.current = next;
-      setNav(next);
+      const nextNav = st?.nav ?? INITIAL_NAV;
+      const nextPerf = st?.perf ?? INITIAL_PERF;
+      navRef.current = nextNav;
+      perfRef.current = nextPerf;
+      setNav(nextNav);
+      setPerf(nextPerf);
       scrollTop();
     };
 
@@ -182,13 +242,21 @@ function AppContent() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Tabs reset the trail. Alerts (opened from the bell) remembers where you were.
+  // Tabs reset the trail. Alerts (opened from the bell) and Practice Exam remember where you were.
   const handleNavigate = useCallback(
     (screen: AppScreen) => {
       const prev = navRef.current;
-      if (prev.screen === screen) return;
+      if (prev.screen === screen) {
+        if (screen === 'performance' && perfRef.current.view !== 'list') {
+          go(prev, INITIAL_PERF);
+        }
+        return;
+      }
       const remember = screen === 'notifications' || screen === 'mock_exam';
-      go({ ...prev, screen, stack: remember ? [...prev.stack, entryOf(prev)] : [] });
+      go(
+        { ...prev, screen, stack: remember ? [...prev.stack, entryOf(prev)] : [] },
+        INITIAL_PERF
+      );
     },
     [go]
   );
@@ -209,7 +277,9 @@ function AppContent() {
       ? { ...last, stack: prev.stack.slice(0, -1) }
       : { ...INITIAL_NAV, docId: prev.docId, materialId: prev.materialId };
     navRef.current = next;
+    perfRef.current = INITIAL_PERF;
     setNav(next);
+    setPerf(INITIAL_PERF);
     scrollTop();
   }, []);
 
@@ -243,16 +313,60 @@ function AppContent() {
 
   const handleQuickFind = useCallback(() => {
     const prev = navRef.current;
-    if (prev.screen !== 'home') go({ ...prev, screen: 'home', stack: [] });
+    if (prev.screen !== 'home') {
+      go({ ...prev, screen: 'home', stack: [] }, INITIAL_PERF, false);
+    }
     setFocusSearchSignal((n) => n + 1);
+  }, [go]);
+
+  const handleExamSubmitted = useCallback(() => {
+    // Replace the mock_exam entry so pressing Back from Performance returns
+    // to where the exam was opened from, never back into the submitted exam.
+    const nextNav: NavState = { ...navRef.current, screen: 'performance', stack: [] };
+    navRef.current = nextNav;
+    perfRef.current = INITIAL_PERF;
+    setNav(nextNav);
+    setPerf(INITIAL_PERF);
+    window.history.replaceState(
+      { nav: nextNav, perf: INITIAL_PERF, idx: historyIdxRef.current },
+      ''
+    );
+    scrollTop();
+  }, []);
+
+  const handlePerfOpenDetail = useCallback(
+    (id: string) => {
+      go(navRef.current, { view: 'detail', selectedId: id });
+    },
+    [go]
+  );
+
+  const handlePerfOpenOverall = useCallback(() => {
+    go(navRef.current, { view: 'overall', selectedId: perfRef.current.selectedId });
+  }, [go]);
+
+  const handlePerfBackView = useCallback(() => {
+    if (historyIdxRef.current > 0) {
+      window.history.back();
+      return;
+    }
+    perfRef.current = INITIAL_PERF;
+    setPerf(INITIAL_PERF);
+    scrollTop();
+  }, []);
+
+  const handlePerfViewList = useCallback(() => {
+    if (perfRef.current.view === 'list') return;
+    go(navRef.current, INITIAL_PERF);
   }, [go]);
 
   const handleSignOut = useCallback(() => {
     authService.clearActiveSession();
     setAuthenticatedStudent(null);
     navRef.current = INITIAL_NAV;
+    perfRef.current = INITIAL_PERF;
     setNav(INITIAL_NAV);
-    window.history.replaceState({ nav: INITIAL_NAV, idx: historyIdxRef.current }, '');
+    setPerf(INITIAL_PERF);
   }, []);
 
   if (!hasCompletedOnboarding) {
@@ -262,6 +376,7 @@ function AppContent() {
           onComplete={() => {
             authService.setOnboardingCompleted(true);
             setHasCompletedOnboarding(true);
+            window.history.pushState({ __pqgOut: 'auth', idx: 1 }, '');
           }}
         />
       </Suspense>
@@ -277,8 +392,13 @@ function AppContent() {
             setAuthenticatedStudent(account);
           }}
           onBackToOnboarding={() => {
-            authService.setOnboardingCompleted(false);
-            setHasCompletedOnboarding(false);
+            const st = window.history.state as { __pqgOut?: string; __pqgAuthView?: string } | null;
+            if (st?.__pqgOut === 'auth' && (!st.__pqgAuthView || st.__pqgAuthView === 'signin')) {
+              window.history.back();
+            } else {
+              authService.setOnboardingCompleted(false);
+              setHasCompletedOnboarding(false);
+            }
           }}
         />
       </Suspense>
@@ -337,12 +457,20 @@ function AppContent() {
         {activeScreen === 'mock_exam' && (
           <MockExamScreen
             onBack={handleBack}
-            onSubmitted={() => handleNavigate('performance')}
+            onSubmitted={handleExamSubmitted}
           />
         )}
 
         {activeScreen === 'performance' && (
-          <PerformanceScreen onStartExam={() => handleNavigate('mock_exam')} />
+          <PerformanceScreen
+            onStartExam={() => handleNavigate('mock_exam')}
+            view={perf.view}
+            selectedId={perf.selectedId}
+            onOpenDetail={handlePerfOpenDetail}
+            onOpenOverall={handlePerfOpenOverall}
+            onBackView={handlePerfBackView}
+            onViewList={handlePerfViewList}
+          />
         )}
 
         {(activeScreen === 'about' ||

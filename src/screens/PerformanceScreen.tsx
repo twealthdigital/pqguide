@@ -21,12 +21,20 @@ import {
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { TactileButton } from '../components/ui/TactileButton';
 
+export type PerformanceSubView = 'list' | 'detail' | 'overall';
+
 interface PerformanceScreenProps {
   onStartExam: () => void;
   initialAttemptId?: string | null;
+  view?: PerformanceSubView;
+  selectedId?: string | null;
+  onOpenDetail?: (id: string) => void;
+  onOpenOverall?: () => void;
+  onBackView?: () => void;
+  onViewList?: () => void;
 }
 
-type SubView = 'list' | 'detail' | 'overall';
+type SubView = PerformanceSubView;
 type DetailFilter = 'all' | 'missed' | 'correct';
 
 const OPTION_LETTERS = ['A', 'B', 'C', 'D'] as const;
@@ -63,11 +71,20 @@ const examTypeBadge = (type: ExamPerformanceRecord['examType']) =>
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   onStartExam,
   initialAttemptId = null,
+  view: controlledView,
+  selectedId: controlledSelectedId,
+  onOpenDetail,
+  onOpenOverall,
+  onBackView,
+  onViewList,
 }) => {
   const records = useExamPerformances();
-  const [view, setView] = useState<SubView>('list');
-  const [selectedId, setSelectedId] = useState<string | null>(initialAttemptId);
+  const [localView, setLocalView] = useState<SubView>('list');
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(initialAttemptId);
   const [filter, setFilter] = useState<DetailFilter>('all');
+
+  const view = controlledView ?? localView;
+  const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : localSelectedId;
 
   const selectedRecord = useMemo(
     () => records.find((r) => r.id === selectedId) ?? records[0] ?? null,
@@ -77,15 +94,41 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   const overall = useMemo(() => computeOverallRating(records), [records]);
 
   const openDetail = (id: string) => {
-    setSelectedId(id);
     setFilter('all');
-    setView('detail');
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (onOpenDetail) {
+      onOpenDetail(id);
+    } else {
+      setLocalSelectedId(id);
+      setLocalView('detail');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
   };
 
   const openOverall = () => {
-    setView('overall');
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (onOpenOverall) {
+      onOpenOverall();
+    } else {
+      setLocalView('overall');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const goBackView = () => {
+    if (onBackView) {
+      onBackView();
+    } else {
+      setLocalView('list');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
+
+  const goListView = () => {
+    if (onViewList) {
+      onViewList();
+    } else {
+      setLocalView('list');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
   };
 
   // ------------------------------------------------------------------ Overall Rating Page
@@ -100,9 +143,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             variant="light"
             size="sm"
             icon={<ArrowLeft className="w-4 h-4" />}
-            onClick={() => setView('list')}
+            onClick={goBackView}
           >
-            Back to performance
+            Back
           </TactileButton>
           <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
             Overall rating
@@ -249,7 +292,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           <TactileButton variant="dark" onClick={onStartExam}>
             Take another exam
           </TactileButton>
-          <TactileButton variant="light" onClick={() => setView('list')}>
+          <TactileButton variant="light" onClick={goListView}>
             View all performances
           </TactileButton>
         </div>
@@ -300,7 +343,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             variant="light"
             size="sm"
             icon={<ArrowLeft className="w-4 h-4" />}
-            onClick={() => setView('list')}
+            onClick={goBackView}
           >
             Back to performance
           </TactileButton>
