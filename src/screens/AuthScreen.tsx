@@ -15,6 +15,7 @@ import {
   validateMatricNumber,
 } from '../services/authService';
 import { BrandLogo } from '../components/ui/BrandLogo';
+import { BrandWordmark } from '../components/ui/BrandWordmark';
 import { CreatableSelectInput } from '../components/ui/CreatableSelectInput';
 import { TactileButton } from '../components/ui/TactileButton';
 
@@ -611,11 +612,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         {/* Centered Brand Lockup */}
         <div className="relative z-10 flex flex-col items-center lg:items-start text-center lg:text-left px-6 pt-5 pb-11 sm:pt-7 sm:pb-14 lg:px-12 lg:py-0 lg:my-auto">
           <div className="h-16 w-16 lg:h-20 lg:w-20 rounded-[22px] lg:rounded-[26px] bg-gradient-to-b from-[#2E313B] to-[#22242C] border border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_18px_36px_-10px_rgba(0,0,0,0.55)] flex items-center justify-center">
-            <BrandLogo className="w-8 h-8 lg:w-10 lg:h-10 text-white" strokeWidth={1.9} />
+            <BrandLogo className="w-10 lg:w-[3.25rem] text-white" />
           </div>
 
-          <p className="mt-3.5 font-display text-2xl lg:text-4xl font-extrabold tracking-tight text-white">
-            pqguide
+          <p className="mt-4 text-white">
+            <BrandWordmark className="h-7 lg:h-10 w-auto" />
           </p>
           <p className="mt-1 text-xs lg:text-sm text-[#A5AAB8] max-w-xs leading-relaxed">
             University past questions indexed by session, semester, faculty, and course code.

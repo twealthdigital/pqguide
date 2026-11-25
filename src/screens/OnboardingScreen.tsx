@@ -247,7 +247,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
       {/* Floating Top Brand Mark */}
       <div className="fixed top-[calc(0.875rem+env(safe-area-inset-top))] left-4 right-4 md:top-[calc(1.5rem+env(safe-area-inset-top))] md:left-7 md:right-8 z-30 flex items-center justify-between pointer-events-none">
         <div className="h-10 w-10 md:h-11 md:w-11 rounded-2xl tactile-dark text-white flex items-center justify-center pointer-events-auto shadow-md">
-          <BrandLogo className="w-5 h-5" />
+          <BrandLogo className="w-6" />
         </div>
       </div>
 

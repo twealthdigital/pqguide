@@ -20,6 +20,7 @@ import type {
 import { getPlanById } from '../../core/pricing';
 import { CustomSelect } from './CustomSelect';
 import { BrandLogo } from './BrandLogo';
+import { BrandWordmark } from './BrandWordmark';
 import { TactileButton } from './TactileButton';
 
 interface NavigationShellProps {
@@ -247,11 +248,11 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             className="flex items-center gap-3 text-left cursor-pointer group"
           >
             <div className="h-10 w-10 rounded-2xl tactile-dark text-white flex items-center justify-center shrink-0">
-              <BrandLogo className="w-5 h-5" />
+              <BrandLogo className="w-6" />
             </div>
             <div>
-              <span className="block font-display text-base font-bold tracking-tight text-[#1A1B20]">
-                pqguide
+              <span className="block text-[#1A1B20]">
+                <BrandWordmark className="h-[17px] w-auto" />
               </span>
               <span className="block text-xs text-[#686C78]">University Exam Archive</span>
             </div>
@@ -384,7 +385,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   : 'bg-[#1D1E23] text-white'
               }`}
             >
-              <BrandLogo className="w-[18px] h-[18px]" />
+              <BrandLogo className="w-5" />
             </span>
           </button>
 
@@ -434,8 +435,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
         {/* Desktop 3-Zone Top Bar */}
         <header className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30">
-          <span className="font-display text-lg font-bold tracking-tight text-[#1A1B20] whitespace-nowrap shrink-0">
-            pqguide
+          <span className="text-[#1A1B20] shrink-0 flex items-center">
+            <BrandWordmark className="h-5 w-auto" />
           </span>
 
           <nav className="flex items-center gap-6 text-sm font-medium text-[#5A5E6B]">
@@ -628,11 +629,11 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   className="flex items-center gap-3 text-left cursor-pointer min-w-0"
                 >
                   <div className="h-10 w-10 rounded-2xl tactile-dark text-white flex items-center justify-center shrink-0">
-                    <BrandLogo className="w-5 h-5" />
+                    <BrandLogo className="w-6" />
                   </div>
                   <div className="min-w-0">
-                    <span className="block font-display text-base font-bold tracking-tight text-[#1A1B20]">
-                      pqguide
+                    <span className="block text-[#1A1B20]">
+                      <BrandWordmark className="h-[17px] w-auto" />
                     </span>
                     <span className="block text-xs text-[#686C78] truncate">
                       University Exam Archive

@@ -2,57 +2,31 @@ import React from 'react';
 
 interface BrandLogoProps {
   className?: string;
-  strokeWidth?: number;
 }
 
-export const BrandLogo: React.FC<BrandLogoProps> = ({
-  className = 'w-5 h-5',
-  strokeWidth = 2,
-}) => {
+/**
+ * pqguide glasses mark. Pure inline SVG (no network request, no defs/ids),
+ * drawn with currentColor so it adapts to light and dark surfaces.
+ * Size it by width, e.g. className="w-6" (height follows the aspect ratio).
+ */
+export const BrandLogo: React.FC<BrandLogoProps> = ({ className = 'w-6' }) => {
   return (
     <svg
-      viewBox="0 0 24 24"
-      fill="none"
+      viewBox="146 298 618 287"
       className={className}
-      aria-hidden="true"
+      fill="none"
+      role="img"
+      aria-label="pqguide"
     >
-      {/* Top-right viewfinder bracket */}
-      <path
-        d="M15.8 3.5H18.8A1.7 1.7 0 0 1 20.5 5.2V8.2"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-
-      {/* Bottom-left viewfinder bracket */}
-      <path
-        d="M3.5 15.8V18.8A1.7 1.7 0 0 0 5.2 20.5H8.2"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-
-      {/* Tilted center capsule loop */}
-      <rect
-        x="7.6"
-        y="5.1"
-        width="6.6"
-        height="10.8"
-        rx="3.3"
-        transform="rotate(-28 10.9 10.5)"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-      />
-
-      {/* Bottom-right diagonal stem */}
-      <path
-        d="M14.3 16.6L15.8 19.4"
-        stroke="currentColor"
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-      />
+      <circle cx="315.0" cy="411.0" r="96.7" fill="none" stroke="currentColor" strokeWidth="31.9"/>
+      <circle cx="594.2" cy="411.0" r="96.7" fill="none" stroke="currentColor" strokeWidth="31.9"/>
+      <path d="M414.6 399.5A40 40 0 0 1 494.6 399.5" fill="none" stroke="currentColor" strokeWidth="31"/>
+      <path d="M164 380H215M692 380H746" fill="none" stroke="currentColor" strokeWidth="32" strokeLinecap="round"/>
+      <path d="M203 380H234V440H239V565A18 18 0 0 1 203 565Z" fill="currentColor"/>
+      <path d="M676 380H708V525H672V440H676Z" fill="currentColor"/>
+      <path d="M659 489L705 553" fill="none" stroke="currentColor" strokeWidth="36" strokeLinecap="round"/>
+      <path d="M260.0 403A43.2 43.2 0 0 1 286.0 367M539.8 403A43.2 43.2 0 0 1 565.8 367" fill="none" stroke="currentColor" strokeOpacity=".12" strokeWidth="17.2" strokeLinecap="round"/>
+      <circle cx="325.7" cy="412.1" r="20.2" fill="currentColor"/><circle cx="605.8" cy="412" r="20.2" fill="currentColor"/>
     </svg>
   );
 };

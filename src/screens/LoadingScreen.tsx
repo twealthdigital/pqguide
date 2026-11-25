@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BrandLogo } from '../components/ui/BrandLogo';
+import { BrandWordmark } from '../components/ui/BrandWordmark';
 
 interface LoadingScreenProps {
   onComplete: () => void;
@@ -72,11 +73,11 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
       {/* Center Brand Emblem & Smooth Progress */}
       <div className="relative z-10 w-full max-w-sm flex flex-col items-center text-center">
         <div className="h-20 w-20 rounded-[26px] bg-gradient-to-b from-[#2E313B] to-[#22242C] border border-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_18px_40px_-10px_rgba(0,0,0,0.55)] flex items-center justify-center mb-7">
-          <BrandLogo className="w-10 h-10 text-white" strokeWidth={1.9} />
+          <BrandLogo className="w-[3.25rem] text-white" />
         </div>
 
-        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight text-white">
-          pqguide
+        <h1 className="text-white flex justify-center">
+          <BrandWordmark className="h-8 sm:h-10 w-auto" />
         </h1>
         <p className="mt-2.5 text-sm text-[#A5AAB8] max-w-xs leading-relaxed">
           University past questions indexed cleanly by session, semester, and course code.
