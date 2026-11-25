@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import {
   ArrowLeft,
-  FileText,
   Lock,
-  ScanLine,
   Search,
 } from 'lucide-react';
 import type { AppScreen, PastQuestionDoc } from '../core/types';
@@ -11,6 +9,7 @@ import { hasArchiveAccess } from '../core/pricing';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { SurfaceCard } from '../components/ui/SurfaceCard';
 import { TactileButton } from '../components/ui/TactileButton';
+import bannerAshWaves from '../assets/images/banner_ash_waves.webp';
 
 interface PastQuestionReaderScreenProps {
   doc: PastQuestionDoc | null;
@@ -24,7 +23,6 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
   onNavigate,
 }) => {
   const store = useArchiveStore();
-  const [viewMode, setViewMode] = useState<'typed' | 'scan'>('typed');
   const [inlineQuery, setInlineQuery] = useState('');
 
   if (!doc) {
@@ -66,55 +64,36 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
           Back to Archive
         </TactileButton>
 
-        {doc.sourceType === 'scanned_image' && isUnlocked && (
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-[#EAECEF]">
-            <button
-              type="button"
-              onClick={() => setViewMode('typed')}
-              className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                viewMode === 'typed'
-                  ? 'bg-white text-[#1A1B20] shadow-sm'
-                  : 'text-[#686C78]'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              Typed Index
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('scan')}
-              className={`min-h-[36px] px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                viewMode === 'scan'
-                  ? 'bg-white text-[#1A1B20] shadow-sm'
-                  : 'text-[#686C78]'
-              }`}
-            >
-              <ScanLine className="w-3.5 h-3.5" />
-              Scan-to-PDF
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Document Header Card */}
-      <SurfaceCard tone="ash" withWaves className="p-6">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-[#A5AAB8] font-mono-tabular">
-          <span>{doc.schoolCode}</span>
-          <span aria-hidden="true">·</span>
-          <span>{doc.session}</span>
-          <span aria-hidden="true">·</span>
-          <span>{doc.semester}</span>
-          <span aria-hidden="true">·</span>
-          <span>{doc.level}</span>
+      {/* Document Header: same dark ash wave look as the home banner, kept compact */}
+      <div className="relative overflow-hidden rounded-3xl bg-[#1D1E23] px-5 py-5 text-white shadow-[0_12px_28px_-10px_rgba(24,25,30,0.36)]">
+        <img
+          src={bannerAshWaves}
+          alt=""
+          aria-hidden="true"
+          width={1200}
+          height={670}
+          decoding="async"
+          className="pointer-events-none select-none absolute inset-0 h-full w-full object-cover object-center opacity-85"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(180deg, rgba(18,19,24,0.72) 0%, rgba(22,23,29,0.48) 52%, rgba(24,25,30,0.78) 100%)',
+          }}
+        />
+        <div className="relative">
+          <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">
+            {doc.courseCode} — {doc.courseTitle}
+          </h1>
+          <p className="mt-1.5 text-xs text-[#C3C7D2] font-mono-tabular">
+            {doc.session} · {doc.level}
+          </p>
         </div>
-
-        <h1 className="font-display text-2xl sm:text-3xl font-bold text-white mt-2">
-          {doc.courseCode} — {doc.courseTitle}
-        </h1>
-        <p className="text-sm text-[#B8BCC8] mt-1">
-          Department of {doc.department} · Faculty of {doc.faculty}
-        </p>
-      </SurfaceCard>
+      </div>
 
       {/* Paywall Gate when locked */}
       {!isUnlocked ? (
@@ -154,49 +133,6 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
               Browse Free Previews
             </TactileButton>
           </div>
-        </SurfaceCard>
-      ) : viewMode === 'scan' && doc.sourceType === 'scanned_image' ? (
-        <SurfaceCard tone="white" className="p-4 sm:p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-display text-base font-bold text-[#1A1B20]">
-                Digital Scan-to-PDF View
-              </h2>
-              <p className="text-xs text-[#686C78]">
-                Normalized high-contrast document sheet ({doc.originalFileName})
-              </p>
-            </div>
-          </div>
-
-          {doc.scannedPagePreviewUrl ? (
-            <div className="rounded-2xl overflow-hidden border border-[#1A1B20]/10 bg-[#F2F4F7] p-2">
-              <img
-                src={doc.scannedPagePreviewUrl}
-                alt={`Scanned exam sheet for ${doc.courseCode}`}
-                referrerPolicy="no-referrer"
-                className="w-full max-w-2xl mx-auto rounded-xl shadow-sm bg-white"
-              />
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-6 sm:p-8 max-w-2xl mx-auto shadow-inner font-serif text-[#1A1B20] space-y-4">
-              <div className="border-b border-[#1A1B20]/20 pb-3 text-center">
-                <p className="text-xs font-bold tracking-wider">
-                  ADEKUNLE AJASIN UNIVERSITY, AKUNGBA-AKOKO
-                </p>
-                <p className="text-sm font-bold mt-1">
-                  {doc.session} · {doc.semester.toUpperCase()}
-                </p>
-                <p className="text-base font-bold mt-1">
-                  {doc.courseCode}: {doc.courseTitle}
-                </p>
-              </div>
-              <div className="space-y-3 text-sm leading-relaxed">
-                {doc.questions.map((q, idx) => (
-                  <p key={idx}>{q}</p>
-                ))}
-              </div>
-            </div>
-          )}
         </SurfaceCard>
       ) : (
         <SurfaceCard tone="white" className="p-5 sm:p-7 space-y-5">
