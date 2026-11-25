@@ -19,8 +19,8 @@ import type {
 } from '../../core/types';
 import { getPlanById } from '../../core/pricing';
 import { CustomSelect } from './CustomSelect';
+import { BrandLockup } from './BrandLockup';
 import { BrandLogo } from './BrandLogo';
-import { BrandWordmark } from './BrandWordmark';
 import { TactileButton } from './TactileButton';
 
 interface NavigationShellProps {
@@ -245,17 +245,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('home')}
-            className="flex items-center gap-3 text-left cursor-pointer group"
+            className="flex flex-col items-start gap-2 text-left cursor-pointer group"
           >
-            <div className="h-10 w-10 rounded-2xl tactile-dark text-white flex items-center justify-center shrink-0">
-              <BrandLogo className="w-6" />
-            </div>
-            <div>
-              <span className="block text-[#1A1B20]">
-                <BrandWordmark className="h-[17px] w-auto" />
-              </span>
-              <span className="block text-xs text-[#686C78]">University Exam Archive</span>
-            </div>
+            <BrandLockup className="h-9 w-auto text-[#1A1B20]" />
+            <span className="block text-xs text-[#686C78]">University Exam Archive</span>
           </button>
 
           <nav aria-label="Primary desktop navigation" className="space-y-1.5">
@@ -378,15 +371,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             aria-label="pqguide home"
             className="min-h-[40px] min-w-[40px] flex items-center justify-start cursor-pointer transition-transform duration-150 active:scale-95"
           >
-            <span
-              className={`h-8 w-8 rounded-[10px] flex items-center justify-center transition-colors duration-250 ${
-                activeScreen === 'home' || isScrolled
-                  ? 'bg-[#2B2E38] text-white'
-                  : 'bg-[#1D1E23] text-white'
-              }`}
-            >
-              <BrandLogo className="w-5" />
-            </span>
+            <BrandLogo className="w-9" />
           </button>
 
           <div className="flex items-center gap-0.5">
@@ -436,7 +421,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         {/* Desktop 3-Zone Top Bar */}
         <header className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30">
           <span className="text-[#1A1B20] shrink-0 flex items-center">
-            <BrandWordmark className="h-5 w-auto" />
+            <BrandLockup className="h-8 w-auto" />
           </span>
 
           <nav className="flex items-center gap-6 text-sm font-medium text-[#5A5E6B]">
@@ -626,19 +611,12 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     onNavigate('home');
                     setDrawerOpen(false);
                   }}
-                  className="flex items-center gap-3 text-left cursor-pointer min-w-0"
+                  className="flex flex-col items-start gap-1.5 text-left cursor-pointer min-w-0"
                 >
-                  <div className="h-10 w-10 rounded-2xl tactile-dark text-white flex items-center justify-center shrink-0">
-                    <BrandLogo className="w-6" />
-                  </div>
-                  <div className="min-w-0">
-                    <span className="block text-[#1A1B20]">
-                      <BrandWordmark className="h-[17px] w-auto" />
-                    </span>
-                    <span className="block text-xs text-[#686C78] truncate">
-                      University Exam Archive
-                    </span>
-                  </div>
+                  <BrandLockup className="h-8 w-auto text-[#1A1B20]" />
+                  <span className="block text-xs text-[#686C78] truncate">
+                    University Exam Archive
+                  </span>
                 </button>
 
                 <button

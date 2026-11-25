@@ -1,4 +1,5 @@
 export { BrandLogo } from './BrandLogo';
+export { BrandLockup } from './BrandLockup';
 export { BrandWordmark } from './BrandWordmark';
 export { CreatableSelectInput } from './CreatableSelectInput';
 export { CustomSelect, type CustomSelectOption } from './CustomSelect';

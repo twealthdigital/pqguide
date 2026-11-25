@@ -8,6 +8,18 @@ export default defineConfig(() => {
   return {
     plugins: [
       react(),
+      // Social crawlers need an absolute og:image URL. On Vercel this is filled
+      // automatically from the production domain; set VITE_SITE_URL to override.
+      {
+        name: 'site-url-html',
+        transformIndexHtml(html: string): string {
+          const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+          const url = (
+            process.env.VITE_SITE_URL || (vercel ? `https://${vercel}` : '')
+          ).replace(/\/$/, '');
+          return html.split('__SITE_URL__').join(url);
+        },
+      },
       tailwindcss(),
       // Copies src/assets into dist/ so root-relative URLs like
       // "/src/assets/images/..." (e.g. generate_image output) still resolve
