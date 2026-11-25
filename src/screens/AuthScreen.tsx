@@ -592,7 +592,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         </svg>
 
         {/* Top Utility Control */}
-        <div className="relative z-10 flex items-center justify-between px-4 sm:px-8 pt-4 sm:pt-7 min-h-[52px]">
+        <div className="relative z-10 flex items-center justify-between px-4 sm:px-8 pt-[calc(1rem+env(safe-area-inset-top))] sm:pt-[calc(1.75rem+env(safe-area-inset-top))] min-h-[52px]">
           {onBackToOnboarding ? (
             <button
               type="button"

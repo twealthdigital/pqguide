@@ -115,7 +115,7 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
         {/* Mobile: full-bleed top banner with red-line asymmetric wave silhouette & zero horizontal shadow line.
             Tablet: matching asymmetric bottom silhouette with graceful right-edge curve.
             Desktop: floating sculpted rounded card. */}
-        <div className="relative -mx-4 sm:-mx-6 lg:mx-0 lg:rounded-3xl bg-[#1D1E23] px-5 pt-[76px] pb-[78px] sm:px-8 sm:pt-[84px] md:pb-[84px] lg:px-10 lg:pt-10 lg:pb-10 text-white shadow-none lg:shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)]">
+        <div className="relative -mx-4 sm:-mx-6 lg:mx-0 lg:rounded-3xl bg-[#1D1E23] px-5 pt-[calc(76px+env(safe-area-inset-top))] pb-[78px] sm:px-8 sm:pt-[calc(84px+env(safe-area-inset-top))] md:pb-[84px] lg:px-10 lg:pt-10 lg:pb-10 text-white shadow-none lg:shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)]">
           {/* Clipped background layer so anchored search dropdown can overflow cleanly below */}
           <div
             aria-hidden="true"

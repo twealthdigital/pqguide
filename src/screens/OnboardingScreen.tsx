@@ -243,9 +243,9 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
   };
 
   return (
-    <div className="h-[100dvh] max-h-[100dvh] w-full bg-white text-[#1A1B20] flex flex-col overflow-hidden page-enter">
+    <div className="fixed inset-0 w-full bg-white text-[#1A1B20] flex flex-col overflow-hidden page-enter">
       {/* Floating Top Brand Mark */}
-      <div className="fixed top-3.5 left-4 right-4 md:top-6 md:left-7 md:right-8 z-30 flex items-center justify-between pointer-events-none">
+      <div className="fixed top-[calc(0.875rem+env(safe-area-inset-top))] left-4 right-4 md:top-[calc(1.5rem+env(safe-area-inset-top))] md:left-7 md:right-8 z-30 flex items-center justify-between pointer-events-none">
         <div className="h-10 w-10 md:h-11 md:w-11 rounded-2xl tactile-dark text-white flex items-center justify-center pointer-events-auto shadow-md">
           <BrandLogo className="w-5 h-5" />
         </div>
@@ -399,7 +399,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                 {/* Top darker blurred fade */}
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 top-0 h-32 backdrop-blur-[4px]"
+                  className="pointer-events-none absolute inset-x-0 top-0 h-[calc(8rem+env(safe-area-inset-top))] backdrop-blur-[4px]"
                   style={{
                     background:
                       'linear-gradient(to bottom, rgba(29,30,35,0.52) 0%, rgba(29,30,35,0.22) 48%, rgba(29,30,35,0) 100%)',
@@ -452,7 +452,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
           />
 
           {/* Copy & Tactile Action Column */}
-          <div className="shrink-0 lg:col-span-7 relative z-10 -mt-8 md:mt-[18dvh] lg:mt-0 px-5 sm:px-8 md:px-12 pb-8 sm:pb-10 md:py-6 pt-2 lg:px-14 xl:px-20 lg:py-0 lg:h-full lg:justify-center flex flex-col items-center lg:items-start text-center lg:text-left w-full bg-white md:bg-transparent md:bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.92)_38%,rgba(255,255,255,0)_76%)] lg:bg-white lg:bg-none">
+          <div className="shrink-0 lg:col-span-7 relative z-10 -mt-8 md:mt-[18dvh] lg:mt-0 px-5 sm:px-8 md:px-12 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:pb-[calc(2.5rem+env(safe-area-inset-bottom))] md:py-6 pt-2 lg:px-14 xl:px-20 lg:py-0 lg:h-full lg:justify-center flex flex-col items-center lg:items-start text-center lg:text-left w-full bg-white md:bg-transparent md:bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.92)_38%,rgba(255,255,255,0)_76%)] lg:bg-white lg:bg-none">
             <div className="w-full max-w-md md:max-w-xl mx-auto lg:mx-0 flex flex-col items-center lg:items-start">
               <h1
                 className="font-display text-2xl sm:text-4xl md:text-[48px] lg:text-[48px] xl:text-[54px] font-extrabold tracking-tight text-[#1A1B20] leading-[1.15] md:leading-[1.08]"

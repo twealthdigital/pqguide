@@ -237,7 +237,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   ];
 
   return (
-    <div className="min-h-screen bg-[#F6F7F9] text-[#1A1B20] flex flex-col lg:flex-row">
+    <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#1A1B20] flex flex-col lg:flex-row">
       {/* Desktop Left Sidebar */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 bg-white border-r border-[#1A1B20]/[0.07] p-5 sticky top-0 h-screen justify-between">
         <div className="space-y-7">
@@ -363,7 +363,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       <div className="flex-1 flex flex-col min-w-0 relative">
         {/* Mobile & Tablet Fixed Top Bar: compact app logo left, space, bare Bell + 3-dot menu right; turns solid dark ash smoothly on scroll */}
         <header
-          className={`lg:hidden fixed top-0 inset-x-0 z-40 h-14 px-4 sm:px-6 flex items-center justify-between transition-colors duration-250 ease-out ${
+          className={`lg:hidden fixed top-0 inset-x-0 z-40 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 sm:px-6 flex items-center justify-between transition-colors duration-250 ease-out ${
             isScrolled
               ? 'bg-[#1D1E23] text-white shadow-[0_6px_18px_-6px_rgba(14,15,20,0.42)]'
               : activeScreen === 'home'
@@ -778,7 +778,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         {/* Scrollable Content */}
         <main
           className={`flex-1 w-full max-w-6xl mx-auto px-4 pb-24 sm:px-6 lg:px-8 lg:py-8 ${
-            activeScreen === 'home' ? 'pt-0' : 'pt-[68px] lg:pt-8'
+            activeScreen === 'home' ? 'pt-0' : 'pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8'
           }`}
         >
           {children}

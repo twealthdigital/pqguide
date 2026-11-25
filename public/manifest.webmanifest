@@ -1,0 +1,14 @@
+{
+  "name": "pqguide",
+  "short_name": "pqguide",
+  "description": "Past Questions Guide: fast, searchable university past questions archive.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1D1E23",
+  "theme_color": "#1D1E23",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

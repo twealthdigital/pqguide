@@ -39,7 +39,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
 
   return (
     <div
-      className="relative min-h-screen w-full overflow-hidden bg-[#1D1E23] text-white flex flex-col items-center justify-between px-6 py-10 select-none"
+      className="relative min-h-[100dvh] w-full overflow-hidden bg-[#1D1E23] text-white flex flex-col items-center justify-between px-6 pt-[calc(2.5rem+env(safe-area-inset-top))] pb-[calc(2.5rem+env(safe-area-inset-bottom))] select-none"
       role="status"
       aria-label="Loading application"
     >
