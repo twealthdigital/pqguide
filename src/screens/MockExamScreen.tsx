@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -8,7 +7,6 @@ import {
   Clock,
   FileText,
   ListChecks,
-  Loader2,
   Minus,
   Monitor,
   Plus,
@@ -23,20 +21,13 @@ import {
   ALL_COURSES,
   EXAM_TYPES,
   buildExam,
-  collectCourseContext,
   countQuestionsFor,
   listExamCourses,
+  suggestTopicsForCourse,
   type BuiltExam,
-  type ExamQuestion,
   type ExamSpec,
   type ExamType,
 } from '../core/mockExam';
-import {
-  generateAiExamQuestions,
-  gradeTheoryAnswers,
-  suggestExamTopics,
-  type TheoryGradeResult,
-} from '../services/examAiService';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { CustomSelect } from '../components/ui/CustomSelect';
 import { TactileButton } from '../components/ui/TactileButton';
@@ -119,20 +110,12 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
 
   const [focus, setFocus] = useState('');
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
-  const [suggestLoading, setSuggestLoading] = useState(false);
-  const [suggestError, setSuggestError] = useState<string | null>(null);
-
-  const [generatingExam, setGeneratingExam] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
 
   const [exam, setExam] = useState<BuiltExam | null>(null);
   const [spec, setSpec] = useState<ExamSpec | null>(null);
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [marks, setMarks] = useState<Record<string, Mark>>({});
-  const [aiGrades, setAiGrades] = useState<Record<string, TheoryGradeResult>>({});
-  const [gradingTheory, setGradingTheory] = useState(false);
-  const [gradingNotice, setGradingNotice] = useState<string | null>(null);
 
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [usedSeconds, setUsedSeconds] = useState(0);
@@ -156,12 +139,9 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     [courses, docs]
   );
 
-  // Clear stale suggestions when course changes
   const handleCourseChange = (nextCourse: string) => {
     setCourseCode(nextCourse);
     setSuggestedTopics([]);
-    setSuggestError(null);
-    setGenerateError(null);
   };
 
   const applyCustomCount = (raw: string) => {
@@ -180,18 +160,9 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     }
   };
 
-  const handleSuggestTopics = async () => {
-    setSuggestLoading(true);
-    setSuggestError(null);
-    try {
-      const ctx = collectCourseContext(docs, STUDY_MATERIALS, courseCode);
-      const topics = await suggestExamTopics(courseCode, ctx);
-      setSuggestedTopics(topics);
-    } catch (err) {
-      setSuggestError(err instanceof Error ? err.message : 'Unable to suggest topics right now.');
-    } finally {
-      setSuggestLoading(false);
-    }
+  const handleSuggestTopics = () => {
+    const topics = suggestTopicsForCourse(docs, STUDY_MATERIALS, courseCode);
+    setSuggestedTopics(topics);
   };
 
   const toggleSuggestedTopic = (topic: string) => {
@@ -206,142 +177,34 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     setFocus(next.join(', '));
   };
 
-  const beginSession = useCallback((nextSpec: ExamSpec, built: BuiltExam) => {
-    setSpec(nextSpec);
-    setExam(built);
-    setAnswers({});
-    setMarks({});
-    setAiGrades({});
-    setGradingTheory(false);
-    setGradingNotice(null);
-    setCurrent(0);
+  const startExam = useCallback(
+    (nextSpec: ExamSpec) => {
+      const built = buildExam(docs, nextSpec);
+      if (built.questions.length === 0) return;
+      setSpec(nextSpec);
+      setExam(built);
+      setAnswers({});
+      setMarks({});
+      setCurrent(0);
+      setConfirm(null);
+      setEndedByTimer(false);
+      setUsedSeconds(0);
+      startedAtRef.current = Date.now();
+      endAtRef.current = Date.now() + nextSpec.minutes * 60_000;
+      setSecondsLeft(nextSpec.minutes * 60);
+      setPhase('exam');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    },
+    [docs]
+  );
+
+  const finishExam = useCallback((byTimer: boolean) => {
+    setUsedSeconds(Math.round((Date.now() - startedAtRef.current) / 1000));
+    setEndedByTimer(byTimer);
     setConfirm(null);
-    setEndedByTimer(false);
-    setUsedSeconds(0);
-    startedAtRef.current = Date.now();
-    endAtRef.current = Date.now() + nextSpec.minutes * 60_000;
-    setSecondsLeft(nextSpec.minutes * 60);
-    setPhase('exam');
+    setPhase('review');
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
-
-  const startExam = useCallback(
-    async (nextSpec: ExamSpec) => {
-      setGenerateError(null);
-      const ctx = collectCourseContext(docs, STUDY_MATERIALS, nextSpec.courseCode);
-
-      if (nextSpec.examType === 'theory') {
-        const localBuilt = buildExam(docs, nextSpec);
-        if (nextSpec.questionCount <= localBuilt.poolSize && localBuilt.questions.length > 0) {
-          beginSession(nextSpec, localBuilt);
-          return;
-        }
-        // Student requested more theory questions than raw archive pool — supplement with AI
-        setGeneratingExam(true);
-        try {
-          const needed = Math.max(1, nextSpec.questionCount - localBuilt.questions.length);
-          const extra = await generateAiExamQuestions({
-            examType: 'theory',
-            courseCode: nextSpec.courseCode,
-            questionCount: needed,
-            focus: nextSpec.focus,
-            ctx,
-          });
-          const merged: ExamQuestion[] = [...localBuilt.questions, ...extra].map((q, idx) => ({
-            ...q,
-            number: idx + 1,
-          }));
-          beginSession(nextSpec, {
-            examType: 'theory',
-            poolSize: localBuilt.poolSize,
-            questions: merged,
-          });
-        } catch (err) {
-          if (localBuilt.questions.length > 0) {
-            // If archive questions exist and user accepts fallback only? No — surface clear error so they know why extra count couldn't generate
-            setGenerateError(err instanceof Error ? err.message : 'Unable to generate additional theory questions.');
-          } else {
-            setGenerateError(err instanceof Error ? err.message : 'Unable to prepare exam.');
-          }
-        } finally {
-          setGeneratingExam(false);
-        }
-        return;
-      }
-
-      // OBJ, CBT, True/False: generated via Gemini AI from course past questions + guides
-      setGeneratingExam(true);
-      try {
-        const questions = await generateAiExamQuestions({
-          examType: nextSpec.examType,
-          courseCode: nextSpec.courseCode,
-          questionCount: nextSpec.questionCount,
-          focus: nextSpec.focus,
-          ctx,
-        });
-        if (questions.length === 0) {
-          setGenerateError('No questions could be generated. Please try again.');
-          return;
-        }
-        beginSession(nextSpec, {
-          examType: nextSpec.examType,
-          poolSize: pool,
-          questions,
-        });
-      } catch (err) {
-        setGenerateError(err instanceof Error ? err.message : 'Unable to generate this exam.');
-      } finally {
-        setGeneratingExam(false);
-      }
-    },
-    [beginSession, docs, pool]
-  );
-
-  const finishExam = useCallback(
-    async (byTimer: boolean) => {
-      setUsedSeconds(Math.round((Date.now() - startedAtRef.current) / 1000));
-      setEndedByTimer(byTimer);
-      setConfirm(null);
-      setPhase('review');
-      window.scrollTo({ top: 0, behavior: 'instant' });
-
-      if (exam && exam.examType === 'theory') {
-        const answeredItems = exam.questions
-          .map((q) => ({
-            id: q.id,
-            question: q.text,
-            modelAnswer: q.solution?.answer ?? '',
-            studentAnswer: (answers[q.id] ?? '').trim(),
-          }))
-          .filter((item) => item.studentAnswer.length > 0);
-
-        if (answeredItems.length > 0) {
-          setGradingTheory(true);
-          setGradingNotice(null);
-          try {
-            const results = await gradeTheoryAnswers(answeredItems);
-            const map: Record<string, TheoryGradeResult> = {};
-            const initialMarks: Record<string, Mark> = {};
-            for (const r of results) {
-              map[r.id] = r;
-              initialMarks[r.id] = r.verdict;
-            }
-            setAiGrades(map);
-            setMarks((prev) => ({ ...initialMarks, ...prev }));
-          } catch (err) {
-            setGradingNotice(
-              err instanceof Error
-                ? `${err.message} You can still mark yourself below.`
-                : 'AI examiner feedback is unavailable right now. Mark yourself below.'
-            );
-          } finally {
-            setGradingTheory(false);
-          }
-        }
-      }
-    },
-    [answers, exam]
-  );
 
   // Countdown. Based on the clock, so it stays correct if the tab sleeps.
   useEffect(() => {
@@ -350,7 +213,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
       const left = Math.round((endAtRef.current - Date.now()) / 1000);
       if (left <= 0) {
         setSecondsLeft(0);
-        void finishExam(true);
+        finishExam(true);
       } else {
         setSecondsLeft(left);
       }
@@ -363,7 +226,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
   const handleStart = () => {
     const safeCount = Math.max(1, Math.min(50, questionCount || 5));
     const safeMinutes = Math.max(1, Math.min(240, minutes || 30));
-    void startExam({
+    startExam({
       examType,
       courseCode,
       questionCount: safeCount,
@@ -476,7 +339,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
         {phase === 'review' &&
           (isAutoGraded
             ? `${activeExamMeta.badge} · Auto-graded summary and explanations`
-            : `${activeExamMeta.badge} · Compare with model answers and review your marks`)}
+            : `${activeExamMeta.badge} · Compare with the model answers and mark yourself`)}
       </p>
 
       {phase === 'exam' && total > 0 && (
@@ -527,10 +390,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                         type="button"
                         role="radio"
                         aria-checked={active}
-                        onClick={() => {
-                          setExamType(type.id);
-                          setGenerateError(null);
-                        }}
+                        onClick={() => setExamType(type.id)}
                         className={`text-left rounded-xl p-3.5 border transition-all duration-150 cursor-pointer flex items-start gap-3 ${
                           active
                             ? 'bg-[#1D1E23] text-white border-transparent shadow-[0_6px_16px_-6px_rgba(24,25,30,0.35)]'
@@ -635,9 +495,8 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                 )}
 
                 <p className="mt-2 text-xs text-[#686C78]">
-                  {questionCount} question{questionCount === 1 ? '' : 's'} selected · {pool} archive past question
-                  {pool === 1 ? '' : 's'} available.
-                  {examType !== 'theory' && ' AI builds tailored questions from your course archive.'}
+                  {questionCount} question{questionCount === 1 ? '' : 's'} selected · {pool} past question
+                  {pool === 1 ? '' : 's'} in archive.
                 </p>
               </div>
 
@@ -705,7 +564,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                 )}
               </div>
 
-              {/* Topic to Focus On + AI Suggest Button */}
+              {/* Topic to Focus On + Suggest Button */}
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <label htmlFor="exam-focus" className="text-xs font-semibold text-[#686C78]">
@@ -713,16 +572,11 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                   </label>
                   <button
                     type="button"
-                    onClick={() => void handleSuggestTopics()}
-                    disabled={suggestLoading}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D1E23] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2B2D35] disabled:opacity-60 transition-colors cursor-pointer"
+                    onClick={handleSuggestTopics}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D1E23] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2B2D35] transition-colors cursor-pointer"
                   >
-                    {suggestLoading ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-3.5 h-3.5" />
-                    )}
-                    {suggestLoading ? 'Suggesting...' : 'AI Suggest'}
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Suggest
                   </button>
                 </div>
 
@@ -734,13 +588,6 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                   placeholder="e.g. essay writing, library, grammar"
                   className="mt-1.5 w-full min-h-[44px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
                 />
-
-                {suggestError && (
-                  <p role="alert" className="mt-2 flex items-start gap-2 rounded-xl bg-[#FDECEC] px-3 py-2 text-xs font-medium text-[#9B1C1C]">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{suggestError}</span>
-                  </p>
-                )}
 
                 {suggestedTopics.length > 0 && (
                   <div className="mt-2.5 space-y-1.5">
@@ -780,31 +627,14 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                 <Sparkles className="w-5 h-5" />
               </div>
               <p className="text-sm text-[#505460] leading-relaxed">
-                This is a prediction, not a promise. Questions are built from real past questions and
-                study guides, favouring recurring themes and your selected topic. Real exams can still
-                surprise you.
+                This is a prediction, not a promise. Questions are picked from real past questions
+                and course study guides, favouring recurring themes and your topic. Real exams can
+                still surprise you.
               </p>
             </div>
 
-            {generateError && (
-              <div role="alert" className="rounded-2xl bg-[#FDECEC] border border-[#9B1C1C]/15 p-4 flex items-start gap-2.5 text-sm text-[#9B1C1C]">
-                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold">Could not start exam</p>
-                  <p className="mt-0.5 text-xs leading-relaxed">{generateError}</p>
-                </div>
-              </div>
-            )}
-
-            <TactileButton
-              variant="dark"
-              size="lg"
-              fullWidth
-              onClick={handleStart}
-              disabled={pool === 0 || generatingExam}
-              icon={generatingExam ? <Loader2 className="w-4 h-4 animate-spin" /> : undefined}
-            >
-              {generatingExam ? `Preparing ${activeExamMeta.badge}...` : 'Start exam'}
+            <TactileButton variant="dark" size="lg" fullWidth onClick={handleStart} disabled={pool === 0}>
+              Start exam
             </TactileButton>
           </>
         )}
@@ -834,7 +664,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
           <TactileButton
             variant="dark"
             size="sm"
-            onClick={() => (confirm === 'exit' ? onBack() : void finishExam(false))}
+            onClick={() => (confirm === 'exit' ? onBack() : finishExam(false))}
           >
             {confirm === 'exit' ? 'Leave exam' : 'Submit exam'}
           </TactileButton>
@@ -961,7 +791,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
       );
     }
 
-    // Paper Exam Modes (OBJ Paper, Theory Paper, True / False Paper) — full question list!
+    // Paper Exam Modes (OBJ Paper, Theory Paper, True / False Paper) — full question list
     const paperSubtitle =
       exam.examType === 'obj'
         ? 'SECTION A · OBJECTIVE (MULTIPLE CHOICE)'
@@ -982,13 +812,18 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
         {confirmDialog}
 
         {/* Printed Paper Masthead */}
-        <section aria-label="Examination paper instructions" className="rounded-2xl bg-white border border-[#1A1B20]/[0.1] p-5 shadow-[0_2px_12px_-4px_rgba(24,25,30,0.08)]">
+        <section
+          aria-label="Examination paper instructions"
+          className="rounded-2xl bg-white border border-[#1A1B20]/[0.1] p-5 shadow-[0_2px_12px_-4px_rgba(24,25,30,0.08)]"
+        >
           <div className="border-b border-[#1A1B20]/[0.1] pb-3 text-center">
             <p className="text-[11px] font-mono-tabular font-bold uppercase tracking-[0.14em] text-[#686C78]">
               {paperSubtitle}
             </p>
             <h2 className="mt-1 font-display text-base sm:text-lg font-bold text-[#1A1B20]">
-              {spec?.courseCode === ALL_COURSES ? 'GENERAL STUDIES PRACTICE PAPER' : `${spec?.courseCode} PRACTICE EXAMINATION`}
+              {spec?.courseCode === ALL_COURSES
+                ? 'GENERAL STUDIES PRACTICE PAPER'
+                : `${spec?.courseCode} PRACTICE EXAMINATION`}
             </h2>
             <p className="mt-1 text-xs font-medium text-[#505460]">
               Time Allowed: {spec?.minutes} Minutes · Total Questions: {total}
@@ -1191,32 +1026,15 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
           </div>
         </div>
 
-        {isAutoGraded ? (
-          <p className="mt-3 text-xs text-[#686C78] leading-relaxed">
-            {autoScore.percent >= 70
+        <p className="mt-3 text-xs text-[#686C78] leading-relaxed">
+          {isAutoGraded
+            ? autoScore.percent >= 70
               ? 'Strong result! Review any missed explanations below to lock in the details.'
-              : 'Good effort. Check the explanations below and try another practice set to sharpen weak areas.'}
-          </p>
-        ) : (
-          <div className="mt-3 space-y-2">
-            {gradingTheory && (
-              <p className="inline-flex items-center gap-2 rounded-xl bg-[#F2F4F7] px-3 py-1.5 text-xs font-semibold text-[#1A1B20]">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                AI examiner is reviewing your answers...
-              </p>
-            )}
-            {gradingNotice && (
-              <p className="rounded-xl bg-[#FFF4D6] px-3 py-2 text-xs font-medium text-[#6B4E00]">
-                {gradingNotice}
-              </p>
-            )}
-            <p className="text-xs text-[#686C78] leading-relaxed">
-              {theoryScore.marked < total
-                ? `Read each model answer, then mark yourself (${theoryScore.marked} of ${total} marked) to see your score.`
-                : 'All marked. Try another exam to keep improving.'}
-            </p>
-          </div>
-        )}
+              : 'Good effort. Check the explanations below and try another practice set to sharpen weak areas.'
+            : theoryScore.marked < total
+              ? `Read each model answer, then mark yourself (${theoryScore.marked} of ${total} marked) to see your score.`
+              : 'All marked. Try another exam to keep improving.'}
+        </p>
       </section>
 
       <ol className="space-y-4">
@@ -1224,7 +1042,6 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
           const rawAns = answers[q.id] ?? '';
           const mine = rawAns.trim();
 
-          // Auto-graded OBJ / CBT / Boolean review card
           if (isAutoGraded) {
             const isBoolean = exam.examType === 'boolean';
             const isCorrect = isBoolean
@@ -1326,7 +1143,6 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
 
           // Theory review card
           const mark = marks[q.id];
-          const aiGrade = aiGrades[q.id];
 
           return (
             <li key={q.id} className={`${card} space-y-3.5`}>
@@ -1344,15 +1160,6 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                   {mine || 'You did not answer this one.'}
                 </p>
               </div>
-
-              {aiGrade && (
-                <div className="rounded-2xl bg-[#EEF2FF] border border-[#1D1E23]/10 px-4 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#374151]">
-                    AI Examiner Feedback
-                  </p>
-                  <p className="mt-1 text-sm leading-6 text-[#1A1B20]">{aiGrade.feedback}</p>
-                </div>
-              )}
 
               {q.solution ? (
                 <div className="rounded-2xl bg-[#1D1E23] px-4 py-3.5 text-white">
@@ -1418,10 +1225,9 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
         <TactileButton
           variant="dark"
           icon={<RotateCcw className="w-4 h-4" />}
-          disabled={generatingExam}
-          onClick={() => spec && void startExam(spec)}
+          onClick={() => spec && startExam(spec)}
         >
-          {generatingExam ? 'Preparing...' : 'Try a new exam like this'}
+          Try a new exam like this
         </TactileButton>
         <TactileButton variant="light" onClick={() => setPhase('setup')}>
           Change settings
