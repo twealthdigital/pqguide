@@ -15,7 +15,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
         const step = prev < 55 ? 14 : prev < 88 ? 10 : 6;
         return Math.min(100, prev + step);
       });
-    }, 240);
+    }, 140);
 
     return () => window.clearInterval(timer);
   }, []);

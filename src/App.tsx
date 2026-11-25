@@ -6,9 +6,27 @@ import { authService } from './services/authService';
 import { NavigationShell } from './components/ui/NavigationShell';
 import { HomeScreenSkeleton } from './components/ui/Skeleton';
 import { LoadingScreen } from './screens/LoadingScreen';
-import { OnboardingScreen } from './screens/OnboardingScreen';
-import { AuthScreen } from './screens/AuthScreen';
 import { HomeScreen } from './screens/HomeScreen';
+
+// Onboarding and auth are only needed by signed-out users, so they stay out of
+// the main bundle that returning (signed-in) users download.
+const loadOnboarding = () => import('./screens/OnboardingScreen');
+const loadAuth = () => import('./screens/AuthScreen');
+
+const OnboardingScreen = lazy(() =>
+  loadOnboarding().then((m) => ({ default: m.OnboardingScreen }))
+);
+
+const AuthScreen = lazy(() =>
+  loadAuth().then((m) => ({ default: m.AuthScreen }))
+);
+
+// Signed-out visitors see a splash first: fetch their next screens during it
+// so there is no extra wait afterwards.
+if (typeof window !== 'undefined' && authService.getActiveSession() === null) {
+  void loadOnboarding();
+  void loadAuth();
+}
 
 const PastQuestionReaderScreen = lazy(() =>
   import('./screens/PastQuestionReaderScreen').then((m) => ({
@@ -97,27 +115,31 @@ export default function App() {
 
   if (!hasCompletedOnboarding) {
     return (
-      <OnboardingScreen
-        onComplete={() => {
-          authService.setOnboardingCompleted(true);
-          setHasCompletedOnboarding(true);
-        }}
-      />
+      <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
+        <OnboardingScreen
+          onComplete={() => {
+            authService.setOnboardingCompleted(true);
+            setHasCompletedOnboarding(true);
+          }}
+        />
+      </Suspense>
     );
   }
 
   if (!authenticatedStudent) {
     return (
-      <AuthScreen
-        onAuthenticated={(account) => {
-          authService.saveActiveSession(account);
-          setAuthenticatedStudent(account);
-        }}
-        onBackToOnboarding={() => {
-          authService.setOnboardingCompleted(false);
-          setHasCompletedOnboarding(false);
-        }}
-      />
+      <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
+        <AuthScreen
+          onAuthenticated={(account) => {
+            authService.saveActiveSession(account);
+            setAuthenticatedStudent(account);
+          }}
+          onBackToOnboarding={() => {
+            authService.setOnboardingCompleted(false);
+            setHasCompletedOnboarding(false);
+          }}
+        />
+      </Suspense>
     );
   }
 

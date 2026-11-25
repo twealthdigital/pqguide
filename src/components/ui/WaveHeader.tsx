@@ -6,7 +6,7 @@ import {
   Search,
   SlidersHorizontal,
 } from 'lucide-react';
-import bannerAshWaves from '../../assets/images/banner_ash_waves_1795547045733.jpg';
+import bannerAshWaves from '../../assets/images/banner_ash_waves.webp';
 
 export type SearchActionPhase = 'idle' | 'loading' | 'done';
 
@@ -125,6 +125,10 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
             <img
               src={bannerAshWaves}
               alt=""
+              width={1200}
+              height={670}
+              decoding="async"
+              fetchPriority="high"
               referrerPolicy="no-referrer"
               className="select-none absolute inset-0 h-full w-full object-cover object-center opacity-85"
             />
