@@ -115,11 +115,11 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
         {/* Mobile: full-bleed top banner with red-line asymmetric wave silhouette & zero horizontal shadow line.
             Tablet: matching asymmetric bottom silhouette with graceful right-edge curve.
             Desktop: floating sculpted rounded card. */}
-        <div className="relative -mx-4 sm:-mx-6 lg:mx-0 lg:rounded-3xl bg-[#1D1E23] px-5 pt-[calc(76px+env(safe-area-inset-top))] pb-[78px] sm:px-8 sm:pt-[calc(84px+env(safe-area-inset-top))] md:pb-[84px] lg:px-10 lg:pt-10 lg:pb-10 text-white shadow-none lg:shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)]">
+        <div className="relative -mx-4 sm:-mx-6 lg:mx-0 bg-[#1D1E23] px-5 pt-[calc(76px+env(safe-area-inset-top))] pb-[78px] sm:px-8 sm:pt-[calc(84px+env(safe-area-inset-top))] md:pb-[84px] lg:px-0 lg:pt-[116px] lg:pb-[84px] text-white shadow-none">
           {/* Clipped background layer so anchored search dropdown can overflow cleanly below */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 overflow-hidden lg:rounded-3xl"
+            className="pointer-events-none absolute inset-0 overflow-hidden"
           >
             {/* Generated Dark Ash Curved Background Image */}
             <img
@@ -154,11 +154,11 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
               />
             </svg>
 
-            {/* Tablet-only bottom silhouette with right-edge downward curve */}
+            {/* Tablet + desktop bottom silhouette with right-edge downward curve */}
             <svg
               viewBox="0 0 1440 120"
               preserveAspectRatio="none"
-              className="hidden md:block lg:hidden absolute -bottom-px inset-x-0 z-10 w-full h-[84px]"
+              className="hidden md:block absolute -bottom-px inset-x-0 z-10 w-full h-[84px]"
             >
               <path
                 d="M0,0 C24,34 80,38 175,38 L1160,38 C1305,38 1398,62 1440,119 L1440,120 L0,120 Z"
@@ -168,7 +168,8 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
           </div>
 
           {/* Foreground Content: Bold Headline + Crisp Integrated Search Bar + Anchored Floating Dropdown */}
-          <div className="relative z-30 max-w-2xl">
+          <div className="relative z-30 lg:mx-auto lg:max-w-6xl lg:px-8">
+          <div className="max-w-2xl">
             <h1
               className="font-display text-[28px] sm:text-[34px] lg:text-[36px] font-extrabold tracking-tight text-white leading-[1.12]"
               style={{ textWrap: 'balance' }}
@@ -274,6 +275,7 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
                 </div>
               )}
             </div>
+          </div>
           </div>
         </div>
       </section>

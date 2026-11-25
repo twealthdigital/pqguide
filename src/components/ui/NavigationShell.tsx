@@ -3,7 +3,11 @@ import {
   Bell,
   FileText,
   Folder,
+  Headphones,
+  HelpCircle,
   Home,
+  Info,
+  Layers,
   LogOut,
   MoreVertical,
   Search,
@@ -280,15 +284,20 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: 'home', label: 'Archive', icon: <Home className="w-5 h-5" /> },
     { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
     { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
-    {
-      id: 'notifications',
-      label: 'Alerts',
-      icon: <Bell className="w-5 h-5" />,
-      badge: unreadCount,
-    },
     { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
     { id: 'super_admin', label: 'Super Admin', icon: <ShieldCheck className="w-5 h-5" /> },
   ];
+
+  // Company links: top bar on desktop, side panel on mobile and tablet.
+  const infoLinks: Array<{ id: AppScreen; label: string; icon: React.ReactNode }> = [
+    { id: 'about', label: 'About', icon: <Info className="w-5 h-5" /> },
+    { id: 'services', label: 'Services', icon: <Layers className="w-5 h-5" /> },
+    { id: 'help', label: 'Help', icon: <HelpCircle className="w-5 h-5" /> },
+    { id: 'support', label: 'Customer Support', icon: <Headphones className="w-5 h-5" /> },
+  ];
+
+  // Desktop home: the top bar floats on the banner until the page scrolls.
+  const onBanner = activeScreen === 'home' && !isScrolled;
 
   return (
     <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#1A1B20] flex flex-col lg:flex-row">
@@ -457,36 +466,38 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         </header>
 
         {/* Desktop 3-Zone Top Bar */}
-        <header className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30">
-          <nav className="flex items-center gap-6 text-sm font-medium text-[#5A5E6B]">
-            <button
-              type="button"
-              onClick={() => onNavigate('past_questions')}
-              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              Past Questions
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('materials')}
-              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              Materials
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('school_admin')}
-              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              School Upload
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate('super_admin')}
-              className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              Control Desk
-            </button>
+        <header
+          className={`hidden lg:flex items-center justify-between gap-8 px-8 h-[72px] sticky top-0 z-30 transition-colors duration-200 ${
+            activeScreen === 'home' ? '-mb-[72px]' : ''
+          } ${
+            onBanner
+              ? 'bg-transparent border-b border-transparent'
+              : 'bg-white border-b border-[#1A1B20]/[0.06]'
+          }`}
+        >
+          <nav aria-label="Company links" className="flex items-center gap-7 text-sm font-medium">
+            {infoLinks.map((item) => {
+              const active = activeScreen === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onNavigate(item.id)}
+                  aria-current={active ? 'page' : undefined}
+                  className={`whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
+                    onBanner
+                      ? active
+                        ? 'text-white font-semibold'
+                        : 'text-white/75 hover:text-white'
+                      : active
+                        ? 'text-[#1A1B20] font-semibold'
+                        : 'text-[#5A5E6B] hover:text-[#1A1B20]'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
           </nav>
 
           <div className="flex items-center gap-2.5 shrink-0">
@@ -497,7 +508,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               className={`relative min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center border transition-transform duration-150 active:scale-95 cursor-pointer ${
                 activeScreen === 'notifications'
                   ? 'tactile-dark text-white border-transparent'
-                  : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
+                  : onBanner
+                    ? 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+                    : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
               }`}
             >
               <Bell className="w-4 h-4" />
@@ -524,7 +537,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               className={`min-h-[40px] px-2.5 rounded-xl flex items-center gap-2 border transition-colors cursor-pointer ${
                 accountMenuOpen
                   ? 'tactile-dark text-white border-transparent'
-                  : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
+                  : onBanner
+                    ? 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+                    : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
               }`}
             >
               <User className="w-4 h-4 shrink-0" />
@@ -718,6 +733,34 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   );
                 })}
               </nav>
+
+              {/* Company links (kept in the side panel on mobile and tablet) */}
+              <nav
+                aria-label="About and support"
+                className="space-y-1 pt-4 border-t border-[#1A1B20]/[0.07]"
+              >
+                {infoLinks.map((item) => {
+                  const isActive = activeScreen === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        onNavigate(item.id);
+                        setDrawerOpen(false);
+                      }}
+                      className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-2xl flex items-center gap-3 text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                        isActive
+                          ? 'tactile-dark text-white'
+                          : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
+                      }`}
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
             </div>
 
             {/* Bottom Controls: Workspace Switcher & Sign Out */}
@@ -762,8 +805,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
         {/* Scrollable Content */}
         <main
-          className={`flex-1 w-full max-w-6xl mx-auto px-4 pb-24 sm:px-6 lg:px-8 lg:py-8 ${
-            activeScreen === 'home' ? 'pt-0' : 'pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8'
+          className={`flex-1 w-full mx-auto pb-24 ${
+            activeScreen === 'home'
+              ? 'max-w-6xl px-4 sm:px-6 pt-0 lg:max-w-none lg:px-0 lg:pb-10'
+              : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
           }`}
         >
           {children}

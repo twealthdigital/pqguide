@@ -39,6 +39,10 @@ const PastQuestionsScreen = lazy(() =>
   import('./screens/PastQuestionsScreen').then((m) => ({ default: m.PastQuestionsScreen }))
 );
 
+const InfoScreen = lazy(() =>
+  import('./screens/InfoScreen').then((m) => ({ default: m.InfoScreen }))
+);
+
 const MaterialsScreen = lazy(() =>
   import('./screens/MaterialsScreen').then((m) => ({ default: m.MaterialsScreen }))
 );
@@ -259,6 +263,13 @@ export default function App() {
             material={selectedMaterial}
             onBack={handleBack}
           />
+        )}
+
+        {(activeScreen === 'about' ||
+          activeScreen === 'services' ||
+          activeScreen === 'help' ||
+          activeScreen === 'support') && (
+          <InfoScreen page={activeScreen} onNavigate={handleNavigate} />
         )}
 
         {activeScreen === 'school_admin' && <SchoolAdminScreen />}

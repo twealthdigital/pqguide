@@ -10,6 +10,10 @@ export type AppScreen =
   | 'reader'
   | 'notifications'
   | 'materials'
+  | 'about'
+  | 'services'
+  | 'help'
+  | 'support'
   | 'material_reader'
   | 'school_admin'
   | 'super_admin';
