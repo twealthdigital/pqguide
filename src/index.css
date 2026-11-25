@@ -355,3 +355,10 @@ input[type='search'] {
   -webkit-appearance: none;
   appearance: none;
 }
+
+/* Edge/IE built-in clear (x) button on text inputs, e.g. the home search */
+input::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
