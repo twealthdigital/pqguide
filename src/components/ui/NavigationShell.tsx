@@ -765,7 +765,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         aria-label="Mobile bottom navigation"
         className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#1A1B20]/[0.08] pb-safe"
       >
-        <div className="grid grid-cols-5 items-center h-14 max-w-lg mx-auto px-2">
+        <div className="grid grid-cols-5 items-center h-[52px] max-w-lg mx-auto px-2">
           <button
             type="button"
             onClick={() => onNavigate('home')}
