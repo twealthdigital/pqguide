@@ -5,6 +5,7 @@ import { useArchiveStore } from '../hooks/useArchiveStore';
 import { archiveRepository } from '../services/archiveRepository';
 import { SurfaceCard } from '../components/ui/SurfaceCard';
 import { TactileButton } from '../components/ui/TactileButton';
+import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 
 interface NotificationsScreenProps {
   onBack: () => void;
@@ -42,10 +43,10 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   };
 
   return (
-    <div className="space-y-6 page-enter">
-      {/* Page Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+    <div className="space-y-5 page-enter">
+      {/* Dark header: back + mark all read, title, filter */}
+      <DarkHeaderCard>
+        <div className="flex items-center justify-between gap-3">
           <TactileButton
             variant="light"
             size="sm"
@@ -54,53 +55,44 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           >
             Back
           </TactileButton>
-          <div>
-            <h1 className="font-display text-2xl font-bold text-[#1A1B20]">
-              Notifications
-            </h1>
-            <p className="text-xs text-[#686C78] font-mono-tabular">
-              {unreadCount} unread update{unreadCount === 1 ? '' : 's'}
-            </p>
-          </div>
+
+          {unreadCount > 0 && (
+            <TactileButton
+              variant="light"
+              size="sm"
+              icon={<CheckCheck className="w-4 h-4" />}
+              onClick={() => archiveRepository.markAllNotificationsRead()}
+            >
+              Mark all read
+            </TactileButton>
+          )}
         </div>
 
-        {unreadCount > 0 && (
-          <TactileButton
-            variant="dark"
-            size="sm"
-            icon={<CheckCheck className="w-4 h-4" />}
-            onClick={() => archiveRepository.markAllNotificationsRead()}
-          >
-            Mark All Read
-          </TactileButton>
-        )}
-      </div>
+        <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
+          Notifications
+        </h1>
 
-      {/* Filter Tabs */}
-      <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-[#EAECEF]">
-        <button
-          type="button"
-          onClick={() => setFilter('all')}
-          className={`min-h-[38px] px-4 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-            filter === 'all'
-              ? 'bg-white text-[#1A1B20] shadow-sm'
-              : 'text-[#686C78]'
-          }`}
-        >
-          All Alerts ({store.notifications.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilter('unread')}
-          className={`min-h-[38px] px-4 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-            filter === 'unread'
-              ? 'bg-white text-[#1A1B20] shadow-sm'
-              : 'text-[#686C78]'
-          }`}
-        >
-          Unread ({unreadCount})
-        </button>
-      </div>
+        <div className="mt-3.5 grid grid-cols-2 gap-1 rounded-xl bg-white/10 p-1">
+          <button
+            type="button"
+            onClick={() => setFilter('all')}
+            className={`min-h-[38px] rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+              filter === 'all' ? 'bg-white text-[#1A1B20]' : 'text-[#C3C7D2]'
+            }`}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter('unread')}
+            className={`min-h-[38px] rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+              filter === 'unread' ? 'bg-white text-[#1A1B20]' : 'text-[#C3C7D2]'
+            }`}
+          >
+            Unread{unreadCount > 0 ? ` (${unreadCount})` : ''}
+          </button>
+        </div>
+      </DarkHeaderCard>
 
       {/* Notifications List */}
       {visibleNotifications.length === 0 ? (
@@ -144,14 +136,15 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                 </div>
 
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-start gap-2">
                     <h2 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">
                       {notif.title}
                     </h2>
                     {!notif.isRead && (
-                      <span className="text-[11px] font-semibold text-[#1D1E23]">
-                        · New
-                      </span>
+                      <span
+                        aria-label="Unread"
+                        className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#1D1E23]"
+                      />
                     )}
                   </div>
                   <p className="text-sm text-[#505460] mt-1 leading-relaxed">
@@ -162,17 +155,11 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
-                    })}{' '}
-                    · {notif.category}
+                    })}
                   </p>
                 </div>
               </div>
 
-              {notif.targetDocId && (
-                <span className="text-xs font-semibold text-[#1A1B20] underline underline-offset-4 shrink-0">
-                  Open paper
-                </span>
-              )}
             </button>
           ))}
         </div>
