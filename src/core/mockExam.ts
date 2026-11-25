@@ -1,16 +1,53 @@
-import type { PastQuestionDoc, QuestionSolution } from './types';
+import type { PastQuestionDoc, QuestionSolution, StudyMaterial } from './types';
 import { cleanCourseTitle } from './docTitle';
 
 /**
- * Practice-exam "prediction".
+ * Practice-exam builder and types.
  *
- * There is no AI behind this: the exam is assembled from the real past
- * questions in the archive, favouring questions whose themes keep coming back
- * across sessions, questions from the most recent session, and anything that
- * matches the topic the student asked to focus on.
+ * Supports four exam formats:
+ * - obj: Full paper list of multiple-choice questions (A–D)
+ * - theory: Full paper list of essay/short-answer questions with answer boxes underneath
+ * - boolean: Full paper list of True / False statements
+ * - cbt: Computer-Based Test (one multiple-choice question at a time with A–D options)
  */
 
 export const ALL_COURSES = 'ALL';
+
+export type ExamType = 'obj' | 'theory' | 'boolean' | 'cbt';
+
+export interface ExamTypeMeta {
+  id: ExamType;
+  label: string;
+  badge: string;
+  description: string;
+}
+
+export const EXAM_TYPES: ExamTypeMeta[] = [
+  {
+    id: 'obj',
+    label: 'OBJ (Paper)',
+    badge: 'OBJ Paper',
+    description: 'Full list of questions with A–D options like a real paper',
+  },
+  {
+    id: 'theory',
+    label: 'Theory (Paper)',
+    badge: 'Theory Paper',
+    description: 'All questions on one paper with answer spaces underneath',
+  },
+  {
+    id: 'boolean',
+    label: 'True / False',
+    badge: 'True / False',
+    description: 'Statements where you select True or False only',
+  },
+  {
+    id: 'cbt',
+    label: 'CBT',
+    badge: 'CBT',
+    description: 'Multiple-choice options shown one question at a time',
+  },
+];
 
 export interface ExamCourseOption {
   code: string;
@@ -21,6 +58,7 @@ export interface ExamCourseOption {
 }
 
 export interface ExamSpec {
+  examType: ExamType;
   /** A course code, or ALL_COURSES. */
   courseCode: string;
   questionCount: number;
@@ -38,11 +76,18 @@ export interface ExamQuestion {
   solution: QuestionSolution | null;
   /** Short reasons this question was picked, shown as tags. */
   reasons: string[];
+  /** Multiple-choice options (A–D) for 'obj' and 'cbt'. */
+  options?: string[];
+  /** Zero-based correct option index for 'obj' and 'cbt'. */
+  correctIndex?: number;
+  /** Correct answer for 'boolean' (True/False). */
+  correctBoolean?: boolean;
 }
 
 export interface BuiltExam {
+  examType: ExamType;
   questions: ExamQuestion[];
-  /** How many questions were available for the chosen course. */
+  /** How many archive past questions were available for the chosen course. */
   poolSize: number;
 }
 
@@ -128,7 +173,6 @@ export const buildExam = (docs: PastQuestionDoc[], spec: ExamSpec): BuiltExam =>
   const oldestYear = Math.min(newestYear, ...scoped.map((d) => d.year));
   const focusWords = Array.from(tokens(spec.focus));
 
-  // Repeated themes: other questions (from other papers) sharing 2+ key words.
   const repeats = candidates.map((c) =>
     candidates.filter((o) => o.doc.id !== c.doc.id && shared(c.words, o.words) >= 2).length
   );
@@ -151,13 +195,12 @@ export const buildExam = (docs: PastQuestionDoc[], spec: ExamSpec): BuiltExam =>
         c.reasons.unshift('Matches your topic');
       }
     }
-    c.score += Math.random() * 0.35; // keeps repeat attempts from being identical
+    c.score += Math.random() * 0.35;
   });
 
   const wanted = Math.max(1, Math.min(spec.questionCount, candidates.length));
   const picked = [...candidates].sort((a, b) => b.score - a.score).slice(0, wanted);
 
-  // Present like a real paper: grouped by course, then in the original order.
   picked.sort(
     (a, b) =>
       a.doc.courseCode.localeCompare(b.doc.courseCode, undefined, { numeric: true }) ||
@@ -166,6 +209,7 @@ export const buildExam = (docs: PastQuestionDoc[], spec: ExamSpec): BuiltExam =>
   );
 
   return {
+    examType: spec.examType,
     poolSize: candidates.length,
     questions: picked.map((c, i) => ({
       id: `${c.doc.id}#${c.index}`,
@@ -178,3 +222,69 @@ export const buildExam = (docs: PastQuestionDoc[], spec: ExamSpec): BuiltExam =>
     })),
   };
 };
+
+export interface CourseContextPayload {
+  courseTitle: string;
+  sampleQuestions: string[];
+  sourceQuestions: Array<{
+    courseCode: string;
+    source: string;
+    text: string;
+    solutionAnswer?: string;
+  }>;
+  materialTopics: string[];
+  materialNotes: string[];
+}
+
+export function collectCourseContext(
+  docs: PastQuestionDoc[],
+  materials: StudyMaterial[],
+  courseCode: string
+): CourseContextPayload {
+  const scopedDocs = docs.filter((d) => courseCode === ALL_COURSES || d.courseCode === courseCode);
+  const scopedMaterials = materials.filter(
+    (m) => courseCode === ALL_COURSES || m.courseCode === courseCode
+  );
+
+  const courseTitle =
+    courseCode === ALL_COURSES
+      ? 'General Studies Courses'
+      : cleanCourseTitle(scopedDocs[0] ?? { courseCode, courseTitle: courseCode } as PastQuestionDoc) ||
+        scopedMaterials[0]?.courseTitle ||
+        courseCode;
+
+  const sourceQuestions: CourseContextPayload['sourceQuestions'] = [];
+  for (const doc of scopedDocs) {
+    doc.questions.forEach((raw, idx) => {
+      const text = stripLabel(raw);
+      if (text.length < 8) return;
+      sourceQuestions.push({
+        courseCode: doc.courseCode,
+        source: `${doc.courseCode} · ${doc.session}`,
+        text,
+        solutionAnswer: doc.solutions?.[idx]?.answer,
+      });
+    });
+  }
+
+  const materialTopics: string[] = [];
+  const materialNotes: string[] = [];
+  for (const mat of scopedMaterials) {
+    for (const sec of mat.sections) {
+      materialTopics.push(`${mat.courseCode}: ${sec.heading}`);
+      const pts = (sec.points ?? []).slice(0, 3).join(' ');
+      const para = (sec.paragraphs ?? []).slice(0, 1).join(' ');
+      if (pts || para) {
+        materialNotes.push(`[${mat.courseCode} - ${sec.heading}] ${para} ${pts}`.trim());
+      }
+    }
+  }
+
+  return {
+    courseTitle,
+    sampleQuestions: sourceQuestions.map((q) => `[${q.courseCode}] ${q.text}`),
+    sourceQuestions,
+    materialTopics,
+    materialNotes,
+  };
+}

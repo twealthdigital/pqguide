@@ -1,14 +1,42 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Clock, RotateCcw, Sparkles } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  Clock,
+  FileText,
+  ListChecks,
+  Loader2,
+  Minus,
+  Monitor,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  ToggleLeft,
+  XCircle,
+} from 'lucide-react';
 import { useArchiveStore } from '../hooks/useArchiveStore';
+import { STUDY_MATERIALS } from '../data/materials';
 import {
   ALL_COURSES,
+  EXAM_TYPES,
   buildExam,
+  collectCourseContext,
   countQuestionsFor,
   listExamCourses,
   type BuiltExam,
+  type ExamQuestion,
   type ExamSpec,
+  type ExamType,
 } from '../core/mockExam';
+import {
+  generateAiExamQuestions,
+  gradeTheoryAnswers,
+  suggestExamTopics,
+  type TheoryGradeResult,
+} from '../services/examAiService';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { CustomSelect } from '../components/ui/CustomSelect';
 import { TactileButton } from '../components/ui/TactileButton';
@@ -20,8 +48,9 @@ interface MockExamScreenProps {
 type Phase = 'setup' | 'exam' | 'review';
 type Mark = 'got' | 'partly' | 'missed';
 
-const COUNT_CHOICES = [3, 5, 10, 15, 20];
+const COUNT_CHOICES = [5, 10, 15, 20];
 const MINUTE_CHOICES = [15, 30, 45, 60, 90];
+const OPTION_LETTERS = ['A', 'B', 'C', 'D'] as const;
 
 const card =
   'rounded-2xl bg-white p-4 sm:p-5 border border-[#1A1B20]/[0.06] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)]';
@@ -36,6 +65,13 @@ const formatClock = (totalSeconds: number) => {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 };
 
+const EXAM_TYPE_ICON: Record<ExamType, React.ReactNode> = {
+  obj: <ListChecks className="w-4 h-4" />,
+  theory: <FileText className="w-4 h-4" />,
+  boolean: <ToggleLeft className="w-4 h-4" />,
+  cbt: <Monitor className="w-4 h-4" />,
+};
+
 const Chip: React.FC<{
   selected: boolean;
   onClick: () => void;
@@ -47,7 +83,7 @@ const Chip: React.FC<{
     onClick={onClick}
     disabled={disabled}
     aria-pressed={selected}
-    className={`min-h-[40px] rounded-xl px-4 text-sm font-semibold border transition-colors duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+    className={`min-h-[40px] rounded-xl px-4 text-sm font-semibold border transition-colors duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 ${
       selected
         ? 'bg-[#1D1E23] text-white border-transparent'
         : 'bg-[#F6F7F9] text-[#1A1B20] border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
@@ -70,16 +106,34 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
   const courses = useMemo(() => listExamCourses(docs), [docs]);
 
   const [phase, setPhase] = useState<Phase>('setup');
+  const [examType, setExamType] = useState<ExamType>('obj');
   const [courseCode, setCourseCode] = useState<string>(ALL_COURSES);
-  const [questionCount, setQuestionCount] = useState(5);
-  const [minutes, setMinutes] = useState(30);
+
+  const [questionCount, setQuestionCount] = useState<number>(5);
+  const [customCountMode, setCustomCountMode] = useState<boolean>(false);
+  const [customCountInput, setCustomCountInput] = useState<string>('12');
+
+  const [minutes, setMinutes] = useState<number>(30);
+  const [customTimeMode, setCustomTimeMode] = useState<boolean>(false);
+  const [customTimeInput, setCustomTimeInput] = useState<string>('25');
+
   const [focus, setFocus] = useState('');
+  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+
+  const [generatingExam, setGeneratingExam] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   const [exam, setExam] = useState<BuiltExam | null>(null);
   const [spec, setSpec] = useState<ExamSpec | null>(null);
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [marks, setMarks] = useState<Record<string, Mark>>({});
+  const [aiGrades, setAiGrades] = useState<Record<string, TheoryGradeResult>>({});
+  const [gradingTheory, setGradingTheory] = useState(false);
+  const [gradingNotice, setGradingNotice] = useState<string | null>(null);
+
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [usedSeconds, setUsedSeconds] = useState(0);
   const [endedByTimer, setEndedByTimer] = useState(false);
@@ -89,7 +143,6 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
   const startedAtRef = useRef(0);
 
   const pool = useMemo(() => countQuestionsFor(docs, courseCode), [docs, courseCode]);
-  const effectiveCount = Math.min(questionCount, Math.max(pool, 1));
 
   const courseOptions = useMemo(
     () => [
@@ -103,34 +156,192 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     [courses, docs]
   );
 
-  const startExam = useCallback(
-    (nextSpec: ExamSpec) => {
-      const built = buildExam(docs, nextSpec);
-      if (built.questions.length === 0) return;
-      setSpec(nextSpec);
-      setExam(built);
-      setAnswers({});
-      setMarks({});
-      setCurrent(0);
-      setConfirm(null);
-      setEndedByTimer(false);
-      setUsedSeconds(0);
-      startedAtRef.current = Date.now();
-      endAtRef.current = Date.now() + nextSpec.minutes * 60_000;
-      setSecondsLeft(nextSpec.minutes * 60);
-      setPhase('exam');
-      window.scrollTo({ top: 0, behavior: 'instant' });
-    },
-    [docs]
-  );
+  // Clear stale suggestions when course changes
+  const handleCourseChange = (nextCourse: string) => {
+    setCourseCode(nextCourse);
+    setSuggestedTopics([]);
+    setSuggestError(null);
+    setGenerateError(null);
+  };
 
-  const finishExam = useCallback((byTimer: boolean) => {
-    setUsedSeconds(Math.round((Date.now() - startedAtRef.current) / 1000));
-    setEndedByTimer(byTimer);
+  const applyCustomCount = (raw: string) => {
+    setCustomCountInput(raw);
+    const parsed = parseInt(raw, 10);
+    if (!Number.isNaN(parsed) && parsed >= 1) {
+      setQuestionCount(Math.min(50, parsed));
+    }
+  };
+
+  const applyCustomMinutes = (raw: string) => {
+    setCustomTimeInput(raw);
+    const parsed = parseInt(raw, 10);
+    if (!Number.isNaN(parsed) && parsed >= 1) {
+      setMinutes(Math.min(240, parsed));
+    }
+  };
+
+  const handleSuggestTopics = async () => {
+    setSuggestLoading(true);
+    setSuggestError(null);
+    try {
+      const ctx = collectCourseContext(docs, STUDY_MATERIALS, courseCode);
+      const topics = await suggestExamTopics(courseCode, ctx);
+      setSuggestedTopics(topics);
+    } catch (err) {
+      setSuggestError(err instanceof Error ? err.message : 'Unable to suggest topics right now.');
+    } finally {
+      setSuggestLoading(false);
+    }
+  };
+
+  const toggleSuggestedTopic = (topic: string) => {
+    const parts = focus
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const exists = parts.some((p) => p.toLowerCase() === topic.toLowerCase());
+    const next = exists
+      ? parts.filter((p) => p.toLowerCase() !== topic.toLowerCase())
+      : [...parts, topic];
+    setFocus(next.join(', '));
+  };
+
+  const beginSession = useCallback((nextSpec: ExamSpec, built: BuiltExam) => {
+    setSpec(nextSpec);
+    setExam(built);
+    setAnswers({});
+    setMarks({});
+    setAiGrades({});
+    setGradingTheory(false);
+    setGradingNotice(null);
+    setCurrent(0);
     setConfirm(null);
-    setPhase('review');
+    setEndedByTimer(false);
+    setUsedSeconds(0);
+    startedAtRef.current = Date.now();
+    endAtRef.current = Date.now() + nextSpec.minutes * 60_000;
+    setSecondsLeft(nextSpec.minutes * 60);
+    setPhase('exam');
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
+
+  const startExam = useCallback(
+    async (nextSpec: ExamSpec) => {
+      setGenerateError(null);
+      const ctx = collectCourseContext(docs, STUDY_MATERIALS, nextSpec.courseCode);
+
+      if (nextSpec.examType === 'theory') {
+        const localBuilt = buildExam(docs, nextSpec);
+        if (nextSpec.questionCount <= localBuilt.poolSize && localBuilt.questions.length > 0) {
+          beginSession(nextSpec, localBuilt);
+          return;
+        }
+        // Student requested more theory questions than raw archive pool — supplement with AI
+        setGeneratingExam(true);
+        try {
+          const needed = Math.max(1, nextSpec.questionCount - localBuilt.questions.length);
+          const extra = await generateAiExamQuestions({
+            examType: 'theory',
+            courseCode: nextSpec.courseCode,
+            questionCount: needed,
+            focus: nextSpec.focus,
+            ctx,
+          });
+          const merged: ExamQuestion[] = [...localBuilt.questions, ...extra].map((q, idx) => ({
+            ...q,
+            number: idx + 1,
+          }));
+          beginSession(nextSpec, {
+            examType: 'theory',
+            poolSize: localBuilt.poolSize,
+            questions: merged,
+          });
+        } catch (err) {
+          if (localBuilt.questions.length > 0) {
+            // If archive questions exist and user accepts fallback only? No — surface clear error so they know why extra count couldn't generate
+            setGenerateError(err instanceof Error ? err.message : 'Unable to generate additional theory questions.');
+          } else {
+            setGenerateError(err instanceof Error ? err.message : 'Unable to prepare exam.');
+          }
+        } finally {
+          setGeneratingExam(false);
+        }
+        return;
+      }
+
+      // OBJ, CBT, True/False: generated via Gemini AI from course past questions + guides
+      setGeneratingExam(true);
+      try {
+        const questions = await generateAiExamQuestions({
+          examType: nextSpec.examType,
+          courseCode: nextSpec.courseCode,
+          questionCount: nextSpec.questionCount,
+          focus: nextSpec.focus,
+          ctx,
+        });
+        if (questions.length === 0) {
+          setGenerateError('No questions could be generated. Please try again.');
+          return;
+        }
+        beginSession(nextSpec, {
+          examType: nextSpec.examType,
+          poolSize: pool,
+          questions,
+        });
+      } catch (err) {
+        setGenerateError(err instanceof Error ? err.message : 'Unable to generate this exam.');
+      } finally {
+        setGeneratingExam(false);
+      }
+    },
+    [beginSession, docs, pool]
+  );
+
+  const finishExam = useCallback(
+    async (byTimer: boolean) => {
+      setUsedSeconds(Math.round((Date.now() - startedAtRef.current) / 1000));
+      setEndedByTimer(byTimer);
+      setConfirm(null);
+      setPhase('review');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+
+      if (exam && exam.examType === 'theory') {
+        const answeredItems = exam.questions
+          .map((q) => ({
+            id: q.id,
+            question: q.text,
+            modelAnswer: q.solution?.answer ?? '',
+            studentAnswer: (answers[q.id] ?? '').trim(),
+          }))
+          .filter((item) => item.studentAnswer.length > 0);
+
+        if (answeredItems.length > 0) {
+          setGradingTheory(true);
+          setGradingNotice(null);
+          try {
+            const results = await gradeTheoryAnswers(answeredItems);
+            const map: Record<string, TheoryGradeResult> = {};
+            const initialMarks: Record<string, Mark> = {};
+            for (const r of results) {
+              map[r.id] = r;
+              initialMarks[r.id] = r.verdict;
+            }
+            setAiGrades(map);
+            setMarks((prev) => ({ ...initialMarks, ...prev }));
+          } catch (err) {
+            setGradingNotice(
+              err instanceof Error
+                ? `${err.message} You can still mark yourself below.`
+                : 'AI examiner feedback is unavailable right now. Mark yourself below.'
+            );
+          } finally {
+            setGradingTheory(false);
+          }
+        }
+      }
+    },
+    [answers, exam]
+  );
 
   // Countdown. Based on the clock, so it stays correct if the tab sleeps.
   useEffect(() => {
@@ -139,7 +350,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
       const left = Math.round((endAtRef.current - Date.now()) / 1000);
       if (left <= 0) {
         setSecondsLeft(0);
-        finishExam(true);
+        void finishExam(true);
       } else {
         setSecondsLeft(left);
       }
@@ -149,13 +360,46 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     return () => window.clearInterval(id);
   }, [phase, finishExam]);
 
-  const handleStart = () =>
-    startExam({ courseCode, questionCount: effectiveCount, minutes, focus: focus.trim() });
+  const handleStart = () => {
+    const safeCount = Math.max(1, Math.min(50, questionCount || 5));
+    const safeMinutes = Math.max(1, Math.min(240, minutes || 30));
+    void startExam({
+      examType,
+      courseCode,
+      questionCount: safeCount,
+      minutes: safeMinutes,
+      focus: focus.trim(),
+    });
+  };
 
-  const answeredCount = exam ? exam.questions.filter((q) => (answers[q.id] ?? '').trim()).length : 0;
+  const answeredCount = exam
+    ? exam.questions.filter((q) => (answers[q.id] ?? '').trim().length > 0).length
+    : 0;
   const total = exam?.questions.length ?? 0;
 
-  const score = useMemo(() => {
+  const isAutoGraded =
+    exam?.examType === 'obj' || exam?.examType === 'cbt' || exam?.examType === 'boolean';
+
+  const autoScore = useMemo(() => {
+    if (!exam || !isAutoGraded) return { correct: 0, percent: 0 };
+    let correct = 0;
+    for (const q of exam.questions) {
+      const ans = answers[q.id];
+      if (!ans) continue;
+      if (exam.examType === 'boolean') {
+        const expected = q.correctBoolean ? 'true' : 'false';
+        if (ans === expected) correct += 1;
+      } else if (typeof q.correctIndex === 'number') {
+        if (Number(ans) === q.correctIndex) correct += 1;
+      }
+    }
+    return {
+      correct,
+      percent: exam.questions.length ? Math.round((correct / exam.questions.length) * 100) : 0,
+    };
+  }, [answers, exam, isAutoGraded]);
+
+  const theoryScore = useMemo(() => {
     if (!exam) return { marked: 0, points: 0, percent: 0 };
     let marked = 0;
     let points = 0;
@@ -165,10 +409,25 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
       marked += 1;
       points += m === 'got' ? 1 : m === 'partly' ? 0.5 : 0;
     }
-    return { marked, points, percent: exam.questions.length ? Math.round((points / exam.questions.length) * 100) : 0 };
+    return {
+      marked,
+      points,
+      percent: exam.questions.length ? Math.round((points / exam.questions.length) * 100) : 0,
+    };
   }, [exam, marks]);
 
+  const activeExamMeta = useMemo(
+    () => EXAM_TYPES.find((t) => t.id === (spec?.examType ?? examType)) ?? EXAM_TYPES[0],
+    [examType, spec?.examType]
+  );
+
   const lowTime = phase === 'exam' && secondsLeft <= 300;
+  const progressPercent =
+    total === 0
+      ? 0
+      : exam?.examType === 'cbt'
+        ? ((current + 1) / total) * 100
+        : (answeredCount / total) * 100;
 
   // ---------------------------------------------------------------- header
   const header = (
@@ -182,15 +441,20 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
           <TactileButton variant="light" size="sm" onClick={() => setConfirm('exit')}>
             Exit exam
           </TactileButton>
-          <div
-            role="timer"
-            aria-label="Time left"
-            className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 font-mono-tabular text-base font-bold ${
-              lowTime ? 'bg-[#F6C453] text-[#1D1E23]' : 'bg-white/10 text-white'
-            }`}
-          >
-            <Clock className="w-4 h-4" />
-            {formatClock(secondsLeft)}
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-[#D6DAE4]">
+              {answeredCount}/{total} answered
+            </span>
+            <div
+              role="timer"
+              aria-label="Time left"
+              className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 font-mono-tabular text-base font-bold ${
+                lowTime ? 'bg-[#F6C453] text-[#1D1E23]' : 'bg-white/10 text-white'
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+              {formatClock(secondsLeft)}
+            </div>
           </div>
         </div>
       ) : (
@@ -203,17 +467,23 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
         {phase === 'review' ? 'Your results' : 'Practice exam'}
       </h1>
       <p className="mt-1.5 text-xs text-[#C3C7D2]">
-        {phase === 'setup' && 'A predicted exam built from past questions, made for you'}
-        {phase === 'exam' && spec &&
-          `${spec.courseCode === ALL_COURSES ? 'All general courses' : spec.courseCode} · Question ${current + 1} of ${total}`}
-        {phase === 'review' && 'Compare with the model answers and mark yourself'}
+        {phase === 'setup' && 'Choose your exam format, questions, timer and focus topic'}
+        {phase === 'exam' &&
+          spec &&
+          (spec.examType === 'cbt'
+            ? `${spec.courseCode === ALL_COURSES ? 'All general courses' : spec.courseCode} · ${activeExamMeta.badge} · Question ${current + 1} of ${total}`
+            : `${spec.courseCode === ALL_COURSES ? 'All general courses' : spec.courseCode} · ${activeExamMeta.badge} · ${answeredCount} of ${total} answered`)}
+        {phase === 'review' &&
+          (isAutoGraded
+            ? `${activeExamMeta.badge} · Auto-graded summary and explanations`
+            : `${activeExamMeta.badge} · Compare with model answers and review your marks`)}
       </p>
 
       {phase === 'exam' && total > 0 && (
         <div className="mt-3 h-1.5 rounded-full bg-white/15 overflow-hidden" aria-hidden="true">
           <div
             className="h-full rounded-full bg-white transition-[width] duration-300 ease-out"
-            style={{ width: `${((current + 1) / total) * 100}%` }}
+            style={{ width: `${progressPercent}%` }}
           />
         </div>
       )}
@@ -242,41 +512,220 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                 label="Course"
                 value={courseCode}
                 options={courseOptions}
-                onChange={setCourseCode}
+                onChange={handleCourseChange}
               />
 
+              {/* Exam Type Selector */}
+              <div>
+                <p className="text-xs font-semibold text-[#686C78]">Exam type</p>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2.5" role="radiogroup" aria-label="Exam type">
+                  {EXAM_TYPES.map((type) => {
+                    const active = examType === type.id;
+                    return (
+                      <button
+                        key={type.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => {
+                          setExamType(type.id);
+                          setGenerateError(null);
+                        }}
+                        className={`text-left rounded-xl p-3.5 border transition-all duration-150 cursor-pointer flex items-start gap-3 ${
+                          active
+                            ? 'bg-[#1D1E23] text-white border-transparent shadow-[0_6px_16px_-6px_rgba(24,25,30,0.35)]'
+                            : 'bg-[#F6F7F9] text-[#1A1B20] border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
+                        }`}
+                      >
+                        <span
+                          className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                            active ? 'bg-white/15 text-white' : 'bg-white text-[#1D1E23] border border-[#1A1B20]/[0.08]'
+                          }`}
+                        >
+                          {EXAM_TYPE_ICON[type.id]}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-bold leading-snug">{type.label}</span>
+                          <span
+                            className={`mt-0.5 block text-xs leading-relaxed ${
+                              active ? 'text-[#C3C7D2]' : 'text-[#686C78]'
+                            }`}
+                          >
+                            {type.description}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Number of Questions with Custom Button */}
               <div>
                 <p className="text-xs font-semibold text-[#686C78]">Number of questions</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {COUNT_CHOICES.filter((n) => n < pool).map((n) => (
-                    <Chip key={n} selected={effectiveCount === n} onClick={() => setQuestionCount(n)}>
+                  {COUNT_CHOICES.map((n) => (
+                    <Chip
+                      key={n}
+                      selected={!customCountMode && questionCount === n}
+                      onClick={() => {
+                        setCustomCountMode(false);
+                        setQuestionCount(n);
+                      }}
+                    >
                       {n}
                     </Chip>
                   ))}
-                  <Chip selected={effectiveCount === pool || questionCount >= pool} onClick={() => setQuestionCount(pool)}>
-                    All {pool}
+                  {examType === 'theory' && pool > 0 && !COUNT_CHOICES.includes(pool) && (
+                    <Chip
+                      selected={!customCountMode && questionCount === pool}
+                      onClick={() => {
+                        setCustomCountMode(false);
+                        setQuestionCount(pool);
+                      }}
+                    >
+                      All {pool}
+                    </Chip>
+                  )}
+                  <Chip
+                    selected={customCountMode}
+                    onClick={() => {
+                      setCustomCountMode(true);
+                      setCustomCountInput(String(questionCount));
+                    }}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Custom
                   </Chip>
                 </div>
+
+                {customCountMode && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2.5">
+                    <button
+                      type="button"
+                      aria-label="Decrease number of questions"
+                      onClick={() => applyCustomCount(String(Math.max(1, questionCount - 1)))}
+                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      inputMode="numeric"
+                      aria-label="Custom number of questions"
+                      value={customCountInput}
+                      onChange={(e) => applyCustomCount(e.target.value)}
+                      onBlur={() => setCustomCountInput(String(questionCount))}
+                      className="h-9 w-20 rounded-lg bg-white border border-[#1A1B20]/[0.1] px-2.5 text-center font-mono-tabular text-sm font-bold text-[#1A1B20] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Increase number of questions"
+                      onClick={() => applyCustomCount(String(Math.min(50, questionCount + 1)))}
+                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs font-medium text-[#505460] ml-1">
+                      questions (1–50)
+                    </span>
+                  </div>
+                )}
+
                 <p className="mt-2 text-xs text-[#686C78]">
-                  {pool} question{pool === 1 ? '' : 's'} available for this choice.
+                  {questionCount} question{questionCount === 1 ? '' : 's'} selected · {pool} archive past question
+                  {pool === 1 ? '' : 's'} available.
+                  {examType !== 'theory' && ' AI builds tailored questions from your course archive.'}
                 </p>
               </div>
 
+              {/* Time Allowed with Custom Button */}
               <div>
                 <p className="text-xs font-semibold text-[#686C78]">Time allowed</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {MINUTE_CHOICES.map((m) => (
-                    <Chip key={m} selected={minutes === m} onClick={() => setMinutes(m)}>
+                    <Chip
+                      key={m}
+                      selected={!customTimeMode && minutes === m}
+                      onClick={() => {
+                        setCustomTimeMode(false);
+                        setMinutes(m);
+                      }}
+                    >
                       {m} min
                     </Chip>
                   ))}
+                  <Chip
+                    selected={customTimeMode}
+                    onClick={() => {
+                      setCustomTimeMode(true);
+                      setCustomTimeInput(String(minutes));
+                    }}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Custom
+                  </Chip>
                 </div>
+
+                {customTimeMode && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2.5">
+                    <button
+                      type="button"
+                      aria-label="Decrease exam minutes"
+                      onClick={() => applyCustomMinutes(String(Math.max(1, minutes - 5)))}
+                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={240}
+                      inputMode="numeric"
+                      aria-label="Custom time allowed in minutes"
+                      value={customTimeInput}
+                      onChange={(e) => applyCustomMinutes(e.target.value)}
+                      onBlur={() => setCustomTimeInput(String(minutes))}
+                      className="h-9 w-20 rounded-lg bg-white border border-[#1A1B20]/[0.1] px-2.5 text-center font-mono-tabular text-sm font-bold text-[#1A1B20] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Increase exam minutes"
+                      onClick={() => applyCustomMinutes(String(Math.min(240, minutes + 5)))}
+                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs font-medium text-[#505460] ml-1">
+                      minutes (1–240)
+                    </span>
+                  </div>
+                )}
               </div>
 
+              {/* Topic to Focus On + AI Suggest Button */}
               <div>
-                <label htmlFor="exam-focus" className="text-xs font-semibold text-[#686C78]">
-                  Topic to focus on (optional)
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="exam-focus" className="text-xs font-semibold text-[#686C78]">
+                    Topic to focus on (optional)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleSuggestTopics()}
+                    disabled={suggestLoading}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D1E23] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2B2D35] disabled:opacity-60 transition-colors cursor-pointer"
+                  >
+                    {suggestLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
+                    {suggestLoading ? 'Suggesting...' : 'AI Suggest'}
+                  </button>
+                </div>
+
                 <input
                   id="exam-focus"
                   type="text"
@@ -285,6 +734,44 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                   placeholder="e.g. essay writing, library, grammar"
                   className="mt-1.5 w-full min-h-[44px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
                 />
+
+                {suggestError && (
+                  <p role="alert" className="mt-2 flex items-start gap-2 rounded-xl bg-[#FDECEC] px-3 py-2 text-xs font-medium text-[#9B1C1C]">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{suggestError}</span>
+                  </p>
+                )}
+
+                {suggestedTopics.length > 0 && (
+                  <div className="mt-2.5 space-y-1.5">
+                    <p className="text-[11px] font-semibold text-[#686C78]">
+                      Suggested topics — tap to add or remove:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {suggestedTopics.map((topic) => {
+                        const active = focus
+                          .split(',')
+                          .map((s) => s.trim().toLowerCase())
+                          .includes(topic.toLowerCase());
+                        return (
+                          <button
+                            key={topic}
+                            type="button"
+                            onClick={() => toggleSuggestedTopic(topic)}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors cursor-pointer ${
+                              active
+                                ? 'bg-[#1D1E23] text-white border-transparent'
+                                : 'bg-[#F6F7F9] text-[#1A1B20] border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
+                            }`}
+                          >
+                            {active ? '✓ ' : '+ '}
+                            {topic}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -293,14 +780,31 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                 <Sparkles className="w-5 h-5" />
               </div>
               <p className="text-sm text-[#505460] leading-relaxed">
-                This is a prediction, not a promise. Questions are picked from real past questions,
-                favouring themes that keep coming back, the latest session and your topic. Real
-                exams can still surprise you.
+                This is a prediction, not a promise. Questions are built from real past questions and
+                study guides, favouring recurring themes and your selected topic. Real exams can still
+                surprise you.
               </p>
             </div>
 
-            <TactileButton variant="dark" size="lg" fullWidth onClick={handleStart} disabled={pool === 0}>
-              Start exam
+            {generateError && (
+              <div role="alert" className="rounded-2xl bg-[#FDECEC] border border-[#9B1C1C]/15 p-4 flex items-start gap-2.5 text-sm text-[#9B1C1C]">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Could not start exam</p>
+                  <p className="mt-0.5 text-xs leading-relaxed">{generateError}</p>
+                </div>
+              </div>
+            )}
+
+            <TactileButton
+              variant="dark"
+              size="lg"
+              fullWidth
+              onClick={handleStart}
+              disabled={pool === 0 || generatingExam}
+              icon={generatingExam ? <Loader2 className="w-4 h-4 animate-spin" /> : undefined}
+            >
+              {generatingExam ? `Preparing ${activeExamMeta.badge}...` : 'Start exam'}
             </TactileButton>
           </>
         )}
@@ -312,128 +816,338 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
 
   // ------------------------------------------------------------------ exam
   if (phase === 'exam') {
-    const q = exam.questions[current];
-    const isLast = current === total - 1;
     const unanswered = total - answeredCount;
+    const confirmDialog = confirm && (
+      <div role="alertdialog" aria-label="Confirm" className={`${card} space-y-3`}>
+        {confirm === 'exit' ? (
+          <p className="text-sm text-[#1A1B20] font-semibold">
+            Leave the exam? Your answers will not be kept.
+          </p>
+        ) : (
+          <p className="text-sm text-[#1A1B20] font-semibold">
+            {unanswered > 0
+              ? `You have ${unanswered} unanswered question${unanswered === 1 ? '' : 's'}. Submit anyway?`
+              : 'Submit your exam now?'}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2.5">
+          <TactileButton
+            variant="dark"
+            size="sm"
+            onClick={() => (confirm === 'exit' ? onBack() : void finishExam(false))}
+          >
+            {confirm === 'exit' ? 'Leave exam' : 'Submit exam'}
+          </TactileButton>
+          <TactileButton variant="light" size="sm" onClick={() => setConfirm(null)}>
+            Keep going
+          </TactileButton>
+        </div>
+      </div>
+    );
+
+    // CBT Mode: One question at a time with A–D options
+    if (exam.examType === 'cbt') {
+      const q = exam.questions[current];
+      const isLast = current === total - 1;
+      const selectedOption = answers[q.id];
+
+      return (
+        <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
+          {header}
+          {confirmDialog}
+
+          <section aria-label={`Question ${q.number}`} className={`${card} space-y-4`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-mono-tabular font-semibold text-[#686C78]">{q.source}</span>
+              {q.reasons.map((r) => (
+                <span key={r} className="rounded-full bg-[#F2F4F7] px-2.5 py-1 text-[11px] font-semibold text-[#505460]">
+                  {r}
+                </span>
+              ))}
+            </div>
+
+            <p className="font-serif text-[17px] leading-[1.7] text-[#1A1B20]">
+              <span className="font-bold tabular-nums">{q.number}. </span>
+              {q.text}
+            </p>
+
+            <div className="space-y-2.5" role="radiogroup" aria-label={`Options for question ${q.number}`}>
+              {(q.options ?? []).map((opt, idx) => {
+                const picked = selectedOption === String(idx);
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    role="radio"
+                    aria-checked={picked}
+                    onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: String(idx) }))}
+                    className={`w-full text-left rounded-xl p-3.5 border transition-all duration-150 cursor-pointer flex items-start gap-3 ${
+                      picked
+                        ? 'bg-[#1D1E23] text-white border-transparent shadow-[0_4px_12px_-4px_rgba(24,25,30,0.3)]'
+                        : 'bg-[#F6F7F9] text-[#1A1B20] border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                        picked ? 'bg-white text-[#1D1E23]' : 'bg-white text-[#1A1B20] border border-[#1A1B20]/15'
+                      }`}
+                    >
+                      {OPTION_LETTERS[idx]}
+                    </span>
+                    <span className="text-sm leading-relaxed">{opt}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <nav aria-label="Questions" className="flex flex-wrap gap-2">
+            {exam.questions.map((item, i) => {
+              const done = (answers[item.id] ?? '').trim().length > 0;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setCurrent(i)}
+                  aria-label={`Question ${i + 1}${done ? ', answered' : ''}`}
+                  aria-current={i === current ? 'step' : undefined}
+                  className={`h-10 w-10 rounded-xl text-sm font-bold transition-colors duration-150 cursor-pointer ${
+                    i === current
+                      ? 'bg-[#1D1E23] text-white'
+                      : done
+                        ? 'bg-[#DADDE6] text-[#1A1B20]'
+                        : 'bg-white text-[#686C78] border border-[#1A1B20]/[0.1]'
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="flex items-center justify-between gap-3">
+            <TactileButton
+              variant="light"
+              icon={<ArrowLeft className="w-4 h-4" />}
+              disabled={current === 0}
+              onClick={() => setCurrent((c) => Math.max(0, c - 1))}
+            >
+              Previous
+            </TactileButton>
+            {isLast ? (
+              <TactileButton variant="dark" onClick={() => setConfirm('finish')}>
+                Submit exam
+              </TactileButton>
+            ) : (
+              <TactileButton
+                variant="dark"
+                icon={<ArrowRight className="w-4 h-4" />}
+                onClick={() => setCurrent((c) => Math.min(total - 1, c + 1))}
+              >
+                Next
+              </TactileButton>
+            )}
+          </div>
+          {!isLast && (
+            <button
+              type="button"
+              onClick={() => setConfirm('finish')}
+              className="block mx-auto text-xs font-semibold text-[#505460] underline underline-offset-4 decoration-[#1A1B20]/30 hover:decoration-[#1A1B20] cursor-pointer"
+            >
+              Submit exam now
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // Paper Exam Modes (OBJ Paper, Theory Paper, True / False Paper) — full question list!
+    const paperSubtitle =
+      exam.examType === 'obj'
+        ? 'SECTION A · OBJECTIVE (MULTIPLE CHOICE)'
+        : exam.examType === 'theory'
+          ? 'SECTION B · THEORY & ESSAY QUESTIONS'
+          : 'TRUE OR FALSE ASSESSMENT';
+
+    const paperInstructions =
+      exam.examType === 'obj'
+        ? 'Answer all questions. Select the most appropriate option (A–D) for each question on the sheet.'
+        : exam.examType === 'theory'
+          ? 'Read each question carefully and write your answer in the space provided directly underneath.'
+          : 'Read each statement carefully and select either True or False.';
 
     return (
       <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
         {header}
+        {confirmDialog}
 
-        {confirm && (
-          <div role="alertdialog" aria-label="Confirm" className={`${card} space-y-3`}>
-            {confirm === 'exit' ? (
-              <p className="text-sm text-[#1A1B20] font-semibold">
-                Leave the exam? Your answers will not be kept.
-              </p>
-            ) : (
-              <p className="text-sm text-[#1A1B20] font-semibold">
-                {unanswered > 0
-                  ? `You have ${unanswered} unanswered question${unanswered === 1 ? '' : 's'}. Submit anyway?`
-                  : 'Submit your exam now?'}
-              </p>
-            )}
-            <div className="flex flex-wrap gap-2.5">
-              <TactileButton
-                variant="dark"
-                size="sm"
-                onClick={() => (confirm === 'exit' ? onBack() : finishExam(false))}
-              >
-                {confirm === 'exit' ? 'Leave exam' : 'Submit exam'}
-              </TactileButton>
-              <TactileButton variant="light" size="sm" onClick={() => setConfirm(null)}>
-                Keep going
-              </TactileButton>
-            </div>
+        {/* Printed Paper Masthead */}
+        <section aria-label="Examination paper instructions" className="rounded-2xl bg-white border border-[#1A1B20]/[0.1] p-5 shadow-[0_2px_12px_-4px_rgba(24,25,30,0.08)]">
+          <div className="border-b border-[#1A1B20]/[0.1] pb-3 text-center">
+            <p className="text-[11px] font-mono-tabular font-bold uppercase tracking-[0.14em] text-[#686C78]">
+              {paperSubtitle}
+            </p>
+            <h2 className="mt-1 font-display text-base sm:text-lg font-bold text-[#1A1B20]">
+              {spec?.courseCode === ALL_COURSES ? 'GENERAL STUDIES PRACTICE PAPER' : `${spec?.courseCode} PRACTICE EXAMINATION`}
+            </h2>
+            <p className="mt-1 text-xs font-medium text-[#505460]">
+              Time Allowed: {spec?.minutes} Minutes · Total Questions: {total}
+            </p>
           </div>
-        )}
-
-        <section aria-label={`Question ${q.number}`} className={`${card} space-y-4`}>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-mono-tabular font-semibold text-[#686C78]">{q.source}</span>
-            {q.reasons.map((r) => (
-              <span key={r} className="rounded-full bg-[#F2F4F7] px-2.5 py-1 text-[11px] font-semibold text-[#505460]">
-                {r}
-              </span>
-            ))}
-          </div>
-
-          <p className="font-serif text-[17px] leading-[1.7] text-[#1A1B20]">
-            <span className="font-bold tabular-nums">{q.number}. </span>
-            {q.text}
+          <p className="mt-3 text-xs sm:text-sm text-[#3A3D47] leading-relaxed">
+            <span className="font-bold text-[#1A1B20]">Instructions: </span>
+            {paperInstructions}
           </p>
-
-          <div>
-            <label htmlFor="exam-answer" className="text-xs font-semibold text-[#686C78]">
-              Your answer
-            </label>
-            <textarea
-              id="exam-answer"
-              value={answers[q.id] ?? ''}
-              onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
-              rows={9}
-              placeholder="Type your answer here..."
-              className="mt-1.5 w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 py-3 text-sm leading-6 text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20 resize-y"
-            />
-          </div>
         </section>
 
-        <nav aria-label="Questions" className="flex flex-wrap gap-2">
-          {exam.questions.map((item, i) => {
-            const done = (answers[item.id] ?? '').trim().length > 0;
+        {/* Full List of Questions on the Exam Sheet */}
+        <ol className="space-y-4">
+          {exam.questions.map((q) => {
+            const val = answers[q.id] ?? '';
+            const isAnswered = val.trim().length > 0;
+
             return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setCurrent(i)}
-                aria-label={`Question ${i + 1}${done ? ', answered' : ''}`}
-                aria-current={i === current ? 'step' : undefined}
-                className={`h-10 w-10 rounded-xl text-sm font-bold transition-colors duration-150 cursor-pointer ${
-                  i === current
-                    ? 'bg-[#1D1E23] text-white'
-                    : done
-                      ? 'bg-[#DADDE6] text-[#1A1B20]'
-                      : 'bg-white text-[#686C78] border border-[#1A1B20]/[0.1]'
-                }`}
+              <li
+                key={q.id}
+                className="rounded-2xl bg-white p-4 sm:p-6 border border-[#1A1B20]/[0.08] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.05)] space-y-4"
               >
-                {i + 1}
-              </button>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-mono-tabular font-semibold text-[#686C78]">
+                      {q.source}
+                    </span>
+                    {q.reasons.map((r) => (
+                      <span
+                        key={r}
+                        className="rounded-full bg-[#F2F4F7] px-2.5 py-0.5 text-[11px] font-semibold text-[#505460]"
+                      >
+                        {r}
+                      </span>
+                    ))}
+                  </div>
+                  {isAnswered && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#1D1E23]/[0.07] px-2.5 py-0.5 text-[11px] font-semibold text-[#1A1B20]">
+                      <Check className="w-3 h-3" /> Answered
+                    </span>
+                  )}
+                </div>
+
+                <p className="font-serif text-[16.5px] sm:text-[17px] leading-[1.75] text-[#1A1B20]">
+                  <span className="font-bold tabular-nums mr-1.5">{q.number}.</span>
+                  {q.text}
+                </p>
+
+                {/* OBJ: Full list with A–D options */}
+                {exam.examType === 'obj' && (
+                  <div
+                    className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1"
+                    role="radiogroup"
+                    aria-label={`Options for question ${q.number}`}
+                  >
+                    {(q.options ?? []).map((opt, idx) => {
+                      const picked = val === String(idx);
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          role="radio"
+                          aria-checked={picked}
+                          onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: String(idx) }))}
+                          className={`text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer flex items-start gap-2.5 ${
+                            picked
+                              ? 'bg-[#1D1E23] text-white border-transparent shadow-[0_4px_12px_-4px_rgba(24,25,30,0.28)]'
+                              : 'bg-[#F8F9FB] text-[#1A1B20] border-[#1A1B20]/[0.09] hover:bg-[#ECEEF3]'
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                              picked
+                                ? 'bg-white text-[#1D1E23]'
+                                : 'bg-white text-[#1A1B20] border border-[#1A1B20]/15'
+                            }`}
+                          >
+                            {OPTION_LETTERS[idx]}
+                          </span>
+                          <span className="text-sm leading-snug">{opt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Theory: Answer space directly underneath each question */}
+                {exam.examType === 'theory' && (
+                  <div className="pt-1">
+                    <label
+                      htmlFor={`answer-${q.id}`}
+                      className="text-xs font-semibold uppercase tracking-[0.06em] text-[#686C78]"
+                    >
+                      Your answer (Question {q.number})
+                    </label>
+                    <textarea
+                      id={`answer-${q.id}`}
+                      value={val}
+                      onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                      rows={5}
+                      placeholder="Write your answer underneath this question..."
+                      className="mt-1.5 w-full rounded-xl bg-[#FAFAFC] border border-[#1A1B20]/[0.12] px-3.5 py-3 text-sm leading-6 text-[#1A1B20] placeholder:text-[#8E93A2] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20 resize-y"
+                    />
+                  </div>
+                )}
+
+                {/* Boolean: True / False only */}
+                {exam.examType === 'boolean' && (
+                  <div
+                    className="grid grid-cols-2 gap-3 pt-1"
+                    role="radiogroup"
+                    aria-label={`True or False for question ${q.number}`}
+                  >
+                    {[
+                      { value: 'true', label: 'True' },
+                      { value: 'false', label: 'False' },
+                    ].map((choice) => {
+                      const picked = val === choice.value;
+                      return (
+                        <button
+                          key={choice.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={picked}
+                          onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: choice.value }))}
+                          className={`min-h-[46px] rounded-xl px-4 text-sm font-bold border transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 ${
+                            picked
+                              ? 'bg-[#1D1E23] text-white border-transparent shadow-[0_4px_12px_-4px_rgba(24,25,30,0.28)]'
+                              : 'bg-[#F8F9FB] text-[#1A1B20] border-[#1A1B20]/[0.09] hover:bg-[#ECEEF3]'
+                          }`}
+                        >
+                          {picked && <Check className="w-4 h-4" />}
+                          {choice.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </li>
             );
           })}
-        </nav>
+        </ol>
 
-        <div className="flex items-center justify-between gap-3">
-          <TactileButton
-            variant="light"
-            icon={<ArrowLeft className="w-4 h-4" />}
-            disabled={current === 0}
-            onClick={() => setCurrent((c) => Math.max(0, c - 1))}
-          >
-            Previous
+        {/* Paper Footer Submit Bar */}
+        <div className={`${card} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
+          <div>
+            <p className="text-sm font-bold text-[#1A1B20]">
+              {answeredCount} of {total} answered
+            </p>
+            <p className="text-xs text-[#686C78]">
+              {unanswered === 0
+                ? 'All questions answered. Ready to submit.'
+                : `${unanswered} question${unanswered === 1 ? '' : 's'} remaining.`}
+            </p>
+          </div>
+          <TactileButton variant="dark" onClick={() => setConfirm('finish')}>
+            Submit exam
           </TactileButton>
-          {isLast ? (
-            <TactileButton variant="dark" onClick={() => setConfirm('finish')}>
-              Submit exam
-            </TactileButton>
-          ) : (
-            <TactileButton
-              variant="dark"
-              icon={<ArrowRight className="w-4 h-4" />}
-              onClick={() => setCurrent((c) => Math.min(total - 1, c + 1))}
-            >
-              Next
-            </TactileButton>
-          )}
         </div>
-        {!isLast && (
-          <button
-            type="button"
-            onClick={() => setConfirm('finish')}
-            className="block mx-auto text-xs font-semibold text-[#505460] underline underline-offset-4 decoration-[#1A1B20]/30 hover:decoration-[#1A1B20] cursor-pointer"
-          >
-            Submit exam now
-          </button>
-        )}
       </div>
     );
   }
@@ -449,12 +1163,15 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
             Time was up, so your exam was submitted for you.
           </p>
         )}
+
         <div className="grid grid-cols-3 gap-3 text-center">
           <div>
             <p className="font-display text-xl font-bold text-[#1A1B20]">
-              {answeredCount}/{total}
+              {isAutoGraded ? `${autoScore.correct}/${total}` : `${answeredCount}/${total}`}
             </p>
-            <p className="text-[11px] text-[#686C78]">Answered</p>
+            <p className="text-[11px] text-[#686C78]">
+              {isAutoGraded ? 'Correct' : 'Answered'}
+            </p>
           </div>
           <div>
             <p className="font-display text-xl font-bold text-[#1A1B20] font-mono-tabular">
@@ -464,22 +1181,153 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
           </div>
           <div>
             <p className="font-display text-xl font-bold text-[#1A1B20]">
-              {score.marked === 0 ? '—' : `${score.percent}%`}
+              {isAutoGraded
+                ? `${autoScore.percent}%`
+                : theoryScore.marked === 0
+                  ? '—'
+                  : `${theoryScore.percent}%`}
             </p>
             <p className="text-[11px] text-[#686C78]">Your score</p>
           </div>
         </div>
-        <p className="mt-3 text-xs text-[#686C78] leading-relaxed">
-          {score.marked < total
-            ? `Read each model answer, then mark yourself (${score.marked} of ${total} marked) to see your score.`
-            : 'All marked. Try another exam to keep improving.'}
-        </p>
+
+        {isAutoGraded ? (
+          <p className="mt-3 text-xs text-[#686C78] leading-relaxed">
+            {autoScore.percent >= 70
+              ? 'Strong result! Review any missed explanations below to lock in the details.'
+              : 'Good effort. Check the explanations below and try another practice set to sharpen weak areas.'}
+          </p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {gradingTheory && (
+              <p className="inline-flex items-center gap-2 rounded-xl bg-[#F2F4F7] px-3 py-1.5 text-xs font-semibold text-[#1A1B20]">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                AI examiner is reviewing your answers...
+              </p>
+            )}
+            {gradingNotice && (
+              <p className="rounded-xl bg-[#FFF4D6] px-3 py-2 text-xs font-medium text-[#6B4E00]">
+                {gradingNotice}
+              </p>
+            )}
+            <p className="text-xs text-[#686C78] leading-relaxed">
+              {theoryScore.marked < total
+                ? `Read each model answer, then mark yourself (${theoryScore.marked} of ${total} marked) to see your score.`
+                : 'All marked. Try another exam to keep improving.'}
+            </p>
+          </div>
+        )}
       </section>
 
       <ol className="space-y-4">
         {exam.questions.map((q) => {
-          const mine = (answers[q.id] ?? '').trim();
+          const rawAns = answers[q.id] ?? '';
+          const mine = rawAns.trim();
+
+          // Auto-graded OBJ / CBT / Boolean review card
+          if (isAutoGraded) {
+            const isBoolean = exam.examType === 'boolean';
+            const isCorrect = isBoolean
+              ? mine === (q.correctBoolean ? 'true' : 'false')
+              : mine !== '' && Number(mine) === q.correctIndex;
+            const skipped = mine === '';
+
+            return (
+              <li key={q.id} className={`${card} space-y-3.5`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] font-mono-tabular font-semibold text-[#686C78]">
+                    {q.source}
+                  </span>
+                  {skipped ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#FFF4D6] px-2.5 py-0.5 text-[11px] font-semibold text-[#6B4E00]">
+                      Skipped
+                    </span>
+                  ) : isCorrect ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#E6F6EC] px-2.5 py-0.5 text-[11px] font-semibold text-[#166534]">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Correct
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#FDECEC] px-2.5 py-0.5 text-[11px] font-semibold text-[#9B1C1C]">
+                      <XCircle className="w-3.5 h-3.5" /> Incorrect
+                    </span>
+                  )}
+                </div>
+
+                <p className="font-serif text-[16px] leading-[1.7] text-[#1A1B20]">
+                  <span className="font-bold tabular-nums">{q.number}. </span>
+                  {q.text}
+                </p>
+
+                {isBoolean ? (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {(['true', 'false'] as const).map((val) => {
+                      const expected = q.correctBoolean ? 'true' : 'false';
+                      const isRightOption = val === expected;
+                      const userPickedThis = mine === val;
+                      return (
+                        <div
+                          key={val}
+                          className={`rounded-xl px-3.5 py-2.5 text-sm font-semibold border flex items-center justify-between ${
+                            isRightOption
+                              ? 'bg-[#E6F6EC] border-[#166534]/30 text-[#166534]'
+                              : userPickedThis
+                                ? 'bg-[#FDECEC] border-[#9B1C1C]/30 text-[#9B1C1C]'
+                                : 'bg-[#F6F7F9] border-[#1A1B20]/[0.06] text-[#686C78]'
+                          }`}
+                        >
+                          <span>{val === 'true' ? 'True' : 'False'}</span>
+                          {isRightOption && <Check className="w-4 h-4" />}
+                          {!isRightOption && userPickedThis && <XCircle className="w-4 h-4" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {(q.options ?? []).map((opt, idx) => {
+                      const isRightOption = idx === q.correctIndex;
+                      const userPickedThis = mine !== '' && Number(mine) === idx;
+                      return (
+                        <div
+                          key={idx}
+                          className={`rounded-xl p-3 text-sm border flex items-start gap-2.5 ${
+                            isRightOption
+                              ? 'bg-[#E6F6EC] border-[#166534]/30 text-[#166534]'
+                              : userPickedThis
+                                ? 'bg-[#FDECEC] border-[#9B1C1C]/30 text-[#9B1C1C]'
+                                : 'bg-[#F6F7F9] border-[#1A1B20]/[0.06] text-[#505460]'
+                          }`}
+                        >
+                          <span className="font-bold shrink-0">{OPTION_LETTERS[idx]}.</span>
+                          <span className="flex-1">{opt}</span>
+                          {isRightOption && <Check className="w-4 h-4 shrink-0 mt-0.5" />}
+                          {!isRightOption && userPickedThis && <XCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {q.solution && q.solution.explanation.length > 0 && (
+                  <div className="rounded-2xl bg-[#1D1E23] px-4 py-3 text-white">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#A5AAB8]">
+                      Explanation
+                    </p>
+                    <ul className="mt-2 space-y-1.5 text-sm leading-6 text-[#E6E8EE]">
+                      {q.solution.explanation.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </li>
+            );
+          }
+
+          // Theory review card
           const mark = marks[q.id];
+          const aiGrade = aiGrades[q.id];
+
           return (
             <li key={q.id} className={`${card} space-y-3.5`}>
               <div className="flex flex-wrap items-center gap-2">
@@ -496,6 +1344,15 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                   {mine || 'You did not answer this one.'}
                 </p>
               </div>
+
+              {aiGrade && (
+                <div className="rounded-2xl bg-[#EEF2FF] border border-[#1D1E23]/10 px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#374151]">
+                    AI Examiner Feedback
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-[#1A1B20]">{aiGrade.feedback}</p>
+                </div>
+              )}
 
               {q.solution ? (
                 <div className="rounded-2xl bg-[#1D1E23] px-4 py-3.5 text-white">
@@ -558,8 +1415,13 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
       </ol>
 
       <div className="flex flex-wrap gap-2.5">
-        <TactileButton variant="dark" icon={<RotateCcw className="w-4 h-4" />} onClick={() => spec && startExam(spec)}>
-          Try a new exam like this
+        <TactileButton
+          variant="dark"
+          icon={<RotateCcw className="w-4 h-4" />}
+          disabled={generatingExam}
+          onClick={() => spec && void startExam(spec)}
+        >
+          {generatingExam ? 'Preparing...' : 'Try a new exam like this'}
         </TactileButton>
         <TactileButton variant="light" onClick={() => setPhase('setup')}>
           Change settings
