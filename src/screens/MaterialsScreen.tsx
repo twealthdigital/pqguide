@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, BookOpen, Search } from 'lucide-react';
+import { ArrowRight, BookOpen } from 'lucide-react';
 import type { StudyMaterial } from '../core/types';
 import { STUDY_MATERIALS } from '../data/materials';
+import { SearchField } from '../components/ui/SearchField';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 
 interface MaterialsScreenProps {
@@ -25,16 +26,11 @@ export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial
         <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">Materials</h1>
         <p className="mt-1.5 text-xs text-[#C3C7D2]">Read and prepare for your exams</p>
 
-        <div className="mt-3.5 flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-[#1A1B20]">
-          <Search className="w-4 h-4 text-[#686C78] shrink-0" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search a course or topic..."
-            className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
-          />
-        </div>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder="Search a course or topic..."
+        />
       </DarkHeaderCard>
 
       <section aria-label="Reading guides">

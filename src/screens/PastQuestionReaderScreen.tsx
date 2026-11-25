@@ -2,9 +2,9 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Lightbulb,
-  Search,
 } from 'lucide-react';
 import type { PastQuestionDoc } from '../core/types';
+import { SearchField } from '../components/ui/SearchField';
 import { SurfaceCard } from '../components/ui/SurfaceCard';
 import { TactileButton } from '../components/ui/TactileButton';
 import { AnswerSheet } from '../components/ui/AnswerSheet';
@@ -127,16 +127,11 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
             {doc.session} · {doc.level}
           </p>
 
-          <div className="mt-3.5 flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-[#1A1B20]">
-            <Search className="w-4 h-4 text-[#686C78] shrink-0" />
-            <input
-              type="search"
-              value={inlineQuery}
-              onChange={(e) => setInlineQuery(e.target.value)}
-              placeholder={`Search inside ${doc.courseCode}...`}
-              className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
-            />
-          </div>
+          <SearchField
+            value={inlineQuery}
+            onChange={setInlineQuery}
+            placeholder={`Search inside ${doc.courseCode}...`}
+          />
         </div>
       </div>
 

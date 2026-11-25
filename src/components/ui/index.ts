@@ -8,3 +8,4 @@ export { DocumentListSkeleton, HomeScreenSkeleton, SkeletonBox } from './Skeleto
 export { SurfaceCard } from './SurfaceCard';
 export { TactileButton, type TactileVariant } from './TactileButton';
 export { WaveHeader } from './WaveHeader';
+export { SearchField } from './SearchField';

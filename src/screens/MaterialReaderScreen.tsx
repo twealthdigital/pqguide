@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Search } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import type { StudyMaterial } from '../core/types';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
+import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
 
 interface MaterialReaderScreenProps {
@@ -63,16 +64,11 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
           {material.courseCode} · {material.level} · {material.readMinutes} min read
         </p>
 
-        <div className="mt-3.5 flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-[#1A1B20]">
-          <Search className="w-4 h-4 text-[#686C78] shrink-0" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search inside this guide..."
-            className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
-          />
-        </div>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder="Search inside this guide..."
+        />
       </DarkHeaderCard>
 
       <article className="rounded-3xl border border-[#1A1B20]/[0.08] bg-white px-5 py-6 shadow-[0_2px_12px_-6px_rgba(24,25,30,0.1)] sm:px-8 sm:py-8">

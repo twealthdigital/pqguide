@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, FileText, Search } from 'lucide-react';
+import { ArrowRight, FileText } from 'lucide-react';
 import type { PastQuestionDoc } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
+import { SearchField } from '../components/ui/SearchField';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 
 interface PastQuestionsScreenProps {
@@ -76,16 +77,11 @@ export const PastQuestionsScreen: React.FC<PastQuestionsScreenProps> = ({ onOpen
         <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">Past Questions</h1>
         <p className="mt-1.5 text-xs text-[#C3C7D2]">Pick up where you left off</p>
 
-        <div className="mt-3.5 flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-[#1A1B20]">
-          <Search className="w-4 h-4 text-[#686C78] shrink-0" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search a course code or title..."
-            className="w-full bg-transparent text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
-          />
-        </div>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder="Search a course code or title..."
+        />
       </DarkHeaderCard>
 
       {needle ? (
