@@ -297,15 +297,15 @@
 }
 
 /* Bottom tab bar: sit low, like native apps.
-   Tab labels end ~22px above the screen edge on every device:
-   - iPhone (34px inset): 12px padding + ~10px inside the bar
-   - Android gesture nav (~24px inset): 12px floor keeps labels clear of the
-     gesture bar
-   - no inset (Safari with toolbar, older phones): same 12px.
-   The home indicator is only ~5px tall and ~8px from the edge, so labels stay
-   clear of it. */
+   Tab labels end ~14-16px above the screen edge on every device. Native iOS
+   tab labels sit ~39px up (49pt bar above the 34pt inset), so this is already
+   well below native, but it stops short of the bottom ~12px where the
+   home-indicator / Android gesture bar lives (a tap there can trigger the
+   system swipe instead of the tab).
+   - iPhone (34px inset): 6px padding + ~9px inside the bar
+   - Android gesture nav (~24px inset) and no-inset browsers: 4px floor */
 .pb-safe {
-  padding-bottom: max(0.75rem, calc(env(safe-area-inset-bottom) - 1.375rem));
+  padding-bottom: max(0.25rem, calc(env(safe-area-inset-bottom) - 1.75rem));
 }
 
 /* Custom minimal ash scrollbars across entire app */
