@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { Pause, Play } from 'lucide-react';
 import { BrandLogo } from '../components/ui/BrandLogo';
 
 interface LoadingScreenProps {
@@ -8,11 +7,8 @@ interface LoadingScreenProps {
 
 export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
   const [progress, setProgress] = useState(18);
-  const [isPaused, setIsPaused] = useState(false);
 
   useEffect(() => {
-    if (isPaused) return;
-
     const timer = window.setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) return 100;
@@ -22,13 +18,13 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
     }, 240);
 
     return () => window.clearInterval(timer);
-  }, [isPaused]);
+  }, []);
 
   useEffect(() => {
-    if (progress < 100 || isPaused) return;
+    if (progress < 100) return;
     const doneTimer = window.setTimeout(() => onComplete(), 420);
     return () => window.clearTimeout(doneTimer);
-  }, [progress, isPaused, onComplete]);
+  }, [progress, onComplete]);
 
   const statusText =
     progress < 45
@@ -70,36 +66,8 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ onComplete }) => {
         />
       </svg>
 
-      {/* Top Preview Controls */}
-      <div className="relative z-10 w-full max-w-4xl flex items-center justify-between text-xs text-[#9FA4B2]">
-        <span className="font-mono-tabular">pqguide · Archive</span>
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => setIsPaused((p) => !p)}
-            className="inline-flex items-center gap-1.5 text-white/85 hover:text-white cursor-pointer"
-          >
-            {isPaused ? (
-              <>
-                <Play className="w-3.5 h-3.5" />
-                <span>Resume</span>
-              </>
-            ) : (
-              <>
-                <Pause className="w-3.5 h-3.5" />
-                <span>Hold Screen</span>
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={onComplete}
-            className="text-white font-semibold underline underline-offset-4 cursor-pointer"
-          >
-            Next
-          </button>
-        </div>
-      </div>
+      {/* Spacer keeps the emblem vertically centered */}
+      <div aria-hidden="true" />
 
       {/* Center Brand Emblem & Smooth Progress */}
       <div className="relative z-10 w-full max-w-sm flex flex-col items-center text-center">
