@@ -388,13 +388,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           <h2 className="font-display text-lg font-bold text-[#1A1B20]">
             Featured & Quick Actions
           </h2>
-          <button
-            type="button"
-            onClick={() => onNavigate('subscription')}
-            className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] cursor-pointer whitespace-nowrap"
-          >
-            {userHasFullAccess ? 'Manage Pass' : 'See Student Passes'}
-          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
@@ -495,7 +488,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
-                  <span>Search any course code (e.g. CSC 201) or keyword.</span>
+                  <span>Search any course code (e.g. GNS 101) or keyword.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Sparkles className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />

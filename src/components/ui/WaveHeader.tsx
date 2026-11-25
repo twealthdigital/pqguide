@@ -194,7 +194,7 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
                   autoComplete="off"
                   value={searchValue}
                   onChange={(e) => onSearchChange(e.target.value)}
-                  placeholder="Search course code or topic (e.g. CSC 201, GNS 101)..."
+                  placeholder="Search course code or topic (e.g. GNS 101, GNS 102)..."
                   aria-label="Search past questions"
                   className="w-full min-w-0 bg-transparent py-2.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
                 />

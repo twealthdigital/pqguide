@@ -41,17 +41,41 @@ function getDefaultState(): AppStoreState {
   };
 }
 
+// Starter samples for departmental (non-general) courses were retired when the
+// archive became general-studies only. Stored state from earlier visits is
+// cleaned so returning users do not keep seeing them.
+const RETIRED_SEED_DOC_IDS = new Set([
+  'pq-aaua-csc201-2324',
+  'pq-aaua-mth202-2324',
+  'pq-aaua-eco102-2223',
+  'pq-aaua-law301-2425',
+  'pq-aaua-chm101-2425',
+]);
+
 function loadState(): AppStoreState {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return getDefaultState();
     const parsed = JSON.parse(raw) as Partial<AppStoreState>;
     const defaults = getDefaultState();
+    const storedDocs = Array.isArray(parsed.documents) ? parsed.documents : null;
+    const hadRetiredSeeds = Boolean(storedDocs?.some((d) => RETIRED_SEED_DOC_IDS.has(d.id)));
+    let documents = storedDocs
+      ? storedDocs.filter((d) => !RETIRED_SEED_DOC_IDS.has(d.id))
+      : defaults.documents;
+    if (hadRetiredSeeds) {
+      // Untouched starter set: bring in the new general-studies samples too.
+      const have = new Set(documents.map((d) => d.id));
+      documents = [...documents, ...defaults.documents.filter((d) => !have.has(d.id))];
+    }
+    const notifications = (
+      Array.isArray(parsed.notifications) ? parsed.notifications : defaults.notifications
+    ).filter((n) => !(n.targetDocId && RETIRED_SEED_DOC_IDS.has(n.targetDocId)));
     return {
       schools: Array.isArray(parsed.schools) && parsed.schools.length > 0 ? parsed.schools : defaults.schools,
       sessions: Array.isArray(parsed.sessions) && parsed.sessions.length > 0 ? parsed.sessions : defaults.sessions,
-      documents: Array.isArray(parsed.documents) ? parsed.documents : defaults.documents,
-      notifications: Array.isArray(parsed.notifications) ? parsed.notifications : defaults.notifications,
+      documents,
+      notifications,
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : defaults.accounts,
       activeTierId: parsed.activeTierId ?? defaults.activeTierId,
       activeRole: parsed.activeRole ?? defaults.activeRole,
