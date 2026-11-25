@@ -296,8 +296,11 @@
   }
 }
 
+/* Bottom tab bar: sit low like native apps. Only part of the home-indicator
+   safe area is added as padding (the indicator itself is thin and sits at the
+   very bottom edge), so the icons are not floating far above it. */
 .pb-safe {
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  padding-bottom: max(0.375rem, calc(env(safe-area-inset-bottom) - 0.75rem));
 }
 
 /* Custom minimal ash scrollbars across entire app */
