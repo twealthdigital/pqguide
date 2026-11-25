@@ -420,10 +420,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
         {/* Desktop 3-Zone Top Bar */}
         <header className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30">
-          <span className="text-[#1A1B20] shrink-0 flex items-center">
-            <BrandLockup className="h-8 w-auto" />
-          </span>
-
           <nav className="flex items-center gap-6 text-sm font-medium text-[#5A5E6B]">
             <button
               type="button"
