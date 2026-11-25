@@ -296,8 +296,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: 'support', label: 'Customer Support', icon: <Headphones className="w-5 h-5" /> },
   ];
 
-  // Desktop home: the top bar floats on the banner until the page scrolls.
-  const onBanner = activeScreen === 'home' && !isScrolled;
+  const onBanner = false;
 
   return (
     <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#1A1B20] flex flex-col lg:flex-row">
@@ -467,13 +466,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
         {/* Desktop 3-Zone Top Bar */}
         <header
-          className={`hidden lg:flex items-center justify-between gap-8 px-8 h-[72px] sticky top-0 z-30 transition-colors duration-200 ${
-            activeScreen === 'home' ? '-mb-[72px]' : ''
-          } ${
-            onBanner
-              ? 'bg-transparent border-b border-transparent'
-              : 'bg-white border-b border-[#1A1B20]/[0.06]'
-          }`}
+          className={`hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30`}
         >
           <nav aria-label="Company links" className="flex items-center gap-7 text-sm font-medium">
             {infoLinks.map((item) => {
@@ -807,7 +800,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         <main
           className={`flex-1 w-full mx-auto pb-24 ${
             activeScreen === 'home'
-              ? 'max-w-6xl px-4 sm:px-6 pt-0 lg:max-w-none lg:px-0 lg:pb-10'
+              ? 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-0 lg:pt-8 lg:pb-8'
               : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
           }`}
         >

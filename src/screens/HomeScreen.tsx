@@ -359,7 +359,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   );
 
   return (
-    <div className="page-enter">
+    <div className="space-y-6 page-enter">
       {/* Sculpted Dark Ash Header Banner + Morphing Search & Anchored Filter Dropdown */}
       <WaveHeader
         title="Find past questions in seconds"
@@ -376,8 +376,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         searchInputRef={searchInputRef}
       />
 
-      {/* Everything below the banner stays centred on wide screens */}
-      <div className="space-y-6 lg:mx-auto lg:max-w-6xl lg:px-8">
       {/* Featured Cards Row (Dark Ash Wave Card + Soft Ash Card matching Master Task Management UI) */}
       <section aria-label="Quick actions and featured papers">
         <div className="flex items-center justify-between mb-3.5">
@@ -581,7 +579,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         )}
       </section>
-      </div>
     </div>
   );
 };
