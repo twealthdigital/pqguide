@@ -54,6 +54,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
   const [isSwipingDrawer, setIsSwipingDrawer] = useState(false);
@@ -66,6 +67,51 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const gestureAxisRef = useRef<'pending' | 'horizontal' | 'vertical' | null>(null);
 
   const initials = getStudentInitials(student.fullName);
+
+  // The bottom bar must stay at the bottom of the screen. When the on-screen
+  // keyboard opens, some browsers shrink the viewport and drag fixed bars up
+  // above the keyboard. Slide the bar down behind the keyboard instead.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    let baseHeight = Math.max(window.innerHeight, vv?.height ?? 0);
+    let blurTimer: number | undefined;
+
+    const isTyping = () => {
+      const el = document.activeElement;
+      if (!(el instanceof HTMLElement)) return false;
+      if (el instanceof HTMLTextAreaElement || el.isContentEditable) return true;
+      if (el instanceof HTMLInputElement) {
+        return !['checkbox', 'radio', 'button', 'submit', 'range', 'file'].includes(el.type);
+      }
+      return false;
+    };
+
+    const update = () => {
+      const height = vv?.height ?? window.innerHeight;
+      if (!isTyping()) baseHeight = Math.max(window.innerHeight, height);
+      setKeyboardOpen(isTyping() && baseHeight - height > 120);
+    };
+    const onFocusIn = () => {
+      window.clearTimeout(blurTimer);
+      update();
+    };
+    const onFocusOut = () => {
+      window.clearTimeout(blurTimer);
+      blurTimer = window.setTimeout(update, 60);
+    };
+
+    vv?.addEventListener('resize', update);
+    window.addEventListener('resize', update);
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      window.clearTimeout(blurTimer);
+      vv?.removeEventListener('resize', update);
+      window.removeEventListener('resize', update);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -717,7 +763,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       {/* Mobile Bottom Tab Footer (<= 15% mobile height) */}
       <nav
         aria-label="Mobile bottom navigation"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#1D1E23] border-t border-white/[0.08] pb-safe"
+        className={`lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#1D1E23] border-t border-white/[0.08] pb-safe transition-transform duration-200 ${
+          keyboardOpen ? 'translate-y-[calc(100%+24px)] pointer-events-none' : ''
+        }`}
+        aria-hidden={keyboardOpen || undefined}
       >
         <div className="grid grid-cols-5 items-center h-[52px] max-w-lg mx-auto px-2">
           <button
