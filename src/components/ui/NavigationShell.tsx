@@ -763,7 +763,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       {/* Mobile Bottom Tab Footer (<= 15% mobile height) */}
       <nav
         aria-label="Mobile bottom navigation"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#1A1B20]/[0.08] pb-safe"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#1D1E23] border-t border-white/[0.08] pb-safe"
       >
         <div className="grid grid-cols-5 items-center h-[52px] max-w-lg mx-auto px-2">
           <button
@@ -771,8 +771,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             onClick={() => onNavigate('home')}
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
               activeScreen === 'home' || activeScreen === 'reader'
-                ? 'text-[#1D1E23] font-semibold'
-                : 'text-[#8C909E]'
+                ? 'text-white font-semibold'
+                : 'text-[#9CA0AE]'
             }`}
           >
             <Home className="w-5 h-5" />
@@ -784,8 +784,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             onClick={() => onNavigate('subscription')}
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
               activeScreen === 'subscription'
-                ? 'text-[#1D1E23] font-semibold'
-                : 'text-[#8C909E]'
+                ? 'text-white font-semibold'
+                : 'text-[#9CA0AE]'
             }`}
           >
             <Folder className="w-5 h-5" />
@@ -798,7 +798,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               type="button"
               onClick={onQuickFind}
               aria-label="Quick find past question"
-              className="-mt-5 h-12 w-12 rounded-full tactile-dark text-white flex items-center justify-center ring-4 ring-white transition-transform duration-150 active:scale-90 cursor-pointer"
+              className="-mt-5 h-12 w-12 rounded-full bg-white text-[#1D1E23] shadow-[0_6px_16px_-4px_rgba(0,0,0,0.5)] flex items-center justify-center ring-4 ring-[#1D1E23] transition-transform duration-150 active:scale-90 cursor-pointer"
             >
               <Search className="w-5 h-5" />
             </button>
@@ -809,14 +809,14 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             onClick={() => onNavigate('notifications')}
             className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
               activeScreen === 'notifications'
-                ? 'text-[#1D1E23] font-semibold'
-                : 'text-[#8C909E]'
+                ? 'text-white font-semibold'
+                : 'text-[#9CA0AE]'
             }`}
           >
             <div className="relative">
               <Bell className="w-5 h-5" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-[#1D1E23] text-white text-[9px] font-bold font-mono-tabular flex items-center justify-center">
+                <span className="absolute -top-1 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-white text-[#1D1E23] ring-2 ring-[#1D1E23] text-[9px] font-bold font-mono-tabular flex items-center justify-center">
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               )}
@@ -831,8 +831,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             }
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
               activeScreen === 'school_admin' || activeScreen === 'super_admin'
-                ? 'text-[#1D1E23] font-semibold'
-                : 'text-[#8C909E]'
+                ? 'text-white font-semibold'
+                : 'text-[#9CA0AE]'
             }`}
           >
             {activeScreen === 'super_admin' ? (
