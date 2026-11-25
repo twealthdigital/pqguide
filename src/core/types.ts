@@ -16,6 +16,7 @@ export type AppScreen =
   | 'support'
   | 'material_reader'
   | 'mock_exam'
+  | 'performance'
   | 'school_admin'
   | 'super_admin';
 

@@ -7,6 +7,7 @@ import {
   Clock,
   FileText,
   ListChecks,
+  Loader2,
   Minus,
   Monitor,
   Plus,
@@ -28,12 +29,14 @@ import {
   type ExamSpec,
   type ExamType,
 } from '../core/mockExam';
+import { saveExamPerformance } from '../core/performanceStore';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { CustomSelect } from '../components/ui/CustomSelect';
 import { TactileButton } from '../components/ui/TactileButton';
 
 interface MockExamScreenProps {
   onBack: () => void;
+  onSubmitted?: (recordId: string) => void;
 }
 
 type Phase = 'setup' | 'exam' | 'review';
@@ -84,7 +87,7 @@ const Chip: React.FC<{
   </button>
 );
 
-export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
+export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmitted }) => {
   const store = useArchiveStore();
 
   const docs = useMemo(
@@ -121,9 +124,18 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
   const [usedSeconds, setUsedSeconds] = useState(0);
   const [endedByTimer, setEndedByTimer] = useState(false);
   const [confirm, setConfirm] = useState<'finish' | 'exit' | null>(null);
+  const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted'>('idle');
 
   const endAtRef = useRef(0);
   const startedAtRef = useRef(0);
+  const submitTimersRef = useRef<number[]>([]);
+  const finishedRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      submitTimersRef.current.forEach((t) => window.clearTimeout(t));
+    };
+  }, []);
 
   const pool = useMemo(() => countQuestionsFor(docs, courseCode), [docs, courseCode]);
 
@@ -181,12 +193,16 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     (nextSpec: ExamSpec) => {
       const built = buildExam(docs, nextSpec);
       if (built.questions.length === 0) return;
+      submitTimersRef.current.forEach((t) => window.clearTimeout(t));
+      submitTimersRef.current = [];
+      finishedRef.current = false;
       setSpec(nextSpec);
       setExam(built);
       setAnswers({});
       setMarks({});
       setCurrent(0);
       setConfirm(null);
+      setSubmitState('idle');
       setEndedByTimer(false);
       setUsedSeconds(0);
       startedAtRef.current = Date.now();
@@ -198,13 +214,48 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     [docs]
   );
 
-  const finishExam = useCallback((byTimer: boolean) => {
-    setUsedSeconds(Math.round((Date.now() - startedAtRef.current) / 1000));
-    setEndedByTimer(byTimer);
-    setConfirm(null);
-    setPhase('review');
-    window.scrollTo({ top: 0, behavior: 'instant' });
-  }, []);
+  const completeSubmission = useCallback(
+    (byTimer: boolean) => {
+      if (finishedRef.current || !exam || !spec) return;
+      finishedRef.current = true;
+      const elapsed = Math.max(1, Math.round((Date.now() - startedAtRef.current) / 1000));
+      setUsedSeconds(elapsed);
+      setEndedByTimer(byTimer);
+      setConfirm(null);
+
+      const record = saveExamPerformance({
+        spec,
+        questions: exam.questions,
+        answers,
+        usedSeconds: elapsed,
+        endedByTimer: byTimer,
+      });
+
+      if (onSubmitted) {
+        onSubmitted(record.id);
+      } else {
+        setPhase('review');
+        window.scrollTo({ top: 0, behavior: 'instant' });
+      }
+    },
+    [answers, exam, onSubmitted, spec]
+  );
+
+  const triggerAnimatedSubmit = useCallback(
+    (byTimer = false) => {
+      if (submitState !== 'idle' || finishedRef.current) return;
+      setSubmitState('submitting');
+      const t1 = window.setTimeout(() => {
+        setSubmitState('submitted');
+        const t2 = window.setTimeout(() => {
+          completeSubmission(byTimer);
+        }, 550);
+        submitTimersRef.current.push(t2);
+      }, 750);
+      submitTimersRef.current.push(t1);
+    },
+    [completeSubmission, submitState]
+  );
 
   // Countdown. Based on the clock, so it stays correct if the tab sleeps.
   useEffect(() => {
@@ -213,7 +264,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
       const left = Math.round((endAtRef.current - Date.now()) / 1000);
       if (left <= 0) {
         setSecondsLeft(0);
-        finishExam(true);
+        completeSubmission(true);
       } else {
         setSecondsLeft(left);
       }
@@ -221,7 +272,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [phase, finishExam]);
+  }, [phase, completeSubmission]);
 
   const handleStart = () => {
     const safeCount = Math.max(1, Math.min(50, questionCount || 5));
@@ -647,30 +698,97 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
   // ------------------------------------------------------------------ exam
   if (phase === 'exam') {
     const unanswered = total - answeredCount;
+    const isBusySubmitting = submitState !== 'idle';
+
+    const renderAnimatedSubmitButton = (onClick: () => void, label = 'Submit exam') => (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={isBusySubmitting}
+        aria-label={
+          submitState === 'submitted'
+            ? 'Exam submitted'
+            : submitState === 'submitting'
+              ? 'Submitting exam'
+              : label
+        }
+        aria-busy={submitState === 'submitting'}
+        className={`inline-flex h-11 items-center justify-center overflow-hidden font-semibold text-sm text-white select-none cursor-pointer transition-[width,background-color,border-radius,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] disabled:cursor-default shrink-0 ${
+          isBusySubmitting ? 'w-11 rounded-full' : 'px-5 rounded-2xl shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)]'
+        } ${
+          submitState === 'submitted'
+            ? 'bg-[#16A34A]'
+            : 'bg-[#1D1E23] hover:bg-[#2B2D35] active:scale-[0.98]'
+        }`}
+      >
+        {submitState === 'idle' && <span>{label}</span>}
+        {submitState === 'submitting' && <Loader2 className="w-5 h-5 feedback-roll" />}
+        {submitState === 'submitted' && <Check className="w-5 h-5 feedback-check" strokeWidth={3} />}
+      </button>
+    );
+
+    const handleDirectSubmitClick = () => {
+      if (isBusySubmitting) return;
+      if (unanswered === 0) {
+        triggerAnimatedSubmit(false);
+      } else {
+        setConfirm('finish');
+      }
+    };
+
     const confirmDialog = confirm && (
-      <div role="alertdialog" aria-label="Confirm" className={`${card} space-y-3`}>
-        {confirm === 'exit' ? (
-          <p className="text-sm text-[#1A1B20] font-semibold">
-            Leave the exam? Your answers will not be kept.
-          </p>
-        ) : (
-          <p className="text-sm text-[#1A1B20] font-semibold">
-            {unanswered > 0
-              ? `You have ${unanswered} unanswered question${unanswered === 1 ? '' : 's'}. Submit anyway?`
-              : 'Submit your exam now?'}
-          </p>
-        )}
-        <div className="flex flex-wrap gap-2.5">
-          <TactileButton
-            variant="dark"
-            size="sm"
-            onClick={() => (confirm === 'exit' ? onBack() : finishExam(false))}
-          >
-            {confirm === 'exit' ? 'Leave exam' : 'Submit exam'}
-          </TactileButton>
-          <TactileButton variant="light" size="sm" onClick={() => setConfirm(null)}>
-            Keep going
-          </TactileButton>
+      <div
+        className="fixed inset-0 z-50 bg-[#121318]/50 backdrop-blur-[2px] flex items-center justify-center p-4"
+        onClick={() => {
+          if (!isBusySubmitting) setConfirm(null);
+        }}
+      >
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="Confirm"
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-sm rounded-2xl bg-white p-5 border border-[#1A1B20]/[0.08] shadow-[0_24px_48px_-12px_rgba(14,15,20,0.35)] space-y-4 page-enter"
+        >
+          {confirm === 'exit' ? (
+            <div className="space-y-1">
+              <p className="font-display text-base font-bold text-[#1A1B20]">Leave this exam?</p>
+              <p className="text-sm text-[#505460] leading-relaxed">
+                Your current answers will not be saved.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <p className="font-display text-base font-bold text-[#1A1B20]">
+                {unanswered > 0
+                  ? `${unanswered} unanswered question${unanswered === 1 ? '' : 's'}`
+                  : 'Submit exam?'}
+              </p>
+              <p className="text-sm text-[#505460] leading-relaxed">
+                {unanswered > 0
+                  ? `You have answered ${answeredCount} of ${total} questions. Submit anyway?`
+                  : 'Submit your answers now and view your performance.'}
+              </p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {confirm === 'exit' ? (
+              <TactileButton variant="dark" size="sm" onClick={onBack}>
+                Leave exam
+              </TactileButton>
+            ) : (
+              renderAnimatedSubmitButton(() => triggerAnimatedSubmit(false), 'Submit exam')
+            )}
+            <TactileButton
+              variant="light"
+              size="sm"
+              disabled={isBusySubmitting}
+              onClick={() => setConfirm(null)}
+            >
+              Keep going
+            </TactileButton>
+          </div>
         </div>
       </div>
     );
@@ -710,6 +828,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                     type="button"
                     role="radio"
                     aria-checked={picked}
+                    disabled={isBusySubmitting}
                     onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: String(idx) }))}
                     className={`w-full text-left rounded-xl p-3.5 border transition-all duration-150 cursor-pointer flex items-start gap-3 ${
                       picked
@@ -738,6 +857,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                 <button
                   key={item.id}
                   type="button"
+                  disabled={isBusySubmitting}
                   onClick={() => setCurrent(i)}
                   aria-label={`Question ${i + 1}${done ? ', answered' : ''}`}
                   aria-current={i === current ? 'step' : undefined}
@@ -759,19 +879,18 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
             <TactileButton
               variant="light"
               icon={<ArrowLeft className="w-4 h-4" />}
-              disabled={current === 0}
+              disabled={current === 0 || isBusySubmitting}
               onClick={() => setCurrent((c) => Math.max(0, c - 1))}
             >
               Previous
             </TactileButton>
             {isLast ? (
-              <TactileButton variant="dark" onClick={() => setConfirm('finish')}>
-                Submit exam
-              </TactileButton>
+              renderAnimatedSubmitButton(handleDirectSubmitClick)
             ) : (
               <TactileButton
                 variant="dark"
                 icon={<ArrowRight className="w-4 h-4" />}
+                disabled={isBusySubmitting}
                 onClick={() => setCurrent((c) => Math.min(total - 1, c + 1))}
               >
                 Next
@@ -781,8 +900,9 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
           {!isLast && (
             <button
               type="button"
+              disabled={isBusySubmitting}
               onClick={() => setConfirm('finish')}
-              className="block mx-auto text-xs font-semibold text-[#505460] underline underline-offset-4 decoration-[#1A1B20]/30 hover:decoration-[#1A1B20] cursor-pointer"
+              className="block mx-auto text-xs font-semibold text-[#505460] underline underline-offset-4 decoration-[#1A1B20]/30 hover:decoration-[#1A1B20] cursor-pointer disabled:opacity-50"
             >
               Submit exam now
             </button>
@@ -979,9 +1099,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack }) => {
                 : `${unanswered} question${unanswered === 1 ? '' : 's'} remaining.`}
             </p>
           </div>
-          <TactileButton variant="dark" onClick={() => setConfirm('finish')}>
-            Submit exam
-          </TactileButton>
+          {renderAnimatedSubmitButton(handleDirectSubmitClick)}
         </div>
       </div>
     );

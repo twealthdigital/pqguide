@@ -62,6 +62,10 @@ const MockExamScreen = lazy(() =>
   import('./screens/MockExamScreen').then((m) => ({ default: m.MockExamScreen }))
 );
 
+const PerformanceScreen = lazy(() =>
+  import('./screens/PerformanceScreen').then((m) => ({ default: m.PerformanceScreen }))
+);
+
 const SchoolAdminScreen = lazy(() =>
   import('./screens/SchoolAdminScreen').then((m) => ({
     default: m.SchoolAdminScreen,
@@ -260,7 +264,16 @@ function AppContent() {
           />
         )}
 
-        {activeScreen === 'mock_exam' && <MockExamScreen onBack={handleBack} />}
+        {activeScreen === 'mock_exam' && (
+          <MockExamScreen
+            onBack={handleBack}
+            onSubmitted={() => handleNavigate('performance')}
+          />
+        )}
+
+        {activeScreen === 'performance' && (
+          <PerformanceScreen onStartExam={() => handleNavigate('mock_exam')} />
+        )}
 
         {(activeScreen === 'about' ||
           activeScreen === 'services' ||

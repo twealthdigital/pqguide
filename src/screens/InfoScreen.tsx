@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BarChart3,
   Bell,
   BookOpen,
   Check,
@@ -92,7 +93,7 @@ const AboutPage: React.FC = () => (
     <FeatureRow
       icon={<ClipboardCheck className="w-5 h-5" />}
       title="Practice exams made for you"
-      text="Choose a course, how many questions and how much time you have. pqguide predicts an exam from real past questions and times you while you answer."
+      text="Pick OBJ Paper, Theory Paper, True / False, or CBT, set your own question count and timer, or tap Suggest for focus topics. Every submission is saved so you can track your score out of 100%."
     />
     <div className={card}>
       <h2 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">
@@ -106,9 +107,9 @@ const AboutPage: React.FC = () => (
           matches the topic you ask to focus on.
         </p>
         <p>
-          You answer under a timer, then see the model answer for each question and mark yourself
-          to get a score. It is a practice guide, not a promise of what your lecturer will set, so
-          use it alongside your notes and the reading guides.
+          When you submit, your attempt is saved to Performance. You can inspect missed answers,
+          mark Theory responses against model answers, and check your overall rating out of 100%
+          across all questions taken.
         </p>
       </div>
     </div>
@@ -132,8 +133,14 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
     <FeatureRow
       icon={<ClipboardCheck className="w-5 h-5" />}
       title="Practice exams"
-      text="Set up an exam your way: pick the course, number of questions, time and a topic to focus on. pqguide predicts the exam from past questions, times you, then shows the model answers so you can mark yourself."
+      text="Choose OBJ Paper, Theory Paper, True / False, or CBT (one question at a time). Set custom question counts and exam timers, tap Suggest for topics, and submit to record your attempt."
       action={{ label: 'Start a practice exam', onClick: () => onNavigate('mock_exam') }}
+    />
+    <FeatureRow
+      icon={<BarChart3 className="w-5 h-5" />}
+      title="Performance & overall rating"
+      text="Review every submitted exam, inspect the questions you took and answers you missed, and open Check overall rating to see your combined score out of 100%."
+      action={{ label: 'Open Performance', onClick: () => onNavigate('performance') }}
     />
     <FeatureRow
       icon={<BookOpen className="w-5 h-5" />}
@@ -200,10 +207,17 @@ const HOW_IT_WORKS: HelpItem[] = [
   },
   {
     id: 'exam',
-    title: 'Practice with an exam',
-    text: 'Go to Services and start a practice exam. Choose the course, number of questions, time and a topic to focus on. Answer under the timer, then compare with the model answers and mark yourself to get a score.',
-    keywords: 'exam practice mock test timer predict prediction quiz score',
+    title: 'Set up and take a practice exam',
+    text: 'Open Practice Exam, pick a course, and choose your format: OBJ (full question sheet with A–D options), Theory (full paper with answer boxes underneath), True / False, or CBT (one question at a time). Use the Custom buttons to type your own question count or minutes, and tap Suggest to pick focus topics.',
+    keywords: 'exam practice mock test timer predict obj theory cbt true false custom suggest topic',
     action: { label: 'Start a practice exam', screen: 'mock_exam' },
+  },
+  {
+    id: 'performance',
+    title: 'Review your performance and overall rating',
+    text: 'When you submit an exam, it saves to Performance (found right after Practice Exam in the desktop sidebar and mobile side menu). Tap any exam to see every question you took, the answers you missed, and your total score. Tap Check overall rating to view your combined percentage out of 100% across all graded questions.',
+    keywords: 'performance score missed rating overall 100 percentage review history',
+    action: { label: 'Open Performance', screen: 'performance' },
   },
   {
     id: 'alerts',
@@ -246,11 +260,17 @@ const FAQ: HelpItem[] = [
     keywords: 'alerts notifications bell new',
   },
   {
-    id: 'faq-exam-how',
-    title: 'How does the practice exam work?',
-    text: 'You choose a course, how many questions, how long you have and, if you like, a topic to focus on. pqguide builds the exam from real past questions, runs a countdown while you type your answers, then shows the model answers so you can mark yourself.',
-    keywords: 'exam practice mock test timer countdown setup',
+    id: 'faq-exam-types',
+    title: 'What exam types can I choose from?',
+    text: 'You can take OBJ (Paper) for a full multiple-choice sheet, Theory (Paper) to write full answers directly under each question, True / False for statement checks, or CBT to answer multiple-choice questions one at a time.',
+    keywords: 'exam types obj theory cbt true false boolean paper',
     action: { label: 'Start a practice exam', screen: 'mock_exam' },
+  },
+  {
+    id: 'faq-exam-custom',
+    title: 'Can I set my own number of questions, time, and focus topics?',
+    text: 'Yes. Tap Custom under Number of questions or Time allowed to enter your own values. Under Topic to focus on, tap Suggest to generate clickable topic chips from the selected course.',
+    keywords: 'custom number questions time minutes suggest topic focus',
   },
   {
     id: 'faq-exam-accurate',
@@ -259,21 +279,23 @@ const FAQ: HelpItem[] = [
     keywords: 'exam prediction accurate real predict likely',
   },
   {
-    id: 'faq-exam-fewer',
-    title: 'Why did I get fewer questions than I chose?',
-    text: 'An exam can only use the questions that exist for that course. If you asked for more than are available, you get all of them.',
-    keywords: 'exam fewer questions less number available',
+    id: 'faq-exam-saved',
+    title: 'Where do I see my scores and missed answers after submitting?',
+    text: 'Submitting automatically opens Performance (also available in the desktop sidebar and mobile side drawer right after Practice Exam). Tap any attempt to inspect every question, missed answers, and explanations, or mark Theory answers yourself.',
+    keywords: 'exam answers saved performance history score missed keep drawer',
+    action: { label: 'Open Performance', screen: 'performance' },
   },
   {
-    id: 'faq-exam-saved',
-    title: 'Are my exam answers saved?',
-    text: 'No. Your answers stay on your screen for that attempt only. Once you leave the exam or start a new one, they are gone.',
-    keywords: 'exam answers saved history score keep',
+    id: 'faq-overall-rating',
+    title: 'How does Check overall rating calculate my score out of 100%?',
+    text: 'No matter how many questions were in each exam, 100% is shared evenly across all graded questions you have taken. Your overall rating divides your total earned points by the total graded questions so every question counts fairly.',
+    keywords: 'overall rating 100 percent percentage calculation share questions',
+    action: { label: 'Open Performance', screen: 'performance' },
   },
   {
     id: 'faq-exam-time',
     title: 'What happens when the time runs out?',
-    text: 'Your exam is submitted automatically with the answers you have typed, and you go straight to the results.',
+    text: 'Your exam is submitted automatically with the answers you have entered and saved to Performance.',
     keywords: 'exam time up timer ends submit automatic',
   },
 ];

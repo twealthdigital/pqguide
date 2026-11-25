@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  BarChart3,
   Bell,
   ChevronLeft,
   ClipboardCheck,
@@ -302,6 +303,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
     { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
     { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
+    { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
     { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
     { id: 'super_admin', label: 'Super Admin', icon: <ShieldCheck className="w-5 h-5" /> },
   ];

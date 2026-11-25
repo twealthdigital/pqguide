@@ -32,6 +32,7 @@ interface MenuCoords {
   left: number;
   width: number;
   placeAbove: boolean;
+  inOverlay: boolean;
 }
 
 export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
@@ -85,7 +86,10 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
       const rect = anchor.getBoundingClientRect();
       const viewportHeight = window.innerHeight;
       const viewportWidth = window.innerWidth;
+      const inOverlay = Boolean(anchor.closest('aside, [role="dialog"]'));
+      const headerClearance = inOverlay ? 12 : viewportWidth < 1024 ? 64 : 80;
       const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = Math.max(0, rect.top - headerClearance);
       const estimatedMenuHeight = Math.min(
         260,
         Math.max(visibleOptions.length, 1) * 46 + 16
@@ -93,7 +97,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
 
       const shouldFlipAbove =
         menuPlacement === 'top' ||
-        (spaceBelow < estimatedMenuHeight && rect.top > spaceBelow);
+        (spaceBelow < estimatedMenuHeight && spaceAbove > spaceBelow);
 
       const width = Math.max(rect.width, 210);
       const maxLeft = Math.max(12, viewportWidth - width - 12);
@@ -105,6 +109,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
           left,
           width,
           placeAbove: true,
+          inOverlay,
         });
       } else {
         setCoords({
@@ -112,6 +117,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
           left,
           width,
           placeAbove: false,
+          inOverlay,
         });
       }
     }, [allowCustomInput, menuPlacement, visibleOptions.length]);
@@ -293,7 +299,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
                 left: coords.left,
                 width: coords.width,
               }}
-              className={`z-[70] max-h-64 overflow-y-auto custom-scrollbar rounded-2xl bg-white p-1.5 border border-[#1A1B20]/10 shadow-[0_20px_44px_-10px_rgba(20,21,26,0.28)] page-enter ${
+              className={`${
+                coords.inOverlay ? 'z-[70]' : 'z-20'
+              } max-h-64 overflow-y-auto custom-scrollbar rounded-2xl bg-white p-1.5 border border-[#1A1B20]/10 shadow-[0_20px_44px_-10px_rgba(20,21,26,0.28)] page-enter ${
                 coords.placeAbove ? 'origin-bottom' : 'origin-top'
               }`}
             >
