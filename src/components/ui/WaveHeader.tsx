@@ -21,6 +21,9 @@ interface WaveHeaderProps {
   filterActive?: boolean;
   filterDropdown?: React.ReactNode;
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
+  placeholder?: string;
+  /** What is being searched, e.g. "past questions" or "materials". */
+  noun?: string;
 }
 
 export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
@@ -35,6 +38,8 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
     filterActive = false,
     filterDropdown,
     searchInputRef,
+    placeholder = 'Search course code or topic (e.g. GNS 101, GNS 102)...',
+    noun = 'past questions',
   }) => {
     const searchClusterRef = useRef<HTMLDivElement | null>(null);
     const isTyping = searchValue.trim().length > 0;
@@ -105,10 +110,10 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
         : activeIconKey === 'chevron'
         ? 'Close filter settings'
         : activeIconKey === 'loading'
-        ? 'Preparing past questions'
+        ? `Preparing ${noun}`
         : activeIconKey === 'done'
-        ? 'Past questions ready'
-        : 'Search past questions';
+        ? `Results ready for ${noun}`
+        : `Search ${noun}`;
 
     return (
       <section className="relative z-30 mb-4 md:mb-6">
@@ -194,8 +199,8 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
                   autoComplete="off"
                   value={searchValue}
                   onChange={(e) => onSearchChange(e.target.value)}
-                  placeholder="Search course code or topic (e.g. GNS 101, GNS 102)..."
-                  aria-label="Search past questions"
+                  placeholder={placeholder}
+                  aria-label={`Search ${noun}`}
                   className="w-full min-w-0 bg-transparent py-2.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
                 />
                 <button

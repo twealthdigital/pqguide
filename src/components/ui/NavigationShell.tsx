@@ -278,6 +278,12 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     }, 450);
   };
 
+  // Screens that open with the full-bleed dark banner (transparent top bar, no top padding).
+  const hasBanner =
+    activeScreen === 'home' ||
+    activeScreen === 'past_questions' ||
+    activeScreen === 'materials';
+
   const tabScreen: AppScreen =
     activeScreen === 'reader'
       ? parentScreen
@@ -571,7 +577,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           className={`lg:hidden fixed top-0 inset-x-0 z-40 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 sm:px-6 flex items-center justify-between transition-colors duration-250 ease-out ${
             isScrolled
               ? 'bg-[#1D1E23] text-white shadow-[0_6px_18px_-6px_rgba(14,15,20,0.42)]'
-              : activeScreen === 'home'
+              : hasBanner
               ? 'bg-transparent text-white'
               : 'bg-[#F6F7F9] text-[#1D1E23] border-b border-[#1A1B20]/[0.06]'
           }`}
@@ -591,7 +597,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               onClick={() => onNavigate('notifications')}
               aria-label={`Open notifications (${unreadCount} unread)`}
               className={`relative h-10 w-10 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
-                activeScreen === 'home' || isScrolled
+                hasBanner || isScrolled
                   ? 'text-white'
                   : 'text-[#1D1E23]'
               }`}
@@ -601,7 +607,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 {unreadCount > 0 && (
                   <span
                     className={`absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold font-mono-tabular flex items-center justify-center ${
-                      activeScreen === 'home' || isScrolled
+                      hasBanner || isScrolled
                         ? 'bg-white text-[#1D1E23]'
                         : 'bg-[#1D1E23] text-white'
                     }`}
@@ -619,7 +625,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               aria-controls="mobile-slide-drawer"
               onClick={() => setDrawerOpen(true)}
               className={`h-10 w-10 -mr-1.5 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
-                activeScreen === 'home' || isScrolled
+                hasBanner || isScrolled
                   ? 'text-white'
                   : 'text-[#1D1E23]'
               }`}
@@ -968,7 +974,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         {/* Scrollable Content */}
         <main
           className={`flex-1 w-full mx-auto pb-24 ${
-            activeScreen === 'home'
+            hasBanner
               ? 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-0 lg:pt-8 lg:pb-8'
               : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
           }`}

@@ -4,6 +4,7 @@ import type { StudyMaterial } from '../core/types';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
+import { MaterialDownloadButton } from '../components/ui/MaterialDownloadButton';
 
 interface MaterialReaderScreenProps {
   material: StudyMaterial | null;
@@ -48,14 +49,17 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
   return (
     <div className="space-y-5 page-enter">
       <DarkHeaderCard>
-        <TactileButton
-          variant="light"
-          size="sm"
-          icon={<ArrowLeft className="w-4 h-4" />}
-          onClick={onBack}
-        >
-          Back
-        </TactileButton>
+        <div className="flex items-center justify-between gap-3">
+          <TactileButton
+            variant="light"
+            size="sm"
+            icon={<ArrowLeft className="w-4 h-4" />}
+            onClick={onBack}
+          >
+            Back
+          </TactileButton>
+          <MaterialDownloadButton material={material} tone="light" />
+        </div>
 
         <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
           {material.title}

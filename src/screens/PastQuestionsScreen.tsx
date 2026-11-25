@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ArrowRight, FileText } from 'lucide-react';
 import type { PastQuestionDoc } from '../core/types';
-import { useArchiveStore } from '../hooks/useArchiveStore';
-import { SearchField } from '../components/ui/SearchField';
-import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
+import { useArchiveSearch } from '../hooks/useArchiveSearch';
+import { DocumentListSkeleton, TactileButton, WaveHeader } from '../components/ui';
+import { ArchiveFilterForm } from '../components/ui/ArchiveFilterForm';
+import { SurfaceCard } from '../components/ui/SurfaceCard';
 import { courseSubtitle } from '../core/docTitle';
 
 interface PastQuestionsScreenProps {
@@ -45,14 +46,38 @@ const DocRow: React.FC<{ doc: PastQuestionDoc; onOpen: (doc: PastQuestionDoc) =>
 );
 
 export const PastQuestionsScreen: React.FC<PastQuestionsScreenProps> = ({ onOpenDocument }) => {
-  const store = useArchiveStore();
-  const [query, setQuery] = useState('');
+  const search = useArchiveSearch();
+  const {
+    store,
+    activeSchool,
+    filteredDocs,
+    resultsRef,
+    searchInputRef,
+    query,
+    searchPhase,
+    isFilteringSkeleton,
+    showFilters,
+    appliedSession,
+    appliedSemester,
+    appliedLevel,
+    hasActiveCriteria,
+    handleSearchInputChange,
+    handleSearchSubmit,
+    handleFilterToggle,
+    handleFilterClose,
+    resetFilters,
+  } = search;
+
+  const sortDocs = (docs: PastQuestionDoc[]) =>
+    [...docs].sort((a, b) => b.year - a.year || a.courseCode.localeCompare(b.courseCode));
 
   const published = useMemo(
     () =>
-      store.documents
-        .filter((d) => d.status === 'published' && d.schoolId === store.selectedSchoolId)
-        .sort((a, b) => b.year - a.year || a.courseCode.localeCompare(b.courseCode)),
+      sortDocs(
+        store.documents.filter(
+          (d) => d.status === 'published' && d.schoolId === store.selectedSchoolId
+        )
+      ),
     [store.documents, store.selectedSchoolId]
   );
 
@@ -64,33 +89,67 @@ export const PastQuestionsScreen: React.FC<PastQuestionsScreenProps> = ({ onOpen
       .slice(0, 6);
   }, [published, store.recentDocIds]);
 
-  const needle = query.trim().toLowerCase();
-  const results = useMemo(() => {
-    if (!needle) return [];
-    return published.filter((d) =>
-      `${d.courseCode} ${d.courseTitle} ${d.session} ${d.level}`.toLowerCase().includes(needle)
-    );
-  }, [published, needle]);
+  const results = useMemo(() => sortDocs(filteredDocs), [filteredDocs]);
+
+  const showResults = hasActiveCriteria || isFilteringSkeleton;
 
   return (
-    <div className="space-y-5 page-enter">
-      <DarkHeaderCard>
-        <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">Past Questions</h1>
-        <p className="mt-1.5 text-xs text-[#C3C7D2]">Pick up where you left off</p>
+    <div className="space-y-6 page-enter">
+      <WaveHeader
+        title="Past Questions"
+        placeholder="Search course code or topic..."
+        searchValue={query}
+        onSearchChange={handleSearchInputChange}
+        onSearchSubmit={handleSearchSubmit}
+        searchPhase={searchPhase}
+        onFilterToggle={handleFilterToggle}
+        onFilterClose={handleFilterClose}
+        filterActive={showFilters}
+        filterDropdown={<ArchiveFilterForm search={search} />}
+        searchInputRef={searchInputRef}
+      />
 
-        <SearchField
-          value={query}
-          onChange={setQuery}
-          placeholder="Search a course code or title..."
-        />
-      </DarkHeaderCard>
+      {showResults ? (
+        <section ref={resultsRef} aria-label="Search results">
+          <div className="flex items-center justify-between mb-3.5">
+            <div>
+              <h2 className="font-display text-lg font-bold text-[#1A1B20]">Search results</h2>
+              <p className="text-xs text-[#686C78] font-mono-tabular mt-0.5">
+                {isFilteringSkeleton
+                  ? 'Searching...'
+                  : `${results.length} found`}
+                {appliedSession !== 'All' ? ` · ${appliedSession}` : ''}
+                {appliedSemester !== 'All' ? ` · ${appliedSemester}` : ''}
+                {appliedLevel !== 'All' ? ` · ${appliedLevel}` : ''}
+              </p>
+            </div>
+            {hasActiveCriteria && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] underline underline-offset-4 cursor-pointer whitespace-nowrap"
+              >
+                Clear filter
+              </button>
+            )}
+          </div>
 
-      {needle ? (
-        <section aria-label="Search results">
-          {results.length === 0 ? (
-            <p className="py-10 text-center text-sm text-[#686C78]">
-              No past questions match &ldquo;{query}&rdquo;.
-            </p>
+          {isFilteringSkeleton ? (
+            <DocumentListSkeleton rows={4} />
+          ) : results.length === 0 ? (
+            <SurfaceCard tone="white" className="text-center py-10 px-6">
+              <p className="font-display text-base font-bold text-[#1A1B20]">
+                No matching past questions found
+              </p>
+              <p className="text-sm text-[#686C78] mt-1 max-w-md mx-auto">
+                Try clearing your session or semester filter, or search another course code.
+              </p>
+              <div className="mt-5 flex justify-center">
+                <TactileButton variant="dark" size="sm" onClick={resetFilters}>
+                  Show All {activeSchool.code} Past Questions
+                </TactileButton>
+              </div>
+            </SurfaceCard>
           ) : (
             <div className="space-y-3">
               {results.map((doc) => (

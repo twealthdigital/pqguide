@@ -1,22 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect } from 'react';
+import { ArrowRight, CheckCircle2, FileText, Sparkles } from 'lucide-react';
+import type { PastQuestionDoc } from '../core/types';
+import { useArchiveSearch } from '../hooks/useArchiveSearch';
 import {
-  ArrowRight,
-  CheckCircle2,
-  FileText,
-  Search,
-  Sparkles,
-} from 'lucide-react';
-import type { PastQuestionDoc, SemesterType } from '../core/types';
-import { useArchiveStore } from '../hooks/useArchiveStore';
-import { archiveRepository } from '../services/archiveRepository';
-import {
-  CustomSelect,
   DocumentListSkeleton,
   SurfaceCard,
   TactileButton,
   WaveHeader,
 } from '../components/ui';
-import type { SearchActionPhase } from '../components/ui/WaveHeader';
+import { ArchiveFilterForm } from '../components/ui/ArchiveFilterForm';
 import { courseSubtitle } from '../core/docTitle';
 
 interface HomeScreenProps {
@@ -24,65 +16,31 @@ interface HomeScreenProps {
   focusSearchSignal: number;
 }
 
-const LEVELS = ['All', '100L', '200L', '300L', '400L', '500L'];
-const SEMESTERS: Array<SemesterType | 'All'> = [
-  'All',
-  'First Semester',
-  'Second Semester',
-];
-
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenDocument,
   focusSearchSignal,
 }) => {
-  const store = useArchiveStore();
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const resultsRef = useRef<HTMLElement | null>(null);
-  const filterSubmitTimerRef = useRef<number | null>(null);
-  const searchTimerRef = useRef<number | null>(null);
-  const doneResetTimerRef = useRef<number | null>(null);
-
-  // Active applied filters
-  const [appliedSession, setAppliedSession] = useState<string>('All');
-  const [appliedSemester, setAppliedSemester] = useState<SemesterType | 'All'>('All');
-  const [appliedLevel, setAppliedLevel] = useState<string>('All');
-  const [query, setQuery] = useState<string>('');
-  const [appliedQuery, setAppliedQuery] = useState<string>('');
-
-  // Floating dropdown draft state
-  const [showFilters, setShowFilters] = useState<boolean>(false);
-  const [draftSchoolId, setDraftSchoolId] = useState<string>(store.selectedSchoolId);
-  const [draftSession, setDraftSession] = useState<string>('All');
-  const [draftSemester, setDraftSemester] = useState<SemesterType | 'All'>('All');
-  const [draftLevel, setDraftLevel] = useState<string>('All');
-  const [filterError, setFilterError] = useState<string>('');
-  const [isFilterSubmitting, setIsFilterSubmitting] = useState<boolean>(false);
-
-  const [searchPhase, setSearchPhase] = useState<SearchActionPhase>('idle');
-  const [isFilteringSkeleton, setIsFilteringSkeleton] = useState<boolean>(false);
-
-  const clearTimers = () => {
-    if (filterSubmitTimerRef.current !== null) {
-      window.clearTimeout(filterSubmitTimerRef.current);
-      filterSubmitTimerRef.current = null;
-    }
-    if (searchTimerRef.current !== null) {
-      window.clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = null;
-    }
-    if (doneResetTimerRef.current !== null) {
-      window.clearTimeout(doneResetTimerRef.current);
-      doneResetTimerRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    return () => clearTimers();
-  }, []);
-
-  useEffect(() => {
-    setDraftSchoolId(store.selectedSchoolId);
-  }, [store.selectedSchoolId]);
+  const search = useArchiveSearch();
+  const {
+    store,
+    activeSchool,
+    filteredDocs,
+    searchInputRef,
+    resultsRef,
+    query,
+    searchPhase,
+    isFilteringSkeleton,
+    showFilters,
+    appliedSession,
+    appliedSemester,
+    appliedLevel,
+    hasActiveCriteria,
+    handleSearchInputChange,
+    handleSearchSubmit,
+    handleFilterToggle,
+    handleFilterClose,
+    resetFilters,
+  } = search;
 
   // Focus search when user taps the raised center Quick Find button
   useEffect(() => {
@@ -90,274 +48,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       searchInputRef.current.focus();
       searchInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  }, [focusSearchSignal]);
-
-  const activeSchool = useMemo(
-    () =>
-      store.schools.find((s) => s.id === store.selectedSchoolId) ??
-      store.schools[0],
-    [store.schools, store.selectedSchoolId]
-  );
-
-  const filteredDocs = useMemo(() => {
-    const q = appliedQuery.trim().toLowerCase();
-    return store.documents.filter((doc) => {
-      if (doc.status !== 'published') return false;
-      if (doc.schoolId !== activeSchool.id) return false;
-      if (
-        appliedSession !== 'All' &&
-        appliedSession.trim() &&
-        !doc.session.toLowerCase().includes(appliedSession.trim().toLowerCase())
-      ) {
-        return false;
-      }
-      if (appliedSemester !== 'All' && doc.semester !== appliedSemester) return false;
-      if (appliedLevel !== 'All' && doc.level !== appliedLevel) return false;
-      if (!q) return true;
-      return (
-        doc.courseCode.toLowerCase().includes(q) ||
-        doc.courseTitle.toLowerCase().includes(q) ||
-        doc.department.toLowerCase().includes(q) ||
-        doc.extractedText.toLowerCase().includes(q) ||
-        doc.questions.some((item) => item.toLowerCase().includes(q))
-      );
-    });
-  }, [
-    store.documents,
-    activeSchool.id,
-    appliedSession,
-    appliedSemester,
-    appliedLevel,
-    appliedQuery,
-  ]);
-
-
-  const handleSearchInputChange = (nextValue: string) => {
-    clearTimers();
-    setQuery(nextValue);
-    setSearchPhase('idle');
-    setIsFilteringSkeleton(false);
-    if (nextValue.trim() && filterError) {
-      setFilterError('');
-    }
-    if (!nextValue.trim()) {
-      setAppliedQuery('');
-    }
-  };
-
-  const handleFilterToggle = () => {
-    if (searchPhase === 'loading') return;
-    if (doneResetTimerRef.current !== null) {
-      window.clearTimeout(doneResetTimerRef.current);
-      doneResetTimerRef.current = null;
-    }
-    if (searchPhase === 'done' && !query.trim()) {
-      setSearchPhase('idle');
-    }
-    setFilterError('');
-    setShowFilters((prev) => {
-      const next = !prev;
-      if (next) {
-        setDraftSchoolId(activeSchool.id);
-        setDraftSession(appliedSession);
-        setDraftSemester(appliedSemester);
-        setDraftLevel(appliedLevel);
-      }
-      return next;
-    });
-  };
-
-  const applyDraftFiltersToArchive = () => {
-    const normalizedSession = draftSession.trim() || 'All';
-    if (draftSchoolId && draftSchoolId !== activeSchool.id) {
-      archiveRepository.setSelectedSchool(draftSchoolId);
-    }
-    setAppliedSession(normalizedSession);
-    setDraftSession(normalizedSession);
-    setAppliedSemester(draftSemester);
-    setAppliedLevel(draftLevel);
-  };
-
-  const handleSearchSubmit = () => {
-    const trimmed = query.trim();
-    if (!trimmed) return;
-
-    if (searchPhase === 'done' && appliedQuery.trim() === trimmed && !showFilters) {
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-
-    clearTimers();
-    if (showFilters) {
-      applyDraftFiltersToArchive();
-    }
-    setFilterError('');
-    setShowFilters(false);
-    setSearchPhase('loading');
-    setIsFilteringSkeleton(true);
-
-    searchTimerRef.current = window.setTimeout(() => {
-      setAppliedQuery(trimmed);
-      setIsFilteringSkeleton(false);
-      setSearchPhase('done');
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 520);
-  };
-
-  const handleFilterSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isFilterSubmitting) return;
-
-    const resolvedCourse = query.trim();
-    if (!resolvedCourse) {
-      setFilterError('Enter a course code or topic in the search bar first.');
-      searchInputRef.current?.focus();
-      return;
-    }
-
-    setFilterError('');
-    clearTimers();
-    setIsFilterSubmitting(true);
-
-    filterSubmitTimerRef.current = window.setTimeout(() => {
-      applyDraftFiltersToArchive();
-      setAppliedQuery(resolvedCourse);
-
-      setIsFilterSubmitting(false);
-      setShowFilters(false);
-
-      // Trigger main search bar loading -> checkmark animation while preparing past questions
-      setSearchPhase('loading');
-      setIsFilteringSkeleton(true);
-
-      searchTimerRef.current = window.setTimeout(() => {
-        setIsFilteringSkeleton(false);
-        setSearchPhase('done');
-        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }, 520);
-    }, 240);
-  };
-
-  const resetFilters = () => {
-    clearTimers();
-    setAppliedSession('All');
-    setAppliedSemester('All');
-    setAppliedLevel('All');
-    setDraftSchoolId(activeSchool.id);
-    setDraftSession('All');
-    setDraftSemester('All');
-    setDraftLevel('All');
-    setQuery('');
-    setAppliedQuery('');
-    setFilterError('');
-    setSearchPhase('idle');
-    setIsFilterSubmitting(false);
-    setShowFilters(false);
-    setIsFilteringSkeleton(true);
-    window.setTimeout(() => setIsFilteringSkeleton(false), 140);
-  };
+  }, [focusSearchSignal, searchInputRef]);
 
   const heroFeaturedDoc = filteredDocs[0] ?? store.documents[0];
   const secondaryHighlightDoc = filteredDocs[1] ?? store.documents[1];
-  const hasActiveCriteria =
-    appliedSession !== 'All' ||
-    appliedSemester !== 'All' ||
-    appliedLevel !== 'All' ||
-    Boolean(appliedQuery.trim());
-  const hasDraftChanges =
-    draftSession !== 'All' || draftSemester !== 'All' || draftLevel !== 'All';
-
-  const filterDropdownContent = (
-    <form
-      onSubmit={handleFilterSearchSubmit}
-      className="rounded-2xl bg-white p-4 sm:p-5 text-[#1A1B20] border border-[#1A1B20]/10 shadow-[0_24px_52px_-12px_rgba(14,15,20,0.34)] page-enter"
-    >
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <CustomSelect
-          id="school-select"
-          label="University"
-          value={draftSchoolId}
-          options={store.schools.map((school) => ({
-            value: school.id,
-            label: `${school.code} — ${school.shortName}`,
-            hint: !school.isActive ? 'Coming Soon' : school.location,
-            disabled: !school.isActive,
-          }))}
-          onChange={setDraftSchoolId}
-        />
-
-        <CustomSelect
-          id="session-select"
-          label="Academic Session"
-          mono
-          allowCustomInput
-          emptyValueFallback="All"
-          inputPlaceholder="All Sessions (type e.g. 2024/2025)"
-          value={draftSession}
-          options={[
-            { value: 'All', label: 'All Sessions' },
-            ...store.sessions.map((s) => ({ value: s, label: s })),
-          ]}
-          onChange={setDraftSession}
-        />
-
-        <CustomSelect
-          id="semester-select"
-          label="Semester"
-          value={draftSemester}
-          options={SEMESTERS.map((sem) => ({
-            value: sem,
-            label: sem === 'All' ? 'All Semesters' : sem,
-          }))}
-          onChange={(val) => setDraftSemester(val as SemesterType | 'All')}
-        />
-
-        <CustomSelect
-          id="level-select"
-          label="Level"
-          mono
-          value={draftLevel}
-          options={LEVELS.map((lvl) => ({
-            value: lvl,
-            label: lvl === 'All' ? 'All Levels (100L–500L)' : lvl,
-          }))}
-          onChange={setDraftLevel}
-        />
-      </div>
-
-      {filterError && (
-        <p role="alert" className="mt-3 text-xs font-medium text-[#B42318]">
-          {filterError}
-        </p>
-      )}
-
-      <div className="mt-4 flex items-center gap-3">
-        {hasDraftChanges && (
-          <button
-            type="button"
-            onClick={() => {
-              setDraftSession('All');
-              setDraftSemester('All');
-              setDraftLevel('All');
-            }}
-            className="min-h-[44px] px-3 text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] underline underline-offset-4 cursor-pointer shrink-0"
-          >
-            Reset
-          </button>
-        )}
-        <TactileButton
-          type="submit"
-          variant="dark"
-          size="md"
-          fullWidth
-          loading={isFilterSubmitting}
-          icon={<Search className="w-4 h-4" />}
-        >
-          Search Past Questions
-        </TactileButton>
-      </div>
-    </form>
-  );
 
   return (
     <div className="space-y-6 page-enter">
@@ -369,11 +63,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         onSearchSubmit={handleSearchSubmit}
         searchPhase={searchPhase}
         onFilterToggle={handleFilterToggle}
-        onFilterClose={() => {
-          if (!isFilterSubmitting) setShowFilters(false);
-        }}
+        onFilterClose={handleFilterClose}
         filterActive={showFilters}
-        filterDropdown={filterDropdownContent}
+        filterDropdown={<ArchiveFilterForm search={search} />}
         searchInputRef={searchInputRef}
       />
 
