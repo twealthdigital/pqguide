@@ -24,6 +24,8 @@ export interface AppStoreState {
   accounts: ManagedAccount[];
   activeRole: UserRole;
   selectedSchoolId: string;
+  /** Most recently opened past question ids, newest first. */
+  recentDocIds: string[];
 }
 
 function getDefaultState(): AppStoreState {
@@ -35,6 +37,7 @@ function getDefaultState(): AppStoreState {
     accounts: SEED_ACCOUNTS,
     activeRole: 'student',
     selectedSchoolId: 'sch-aaua',
+    recentDocIds: [],
   };
 }
 
@@ -87,6 +90,9 @@ function loadState(): AppStoreState {
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : defaults.accounts,
       activeRole: parsed.activeRole ?? defaults.activeRole,
       selectedSchoolId: parsed.selectedSchoolId ?? defaults.selectedSchoolId,
+      recentDocIds: Array.isArray(parsed.recentDocIds)
+        ? parsed.recentDocIds.filter((id): id is string => typeof id === 'string')
+        : [],
     };
   } catch {
     return getDefaultState();
@@ -146,6 +152,13 @@ class ArchiveRepository {
         doc.questions.some((question) => question.toLowerCase().includes(q))
       );
     });
+  }
+
+  recordRecent(docId: string): void {
+    this.update((prev) => ({
+      ...prev,
+      recentDocIds: [docId, ...prev.recentDocIds.filter((id) => id !== docId)].slice(0, 12),
+    }));
   }
 
   incrementView(docId: string): void {

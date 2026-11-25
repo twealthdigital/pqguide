@@ -37,7 +37,7 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
         <p className="text-sm text-[#686C78]">This guide could not be found.</p>
         <div className="mt-4 flex justify-center">
           <TactileButton variant="dark" size="md" onClick={onBack}>
-            Back to Materials
+            Back
           </TactileButton>
         </div>
       </div>
@@ -53,7 +53,7 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
           icon={<ArrowLeft className="w-4 h-4" />}
           onClick={onBack}
         >
-          Back to Materials
+          Back
         </TactileButton>
 
         <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">

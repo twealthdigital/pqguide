@@ -76,7 +76,7 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
         </p>
         <div className="mt-5 flex justify-center">
           <TactileButton variant="dark" onClick={onBack}>
-            Back to Archive
+            Back
           </TactileButton>
         </div>
       </SurfaceCard>
@@ -117,7 +117,7 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
             icon={<ArrowLeft className="w-4 h-4" />}
             onClick={onBack}
           >
-            Back to Archive
+            Back
           </TactileButton>
 
           <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">

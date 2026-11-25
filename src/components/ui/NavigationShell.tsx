@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Bell,
+  FileText,
   Folder,
   Home,
   LogOut,
@@ -23,6 +24,8 @@ import { TactileButton } from './TactileButton';
 
 interface NavigationShellProps {
   activeScreen: AppScreen;
+  /** Screen Back returns to; keeps the right tab lit while a paper/guide is open. */
+  parentScreen?: AppScreen;
   onNavigate: (screen: AppScreen) => void;
   onQuickFind: () => void;
   unreadCount: number;
@@ -42,6 +45,7 @@ function getStudentInitials(fullName: string): string {
 
 export const NavigationShell: React.FC<NavigationShellProps> = ({
   activeScreen,
+  parentScreen = 'home',
   onNavigate,
   onQuickFind,
   unreadCount,
@@ -260,6 +264,13 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     }, 450);
   };
 
+  const tabScreen: AppScreen =
+    activeScreen === 'reader'
+      ? parentScreen
+      : activeScreen === 'material_reader'
+        ? 'materials'
+        : activeScreen;
+
   const navItems: Array<{
     id: AppScreen;
     label: string;
@@ -267,6 +278,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     badge?: number;
   }> = [
     { id: 'home', label: 'Archive', icon: <Home className="w-5 h-5" /> },
+    { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
     { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
     {
       id: 'notifications',
@@ -295,8 +307,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <nav aria-label="Primary desktop navigation" className="space-y-1.5">
             {navItems.map((item) => {
               const isActive =
-                activeScreen === item.id ||
-                (activeScreen === 'reader' && item.id === 'home');
+                tabScreen === item.id;
               return (
                 <button
                   key={item.id}
@@ -450,7 +461,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <nav className="flex items-center gap-6 text-sm font-medium text-[#5A5E6B]">
             <button
               type="button"
-              onClick={() => onNavigate('home')}
+              onClick={() => onNavigate('past_questions')}
               className="hover:text-[#1A1B20] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Past Questions
@@ -673,8 +684,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               <nav aria-label="Mobile drawer navigation" className="space-y-1">
                 {navItems.map((item) => {
                   const isActive =
-                    activeScreen === item.id ||
-                    (activeScreen === 'reader' && item.id === 'home');
+                    tabScreen === item.id;
                   return (
                     <button
                       key={item.id}
@@ -773,7 +783,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             type="button"
             onClick={() => onNavigate('home')}
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              activeScreen === 'home' || activeScreen === 'reader'
+              tabScreen === 'home'
                 ? 'text-white font-semibold'
                 : 'text-[#9CA0AE]'
             }`}
@@ -784,15 +794,15 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
           <button
             type="button"
-            onClick={() => onNavigate('materials')}
+            onClick={() => onNavigate('past_questions')}
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              activeScreen === 'materials' || activeScreen === 'material_reader'
+              tabScreen === 'past_questions'
                 ? 'text-white font-semibold'
                 : 'text-[#9CA0AE]'
             }`}
           >
-            <Folder className="w-5 h-5" />
-            <span className="text-[10px] leading-none">Materials</span>
+            <FileText className="w-5 h-5" />
+            <span className="text-[10px] leading-none">PQs</span>
           </button>
 
           {/* Raised Center Tactile Dark Ash Quick Action Button */}
@@ -809,22 +819,15 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
           <button
             type="button"
-            onClick={() => onNavigate('notifications')}
-            className={`relative min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              activeScreen === 'notifications'
+            onClick={() => onNavigate('materials')}
+            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+              tabScreen === 'materials'
                 ? 'text-white font-semibold'
                 : 'text-[#9CA0AE]'
             }`}
           >
-            <div className="relative">
-              <Bell className="w-5 h-5" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full bg-white text-[#1D1E23] ring-2 ring-[#1D1E23] text-[9px] font-bold font-mono-tabular flex items-center justify-center">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </div>
-            <span className="text-[10px] leading-none">Alerts</span>
+            <Folder className="w-5 h-5" />
+            <span className="text-[10px] leading-none">Materials</span>
           </button>
 
           <button

@@ -6,6 +6,7 @@ export type UserRole = 'student' | 'school_admin' | 'super_admin';
 
 export type AppScreen =
   | 'home'
+  | 'past_questions'
   | 'reader'
   | 'notifications'
   | 'materials'

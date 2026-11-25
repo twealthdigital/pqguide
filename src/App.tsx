@@ -35,6 +35,10 @@ const PastQuestionReaderScreen = lazy(() =>
   }))
 );
 
+const PastQuestionsScreen = lazy(() =>
+  import('./screens/PastQuestionsScreen').then((m) => ({ default: m.PastQuestionsScreen }))
+);
+
 const MaterialsScreen = lazy(() =>
   import('./screens/MaterialsScreen').then((m) => ({ default: m.MaterialsScreen }))
 );
@@ -62,6 +66,26 @@ const SuperAdminScreen = lazy(() =>
   }))
 );
 
+/** One step in the in-app "Back" trail. */
+interface NavEntry {
+  screen: AppScreen;
+  docId: string | null;
+  materialId: string | null;
+}
+
+interface NavState extends NavEntry {
+  /** Screens the person came from, oldest first. Back pops the last one. */
+  stack: NavEntry[];
+}
+
+const INITIAL_NAV: NavState = { screen: 'home', docId: null, materialId: null, stack: [] };
+
+const entryOf = (n: NavState): NavEntry => ({
+  screen: n.screen,
+  docId: n.docId,
+  materialId: n.materialId,
+});
+
 export default function App() {
   const store = useArchiveStore();
   const [authenticatedStudent, setAuthenticatedStudent] = useState<StudentAccount | null>(() =>
@@ -71,9 +95,13 @@ export default function App() {
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
     () => authService.hasCompletedOnboarding() || authService.getActiveSession() !== null
   );
-  const [activeScreen, setActiveScreen] = useState<AppScreen>('home');
-  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
+  const [nav, setNav] = useState<NavState>(INITIAL_NAV);
+  const activeScreen = nav.screen;
+  const selectedDocId = nav.docId;
+  const selectedMaterialId = nav.materialId;
+  // The screen "Back" would return to; also decides which tab stays highlighted
+  // while a paper or guide is open.
+  const parentScreen: AppScreen = nav.stack[nav.stack.length - 1]?.screen ?? 'home';
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
 
   const unreadCount = useMemo(
@@ -95,34 +123,59 @@ export default function App() {
     setIsBooting(false);
   }, []);
 
+  const scrollTop = () => window.scrollTo({ top: 0, behavior: 'instant' });
+
+  // Tabs reset the trail. Alerts (opened from the bell) remembers where you were.
   const handleNavigate = useCallback((screen: AppScreen) => {
-    setActiveScreen(screen);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    setNav((prev) => {
+      if (prev.screen === screen) return prev;
+      const remember = screen === 'notifications';
+      return { ...prev, screen, stack: remember ? [...prev.stack, entryOf(prev)] : [] };
+    });
+    scrollTop();
+  }, []);
+
+  // Back goes to exactly where the person came from (home if there is no trail).
+  const handleBack = useCallback(() => {
+    setNav((prev) => {
+      const last = prev.stack[prev.stack.length - 1];
+      if (!last) return { ...INITIAL_NAV, docId: prev.docId, materialId: prev.materialId };
+      return { ...last, stack: prev.stack.slice(0, -1) };
+    });
+    scrollTop();
   }, []);
 
   const handleOpenDocument = useCallback((doc: PastQuestionDoc) => {
     archiveRepository.incrementView(doc.id);
-    setSelectedDocId(doc.id);
-    setActiveScreen('reader');
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    archiveRepository.recordRecent(doc.id);
+    setNav((prev) => ({
+      screen: 'reader',
+      docId: doc.id,
+      materialId: prev.materialId,
+      stack: [...prev.stack, entryOf(prev)],
+    }));
+    scrollTop();
   }, []);
 
   const handleOpenMaterial = useCallback((material: StudyMaterial) => {
-    setSelectedMaterialId(material.id);
-    setActiveScreen('material_reader');
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    setNav((prev) => ({
+      screen: 'material_reader',
+      docId: prev.docId,
+      materialId: material.id,
+      stack: [...prev.stack, entryOf(prev)],
+    }));
+    scrollTop();
   }, []);
 
   const handleQuickFind = useCallback(() => {
-    setActiveScreen('home');
+    setNav((prev) => ({ ...prev, screen: 'home', stack: [] }));
     setFocusSearchSignal((n) => n + 1);
   }, []);
 
   const handleSignOut = useCallback(() => {
     authService.clearActiveSession();
     setAuthenticatedStudent(null);
-    setSelectedDocId(null);
-    setActiveScreen('home');
+    setNav(INITIAL_NAV);
   }, []);
 
   if (isBooting) {
@@ -162,6 +215,7 @@ export default function App() {
   return (
     <NavigationShell
       activeScreen={activeScreen}
+      parentScreen={parentScreen}
       onNavigate={handleNavigate}
       onQuickFind={handleQuickFind}
       unreadCount={unreadCount}
@@ -181,13 +235,17 @@ export default function App() {
         {activeScreen === 'reader' && (
           <PastQuestionReaderScreen
             doc={selectedDoc}
-            onBack={() => handleNavigate('home')}
+            onBack={handleBack}
           />
+        )}
+
+        {activeScreen === 'past_questions' && (
+          <PastQuestionsScreen onOpenDocument={handleOpenDocument} />
         )}
 
         {activeScreen === 'notifications' && (
           <NotificationsScreen
-            onBack={() => handleNavigate('home')}
+            onBack={handleBack}
             onOpenDocument={handleOpenDocument}
           />
         )}
@@ -199,7 +257,7 @@ export default function App() {
         {activeScreen === 'material_reader' && (
           <MaterialReaderScreen
             material={selectedMaterial}
-            onBack={() => handleNavigate('materials')}
+            onBack={handleBack}
           />
         )}
 
