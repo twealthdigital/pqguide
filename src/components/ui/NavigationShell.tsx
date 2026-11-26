@@ -496,20 +496,16 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   useBackHandler(userPopoverVisible, () => setUserPopoverOpen(false));
   useBackHandler(settingsPopoverVisible, () => setSettingsPopoverOpen(false));
+  useBackHandler(!sidebarCollapsed && settingsMenuOpen, () => setSettingsMenuOpen(false));
 
   useEffect(() => {
     if (!sidebarCollapsed) {
       setUserPopoverOpen(false);
       setSettingsPopoverOpen(false);
+    } else {
+      setSettingsMenuOpen(false);
     }
   }, [sidebarCollapsed]);
-
-  useEffect(() => {
-    if (activeScreen === 'super_admin' && activeAdminSection === 'settings') {
-      setSettingsMenuOpen(true);
-      setMobileSettingsExpanded(true);
-    }
-  }, [activeScreen, activeAdminSection]);
 
   useEffect(() => {
     if (!userPopoverVisible) return;
@@ -529,15 +525,21 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     };
   }, [userPopoverVisible]);
 
+  const settingsDropdownOpen = settingsPopoverVisible || (!sidebarCollapsed && settingsMenuOpen);
+
   useEffect(() => {
-    if (!settingsPopoverVisible) return;
+    if (!settingsDropdownOpen) return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && settingsPanelRef.current?.contains(target)) return;
       setSettingsPopoverOpen(false);
+      setSettingsMenuOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSettingsPopoverOpen(false);
+      if (event.key === 'Escape') {
+        setSettingsPopoverOpen(false);
+        setSettingsMenuOpen(false);
+      }
     };
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
@@ -545,7 +547,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [settingsPopoverVisible]);
+  }, [settingsDropdownOpen]);
 
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
@@ -592,7 +594,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const handleOpenUiEditsPage = () => {
     handlePickSuperAdminSection('settings');
+    setSettingsMenuOpen(false);
     setSettingsPopoverOpen(false);
+    setMobileSettingsExpanded(false);
   };
 
   const renderSubscriptionSubline = () => {
@@ -1033,16 +1037,21 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 </button>
               </TooltipBubble>
 
-              {/* Expanded sidebar Settings dropdown -> direct UI Edits item (no nested dropdown) */}
+              {/* Expanded sidebar floating dark dropdown -> direct UI Edits item */}
               {!sidebarCollapsed && settingsMenuOpen && (
-                <div className="mt-1.5 rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-1.5 page-enter">
+                <div
+                  role="menu"
+                  aria-label="Settings menu"
+                  className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white shadow-[0_18px_38px_-12px_rgba(18,19,24,0.62)] p-1.5 page-enter"
+                >
                   <button
                     type="button"
+                    role="menuitem"
                     onClick={handleOpenUiEditsPage}
                     className={`w-full min-h-[38px] px-2.5 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
                       activeScreen === 'super_admin' && activeAdminSection === 'settings'
-                        ? 'bg-[#1D1E23] text-white'
-                        : 'text-[#3A3D47] hover:bg-white hover:text-[#1A1B20]'
+                        ? 'bg-white text-[#1D1E23] shadow-xs'
+                        : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                     }`}
                   >
                     <Layers className="w-3.5 h-3.5 shrink-0" />
@@ -1056,9 +1065,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 <div
                   role="dialog"
                   aria-label="Settings"
-                  className="absolute bottom-0 left-full ml-[30px] w-52 rounded-2xl bg-white border border-[#1A1B20]/[0.1] shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)] p-2.5 space-y-1.5 z-50 page-enter"
+                  className="absolute bottom-0 left-full ml-[30px] w-52 rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white shadow-[0_18px_40px_-14px_rgba(18,19,24,0.62)] p-2.5 space-y-1.5 z-50 page-enter"
                 >
-                  <p className="px-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                  <p className="px-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
                     Settings
                   </p>
                   <button
@@ -1066,8 +1075,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     onClick={handleOpenUiEditsPage}
                     className={`w-full min-h-[38px] px-2.5 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
                       activeScreen === 'super_admin' && activeAdminSection === 'settings'
-                        ? 'bg-[#1D1E23] text-white'
-                        : 'text-[#3A3D47] hover:bg-[#F6F7F9] hover:text-[#1A1B20]'
+                        ? 'bg-white text-[#1D1E23] shadow-xs'
+                        : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                     }`}
                   >
                     <Layers className="w-3.5 h-3.5 shrink-0" />
@@ -1617,7 +1626,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               {isSuperAdminConsole && onSelectAdminSection && (
                 <nav
                   aria-label="Super Admin mobile console pages"
-                  className="max-h-[46dvh] flex flex-col overflow-hidden rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white p-2 shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)]"
+                  className="max-h-[46dvh] flex flex-col rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white p-2 shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)]"
                 >
                   <p className="shrink-0 px-2 pt-0.5 pb-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
                     Console Pages
@@ -1658,7 +1667,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     })}
                   </div>
 
-                  <div className="shrink-0 pt-1.5 mt-1.5 border-t border-white/[0.1] space-y-1">
+                  <div className="shrink-0 relative pt-1.5 mt-1.5 border-t border-white/[0.1]">
                     <button
                       type="button"
                       onClick={() => setMobileSettingsExpanded((prev) => !prev)}
@@ -1677,17 +1686,17 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     </button>
 
                     {mobileSettingsExpanded && (
-                      <div className="rounded-xl bg-white/[0.06] p-1">
+                      <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-xl bg-[#1D1E23] border border-white/15 text-white shadow-[0_18px_38px_-12px_rgba(0,0,0,0.65)] p-1.5 page-enter">
                         <button
                           type="button"
                           onClick={() => {
                             handleOpenUiEditsPage();
                             setDrawerOpen(false);
                           }}
-                          className={`w-full min-h-[36px] px-2.5 rounded-lg flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                          className={`w-full min-h-[38px] px-2.5 rounded-lg flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
                             activeScreen === 'super_admin' && activeAdminSection === 'settings'
-                              ? 'bg-white text-[#1D1E23]'
-                              : 'text-[#D6DAE4] hover:bg-white/[0.1] hover:text-white'
+                              ? 'bg-white text-[#1D1E23] shadow-xs'
+                              : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                           }`}
                         >
                           <Layers className="w-3.5 h-3.5 shrink-0" />
