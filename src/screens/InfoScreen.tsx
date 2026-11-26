@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   ClipboardCheck,
+  Crown,
   FileText,
   Headphones,
   Loader2,
@@ -155,6 +156,12 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
       action={{ label: 'See alerts', onClick: () => onNavigate('notifications') }}
     />
     <FeatureRow
+      icon={<Crown className="w-5 h-5" />}
+      title="Subscription plans & AI Scholar"
+      text="View Monthly, Semester, and Yearly plans across Free, Standard Pass, and upcoming AI Scholar (Tier 3) from the side menu."
+      action={{ label: 'View plans', onClick: () => onNavigate('subscription') }}
+    />
+    <FeatureRow
       icon={<ScanLine className="w-5 h-5" />}
       title="Scan-to-PDF uploads for schools"
       text="School admins can scan or upload past questions and have them indexed automatically."
@@ -297,6 +304,13 @@ const FAQ: HelpItem[] = [
     title: 'What happens when the time runs out?',
     text: 'Your exam is submitted automatically with the answers you have entered and saved to Performance.',
     keywords: 'exam time up timer ends submit automatic',
+  },
+  {
+    id: 'faq-subscriptions',
+    title: 'How do subscriptions and Tier 3 AI Scholar work?',
+    text: 'Open Subscription Plans in the side menu to compare Monthly, Semester, and Yearly options across Tier 1 (Free), Tier 2 (Standard Pass for all core webapp features), and Tier 3 (AI Scholar for upcoming AI tutoring and smart predictions).',
+    keywords: 'subscription premium paywall tier pricing monthly semester yearly ai scholar',
+    action: { label: 'View plans', screen: 'subscription' },
   },
 ];
 

@@ -10,10 +10,12 @@ import { TactileButton } from '../components/ui/TactileButton';
 import { AnswerSheet } from '../components/ui/AnswerSheet';
 import bannerAshWaves from '../assets/images/banner_ash_waves.webp';
 import { courseHeading } from '../core/docTitle';
+import type { PaywallContext } from '../core/subscription';
 
 interface PastQuestionReaderScreenProps {
   doc: PastQuestionDoc | null;
   onBack: () => void;
+  onOpenPaywall?: (context?: PaywallContext) => void;
 }
 
 const stripLabel = (q: string) => q.replace(/^Q\d+\s*[:.)-]\s*/i, '');
@@ -47,6 +49,7 @@ QuestionRow.displayName = 'QuestionRow';
 export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> = ({
   doc,
   onBack,
+  onOpenPaywall,
 }) => {
   const [inlineQuery, setInlineQuery] = useState('');
   const [sheet, setSheet] = useState<{ index: number; open: boolean } | null>(null);
@@ -177,6 +180,19 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
           solution={doc.solutions?.[sheet.index] ?? null}
           onClose={closeAnswer}
           onExited={exitedAnswer}
+          onAskAi={
+            onOpenPaywall
+              ? () => {
+                  setSheet(null);
+                  onOpenPaywall({
+                    highlightTier: 'pro_ai',
+                    featureLabel: 'AI Step-by-Step Tutor',
+                    reason:
+                      'Standard covers past questions and worked answers, while Tier 3 (AI Scholar) unlocks conversational AI breakdowns for any question.',
+                  });
+                }
+              : undefined
+          }
         />
       )}
     </div>

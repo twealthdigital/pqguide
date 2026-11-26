@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { ArrowRight, CheckCircle2, FileText, Sparkles } from 'lucide-react';
+import { ArrowRight, CheckCircle2, FileText, Lock, Sparkles } from 'lucide-react';
 import type { PastQuestionDoc } from '../core/types';
+import type { PaywallContext } from '../core/subscription';
 import { useArchiveSearch } from '../hooks/useArchiveSearch';
 import {
   DocumentListSkeleton,
@@ -14,11 +15,13 @@ import { courseSubtitle } from '../core/docTitle';
 interface HomeScreenProps {
   onOpenDocument: (doc: PastQuestionDoc) => void;
   focusSearchSignal: number;
+  onOpenPaywall?: (context?: PaywallContext) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenDocument,
   focusSearchSignal,
+  onOpenPaywall,
 }) => {
   const search = useArchiveSearch();
   const {
@@ -180,6 +183,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </ol>
             </div>
 
+            {onOpenPaywall && (
+              <button
+                type="button"
+                aria-disabled="true"
+                onClick={() =>
+                  onOpenPaywall({
+                    highlightTier: 'pro_ai',
+                    featureLabel: 'AI Study Assistant',
+                    reason:
+                      'Standard unlocks everything the core webapp can do. Tier 3 (AI Scholar) adds an AI Study Assistant for instant question breakdowns and smart topic predictions.',
+                  })
+                }
+                className="mt-4 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <Sparkles className="h-4 w-4 shrink-0 text-[#505460]" />
+                  <span className="text-xs font-semibold text-[#3A3D47] truncate">
+                    AI Study Assistant (Tier 3)
+                  </span>
+                </span>
+                <Lock className="h-3.5 w-3.5 shrink-0 text-[#686C78]" />
+              </button>
+            )}
           </SurfaceCard>
         </div>
       </section>

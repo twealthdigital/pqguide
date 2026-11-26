@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Lock, Sparkles } from 'lucide-react';
 import type { StudyMaterial } from '../core/types';
+import type { PaywallContext } from '../core/subscription';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
@@ -9,11 +10,13 @@ import { MaterialDownloadButton } from '../components/ui/MaterialDownloadButton'
 interface MaterialReaderScreenProps {
   material: StudyMaterial | null;
   onBack: () => void;
+  onOpenPaywall?: (context?: PaywallContext) => void;
 }
 
 export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
   material,
   onBack,
+  onOpenPaywall,
 }) => {
   const [query, setQuery] = useState('');
 
@@ -77,6 +80,37 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
 
       <article className="rounded-3xl border border-[#1A1B20]/[0.08] bg-white px-5 py-6 shadow-[0_2px_12px_-6px_rgba(24,25,30,0.1)] sm:px-8 sm:py-8">
         <p className="text-[15px] leading-7 text-[#3A3D47]">{material.summary}</p>
+
+        {onOpenPaywall && (
+          <button
+            type="button"
+            aria-disabled="true"
+            onClick={() =>
+              onOpenPaywall({
+                highlightTier: 'pro_ai',
+                featureLabel: 'AI Guide Summarizer',
+                reason:
+                  'Tier 2 includes full offline reading guides. Upgrade to Tier 3 (AI Scholar) to unlock instant AI summaries and key-point flashcards.',
+              })
+            }
+            className="mt-4 flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-4 py-3 text-left transition-colors hover:bg-[#ECEEF3]"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23]/10 text-[#505460]">
+                <Sparkles className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-[#3A3D47]">
+                  AI Guide Summary &amp; Flashcards
+                </p>
+                <p className="text-[11px] text-[#686C78] truncate">
+                  Locked · Included in Tier 3 (AI Scholar)
+                </p>
+              </div>
+            </div>
+            <Lock className="h-3.5 w-3.5 shrink-0 text-[#686C78]" />
+          </button>
+        )}
 
         {sections.length === 0 ? (
           <p className="py-8 text-center text-sm text-[#686C78]">

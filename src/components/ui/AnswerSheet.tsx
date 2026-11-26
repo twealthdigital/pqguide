@@ -1,7 +1,7 @@
 import { useBackHandler } from '../../core/navGuard';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { Lock, Sparkles, X } from 'lucide-react';
 import type { QuestionSolution } from '../../core/types';
 
 /**
@@ -29,6 +29,8 @@ interface AnswerSheetProps {
   onClose: () => void;
   /** Called once the close animation has finished; parent can unmount. */
   onExited: () => void;
+  /** Opens Subscription Paywall highlighting Tier 3 AI benefits. */
+  onAskAi?: () => void;
 }
 
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
@@ -45,6 +47,7 @@ const MobileAnswerSheet: React.FC<AnswerSheetProps> = ({
   solution,
   onClose,
   onExited,
+  onAskAi,
 }) => {
   const sheetRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
@@ -381,7 +384,7 @@ const MobileAnswerSheet: React.FC<AnswerSheetProps> = ({
             paddingBottom: 'calc(50vh + 28px)',
           }}
         >
-          <AnswerBody question={question} solution={solution} />
+          <AnswerBody question={question} solution={solution} onAskAi={onAskAi} />
         </div>
       </div>
     </div>,
@@ -390,10 +393,11 @@ const MobileAnswerSheet: React.FC<AnswerSheetProps> = ({
 };
 
 /** Question text + answer + step-by-step explanation (shared by sheet and dialog). */
-const AnswerBody: React.FC<{ question: string; solution: QuestionSolution | null }> = ({
-  question,
-  solution,
-}) => (
+const AnswerBody: React.FC<{
+  question: string;
+  solution: QuestionSolution | null;
+  onAskAi?: () => void;
+}> = ({ question, solution, onAskAi }) => (
   <>
     <p className="font-serif text-[16px] leading-[1.7] text-[#1A1B20]">
       {question}
@@ -436,6 +440,35 @@ const AnswerBody: React.FC<{ question: string; solution: QuestionSolution | null
         </p>
       </div>
     )}
+
+    {onAskAi && (
+      <div className="mt-6 border-t border-[#1A1B20]/[0.08] pt-4">
+        <button
+          type="button"
+          onClick={onAskAi}
+          aria-disabled="true"
+          className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-4 py-3 text-left transition-colors hover:bg-[#ECEEF3]"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23]/10 text-[#505460]">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-[#3A3D47]">
+                Ask AI Tutor to explain more
+              </p>
+              <p className="text-[11px] text-[#686C78] truncate">
+                Disabled on current plan · Included in Tier 3 (AI Scholar)
+              </p>
+            </div>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1 font-mono-tabular text-[11px] font-semibold text-[#686C78]">
+            <Lock className="h-3.5 w-3.5" />
+            AI
+          </span>
+        </button>
+      </div>
+    )}
   </>
 );
 
@@ -463,6 +496,7 @@ const AnswerDialog: React.FC<AnswerSheetProps> = ({
   solution,
   onClose,
   onExited,
+  onAskAi,
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
   const returnFocusTo = useRef<HTMLElement | null>(null);
@@ -564,7 +598,7 @@ const AnswerDialog: React.FC<AnswerSheetProps> = ({
           className="min-h-0 flex-1 overflow-y-auto px-6 pb-6"
           style={{ overscrollBehavior: 'contain' }}
         >
-          <AnswerBody question={question} solution={solution} />
+          <AnswerBody question={question} solution={solution} onAskAi={onAskAi} />
         </div>
       </div>
     </div>,

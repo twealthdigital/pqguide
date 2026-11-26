@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowUpRight,
   BarChart3,
   Bell,
   ChevronLeft,
   ClipboardCheck,
+  Crown,
   FileText,
   Folder,
   Headphones,
@@ -24,6 +26,7 @@ import type {
   StudentAccount,
   UserRole,
 } from '../../core/types';
+import { FREE_TIER_ENABLED, useSubscription, type PaywallContext } from '../../core/subscription';
 import { CustomSelect } from './CustomSelect';
 import { BrandLockup } from './BrandLockup';
 import { useBackHandler } from '../../core/navGuard';
@@ -35,6 +38,7 @@ interface NavigationShellProps {
   /** Screen Back returns to; keeps the right tab lit while a paper/guide is open. */
   parentScreen?: AppScreen;
   onNavigate: (screen: AppScreen) => void;
+  onOpenPaywall: (context?: PaywallContext) => void;
   onQuickFind: () => void;
   unreadCount: number;
   activeRole: UserRole;
@@ -55,6 +59,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   activeScreen,
   parentScreen = 'home',
   onNavigate,
+  onOpenPaywall,
   onQuickFind,
   unreadCount,
   activeRole,
@@ -63,6 +68,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   onSignOut,
   children,
 }) => {
+  const { activeTier } = useSubscription();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -384,7 +390,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           />
         </button>
 
-        <div className="space-y-7">
+        <div className="min-h-0 flex-1 overflow-y-auto space-y-5 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <button
             type="button"
             onClick={() => onNavigate('home')}
@@ -453,10 +459,48 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               );
             })}
           </nav>
+
+          {/* Prominent Solid Subscription CTA (Desktop Sidebar) */}
+          <button
+            type="button"
+            onClick={() => onOpenPaywall()}
+            title={sidebarCollapsed ? 'Subscription Plans' : undefined}
+            aria-label="Open subscription plans"
+            className={`w-full rounded-2xl bg-[#1D1E23] text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer ${
+              sidebarCollapsed
+                ? 'min-h-[44px] px-3 py-2.5 flex items-center justify-center'
+                : 'p-3.5 text-left'
+            }`}
+          >
+            <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between gap-2.5'}`}>
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
+                  <Crown className="h-4 w-4" />
+                </span>
+                {!sidebarCollapsed && (
+                  <div className="min-w-0">
+                    <p className="font-display text-xs font-bold text-white truncate">
+                      Subscription Plans
+                    </p>
+                    <p className="text-[11px] text-[#C3C7D2] truncate">
+                      {activeTier === 'standard'
+                        ? 'Standard · Upgrade to AI'
+                        : activeTier === 'pro_ai'
+                          ? 'AI Scholar Preview'
+                          : FREE_TIER_ENABLED
+                            ? 'Free plan · Upgrade anytime'
+                            : 'Unlock full access'}
+                    </p>
+                  </div>
+                )}
+              </div>
+              {!sidebarCollapsed && <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />}
+            </div>
+          </button>
         </div>
 
         {/* Workspace Switcher & Student Sign Out */}
-        <div className="space-y-3 pt-4 border-t border-[#1A1B20]/[0.07]">
+        <div className="shrink-0 space-y-3 pt-4 border-t border-[#1A1B20]/[0.07]">
           <div
             className={`transition-[max-height,opacity] ${sbEase} ${
               sidebarCollapsed
@@ -936,6 +980,40 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   );
                 })}
               </nav>
+
+              {/* Prominent Solid Subscription CTA (Mobile Drawer) */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDrawerOpen(false);
+                    onOpenPaywall();
+                  }}
+                  aria-label="Open subscription plans"
+                  className="w-full rounded-2xl bg-[#1D1E23] p-3.5 text-left text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
+                        <Crown className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-display text-sm font-bold text-white truncate">
+                          Subscription Plans
+                        </p>
+                        <p className="text-xs text-[#C3C7D2] truncate">
+                          {activeTier === 'standard'
+                            ? 'Standard · View Tier 3 AI'
+                            : FREE_TIER_ENABLED
+                              ? 'Free plan · View 3 tiers'
+                              : 'Upgrade to continue'}
+                        </p>
+                      </div>
+                    </div>
+                    <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />
+                  </div>
+                </button>
+              </div>
             </div>
 
             {/* Bottom Controls: Workspace Switcher & Sign Out */}

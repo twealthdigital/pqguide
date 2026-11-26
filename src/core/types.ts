@@ -18,7 +18,8 @@ export type AppScreen =
   | 'mock_exam'
   | 'performance'
   | 'school_admin'
-  | 'super_admin';
+  | 'super_admin'
+  | 'subscription';
 
 export interface School {
   id: string;

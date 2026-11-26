@@ -9,6 +9,7 @@ import {
   FileText,
   ListChecks,
   Loader2,
+  Lock,
   Minus,
   Monitor,
   Plus,
@@ -35,10 +36,12 @@ import { saveExamPerformance } from '../core/performanceStore';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { CustomSelect } from '../components/ui/CustomSelect';
 import { TactileButton } from '../components/ui/TactileButton';
+import type { PaywallContext } from '../core/subscription';
 
 interface MockExamScreenProps {
   onBack: () => void;
   onSubmitted?: (recordId: string) => void;
+  onOpenPaywall?: (context?: PaywallContext) => void;
 }
 
 type Phase = 'setup' | 'exam' | 'review';
@@ -89,7 +92,11 @@ const Chip: React.FC<{
   </button>
 );
 
-export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmitted }) => {
+export const MockExamScreen: React.FC<MockExamScreenProps> = ({
+  onBack,
+  onSubmitted,
+  onOpenPaywall,
+}) => {
   const store = useArchiveStore();
 
   const docs = useMemo(
@@ -712,11 +719,42 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
               <div className="h-10 w-10 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center shrink-0">
                 <Sparkles className="w-5 h-5" />
               </div>
-              <p className="text-sm text-[#505460] leading-relaxed">
-                This is a prediction, not a promise. Questions are picked from real past questions
-                and course study guides, favouring recurring themes and your topic. Real exams can
-                still surprise you.
-              </p>
+              <div className="min-w-0 flex-1 space-y-2.5">
+                <p className="text-sm text-[#505460] leading-relaxed">
+                  This is a prediction, not a promise. Questions are picked from real past questions
+                  and course study guides, favouring recurring themes and your topic. Real exams can
+                  still surprise you.
+                </p>
+
+                {onOpenPaywall && (
+                  <button
+                    type="button"
+                    aria-disabled="true"
+                    onClick={() =>
+                      onOpenPaywall({
+                        highlightTier: 'pro_ai',
+                        featureLabel: 'AI Topic Predictor & Theory Coach',
+                        reason:
+                          'Standard gives you full access to all 4 practice exam modes. Tier 3 (AI Scholar) adds AI topic predictions and personalized Theory answer coaching.',
+                      })
+                    }
+                    className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-xs font-bold text-[#3A3D47]">
+                        AI Smart Predictor &amp; Theory Coach
+                      </span>
+                      <span className="block text-[11px] text-[#686C78]">
+                        Disabled on current plan · Unlock with Tier 3 (AI Scholar)
+                      </span>
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-1 font-mono-tabular text-[11px] font-semibold text-[#686C78]">
+                      <Lock className="h-3.5 w-3.5" />
+                      AI
+                    </span>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="flex justify-center">

@@ -16,6 +16,10 @@ import type { PerformanceSubView } from './screens/PerformanceScreen';
 import { useArchiveStore } from './hooks/useArchiveStore';
 import { archiveRepository } from './services/archiveRepository';
 import { authService } from './services/authService';
+import {
+  subscriptionService,
+  type PaywallContext,
+} from './core/subscription';
 import { NavigationShell } from './components/ui/NavigationShell';
 import { HomeScreenSkeleton } from './components/ui/Skeleton';
 import { LoadingScreen } from './screens/LoadingScreen';
@@ -90,6 +94,12 @@ const SuperAdminScreen = lazy(() =>
   }))
 );
 
+const SubscriptionScreen = lazy(() =>
+  import('./screens/SubscriptionScreen').then((m) => ({
+    default: m.SubscriptionScreen,
+  }))
+);
+
 /** One step in the in-app "Back" trail. */
 interface NavEntry {
   screen: AppScreen;
@@ -117,6 +127,7 @@ interface AppHistoryState {
   __pqgAuthView?: AuthView;
   nav?: NavState;
   perf?: PerfNavState;
+  paywall?: PaywallContext | null;
   role?: UserRole;
 }
 
@@ -141,6 +152,7 @@ function AppContent() {
   const [authView, setAuthView] = useState<AuthView>('signin');
   const [nav, setNav] = useState<NavState>(INITIAL_NAV);
   const [perf, setPerf] = useState<PerfNavState>(INITIAL_PERF);
+  const [paywallContext, setPaywallContext] = useState<PaywallContext | null>(null);
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
 
   const authRef = useRef(authenticatedStudent);
@@ -155,6 +167,8 @@ function AppContent() {
   navRef.current = nav;
   const perfRef = useRef<PerfNavState>(perf);
   perfRef.current = perf;
+  const paywallRef = useRef<PaywallContext | null>(paywallContext);
+  paywallRef.current = paywallContext;
 
   const historyIdxRef = useRef(0);
   const pushedLayerIdsRef = useRef<string[]>([]);
@@ -212,6 +226,7 @@ function AppContent() {
       return {
         nav: navRef.current,
         perf: perfRef.current,
+        paywall: paywallRef.current,
         role: archiveRepository.getSnapshot().activeRole,
         ...layersPatch,
       };
@@ -421,14 +436,22 @@ function AppContent() {
   // Every move to a new screen or Performance sub-view adds a browser-history entry,
   // so the phone's Back button / gesture walks back through the same views.
   const go = useCallback(
-    (nextNav: NavState, nextPerf: PerfNavState = INITIAL_PERF, scroll = true) => {
+    (
+      nextNav: NavState,
+      nextPerf: PerfNavState = INITIAL_PERF,
+      scroll = true,
+      nextPaywall: PaywallContext | null = null
+    ) => {
       navRef.current = nextNav;
       perfRef.current = nextPerf;
+      paywallRef.current = nextPaywall;
       setNav(nextNav);
       setPerf(nextPerf);
+      setPaywallContext(nextPaywall);
       pushHistory({
         nav: nextNav,
         perf: nextPerf,
+        paywall: nextPaywall,
         role: archiveRepository.getSnapshot().activeRole,
       });
       if (scroll) scrollTop();
@@ -453,12 +476,15 @@ function AppContent() {
       historyIdxRef.current = hasValidSignedInRoot ? existing.idx : 0;
       navRef.current = INITIAL_NAV;
       perfRef.current = INITIAL_PERF;
+      paywallRef.current = null;
       setNav(INITIAL_NAV);
       setPerf(INITIAL_PERF);
+      setPaywallContext(null);
       window.history.replaceState(
         {
           nav: INITIAL_NAV,
           perf: INITIAL_PERF,
+          paywall: null,
           role: archiveRepository.getSnapshot().activeRole,
           idx: historyIdxRef.current,
         } satisfies AppHistoryState,
@@ -595,12 +621,15 @@ function AppContent() {
         pushedLayerIdsRef.current = [];
         navRef.current = INITIAL_NAV;
         perfRef.current = INITIAL_PERF;
+        paywallRef.current = null;
         setNav(INITIAL_NAV);
         setPerf(INITIAL_PERF);
+        setPaywallContext(null);
         window.history.replaceState(
           {
             nav: INITIAL_NAV,
             perf: INITIAL_PERF,
+            paywall: null,
             role: archiveRepository.getSnapshot().activeRole,
             idx: 0,
           } satisfies AppHistoryState,
@@ -616,6 +645,7 @@ function AppContent() {
 
       const nextNav = st?.nav ?? INITIAL_NAV;
       const nextPerf = st?.perf ?? INITIAL_PERF;
+      const nextPaywall = st?.paywall ?? null;
       const navOrPerfChanged =
         navRef.current.screen !== nextNav.screen ||
         navRef.current.docId !== nextNav.docId ||
@@ -625,8 +655,10 @@ function AppContent() {
 
       navRef.current = nextNav;
       perfRef.current = nextPerf;
+      paywallRef.current = nextPaywall;
       setNav(nextNav);
       setPerf(nextPerf);
+      setPaywallContext(nextPaywall);
       if (navOrPerfChanged && layersPopped.length === 0) {
         scrollTop();
       }
@@ -636,9 +668,48 @@ function AppContent() {
     return () => window.removeEventListener('popstate', onPopState);
   }, [buildCurrentState]);
 
+  const openPaywall = useCallback(
+    (context?: PaywallContext) => {
+      const prev = navRef.current;
+      const nextStack =
+        prev.screen === 'subscription' ? prev.stack : [...prev.stack, entryOf(prev)];
+      go(
+        {
+          ...prev,
+          screen: 'subscription',
+          stack: nextStack,
+        },
+        perfRef.current,
+        true,
+        context ?? null
+      );
+    },
+    [go]
+  );
+
+  // Single paywall gate used when FREE_TIER_ENABLED is set to false.
+  const ensureStandardAccess = useCallback(
+    (reason?: string) => {
+      if (subscriptionService.hasStandardAccess()) return true;
+      openPaywall({
+        highlightTier: 'standard',
+        blockedByPaywall: true,
+        reason: reason ?? 'Free access has ended. Choose Standard or AI Scholar to continue.',
+      });
+      return false;
+    },
+    [openPaywall]
+  );
+
   // Tabs reset the trail. Alerts (opened from the bell) and Practice Exam remember where you were.
   const handleNavigate = useCallback(
     (screen: AppScreen) => {
+      if (screen === 'subscription') {
+        openPaywall();
+        return;
+      }
+      if (!ensureStandardAccess()) return;
+
       const prev = navRef.current;
       if (prev.screen === screen) {
         if (screen === 'performance' && perfRef.current.view !== 'list') {
@@ -658,7 +729,7 @@ function AppContent() {
         INITIAL_PERF
       );
     },
-    [go]
+    [ensureStandardAccess, go, openPaywall]
   );
 
   // Back goes to exactly where the person came from (home if there is no trail).
@@ -686,8 +757,10 @@ function AppContent() {
       : { ...INITIAL_NAV, docId: prev.docId, materialId: prev.materialId };
     navRef.current = next;
     perfRef.current = INITIAL_PERF;
+    paywallRef.current = null;
     setNav(next);
     setPerf(INITIAL_PERF);
+    setPaywallContext(null);
 
     if (k > 0) {
       historyIdxRef.current = 0;
@@ -696,6 +769,7 @@ function AppContent() {
         stateWithoutIdx: {
           nav: next,
           perf: INITIAL_PERF,
+          paywall: null,
           role: archiveRepository.getSnapshot().activeRole,
         },
       };
@@ -715,6 +789,9 @@ function AppContent() {
 
   const handleOpenDocument = useCallback(
     (doc: PastQuestionDoc) => {
+      if (!ensureStandardAccess('Subscribe to open verified past questions and worked answers.')) {
+        return;
+      }
       archiveRepository.incrementView(doc.id);
       archiveRepository.recordRecent(doc.id);
       const prev = navRef.current;
@@ -725,11 +802,14 @@ function AppContent() {
         stack: [...prev.stack, entryOf(prev)],
       });
     },
-    [go]
+    [ensureStandardAccess, go]
   );
 
   const handleOpenMaterial = useCallback(
     (material: StudyMaterial) => {
+      if (!ensureStandardAccess('Subscribe to open course study guides.')) {
+        return;
+      }
       const prev = navRef.current;
       go({
         screen: 'material_reader',
@@ -738,16 +818,17 @@ function AppContent() {
         stack: [...prev.stack, entryOf(prev)],
       });
     },
-    [go]
+    [ensureStandardAccess, go]
   );
 
   const handleQuickFind = useCallback(() => {
+    if (!ensureStandardAccess()) return;
     const prev = navRef.current;
     if (prev.screen !== 'home') {
       go({ ...prev, screen: 'home', stack: [] }, INITIAL_PERF, false);
     }
     setFocusSearchSignal((n) => n + 1);
-  }, [go]);
+  }, [ensureStandardAccess, go]);
 
   const handleExamSubmitted = useCallback(() => {
     // Replace the mock_exam entry (and any open exam/confirm layer) so pressing Back
@@ -956,11 +1037,24 @@ function AppContent() {
     );
   }
 
+  if (activeScreen === 'subscription') {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
+        <SubscriptionScreen
+          paywallContext={paywallContext}
+          onBack={handleBack}
+          onClose={handleBack}
+        />
+      </Suspense>
+    );
+  }
+
   return (
     <NavigationShell
       activeScreen={activeScreen}
       parentScreen={parentScreen}
       onNavigate={handleNavigate}
+      onOpenPaywall={openPaywall}
       onQuickFind={handleQuickFind}
       unreadCount={unreadCount}
       activeRole={store.activeRole}
@@ -973,6 +1067,7 @@ function AppContent() {
           <HomeScreen
             onOpenDocument={handleOpenDocument}
             focusSearchSignal={focusSearchSignal}
+            onOpenPaywall={openPaywall}
           />
         )}
 
@@ -980,6 +1075,7 @@ function AppContent() {
           <PastQuestionReaderScreen
             doc={selectedDoc}
             onBack={handleBack}
+            onOpenPaywall={openPaywall}
           />
         )}
 
@@ -1002,6 +1098,7 @@ function AppContent() {
           <MaterialReaderScreen
             material={selectedMaterial}
             onBack={handleBack}
+            onOpenPaywall={openPaywall}
           />
         )}
 
@@ -1009,6 +1106,7 @@ function AppContent() {
           <MockExamScreen
             onBack={handleBack}
             onSubmitted={handleExamSubmitted}
+            onOpenPaywall={openPaywall}
           />
         )}
 
