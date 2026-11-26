@@ -16,6 +16,8 @@ import type { PaymentTransaction, SuperAdminSectionId } from '../../../core/type
 import type { AppStoreState } from '../../../services/archiveRepository';
 import {
   CustomCalendar,
+  SectionHeadingBar,
+  SurfaceCard,
   TooltipBubble,
   parseDateKey,
   toLocalDateKey,
@@ -232,7 +234,7 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* 1. Dark Rounded Container — 4 Key Platform Overview Cards */}
+      {/* 1. Platform Overview — Only main dark container */}
       <section
         aria-label="Key platform indicators"
         className="rounded-3xl bg-[#1D1E23] p-4 sm:p-6 space-y-4 shadow-[0_14px_34px_-14px_rgba(20,21,28,0.45)]"
@@ -311,119 +313,135 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
         </div>
       </section>
 
-      {/* 2. Dark Rounded Container — Rolling Live Payment Windows */}
-      <section
-        aria-label="Rolling payment windows"
-        className="rounded-3xl bg-[#1D1E23] p-4 sm:p-6 space-y-4 shadow-[0_14px_34px_-14px_rgba(20,21,28,0.45)]"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-          <div className="flex items-center gap-2.5">
-            <span className="h-8 w-8 rounded-xl bg-white/10 text-white flex items-center justify-center shrink-0">
-              <CreditCard className="w-4 h-4" />
-            </span>
-            <div>
-              <h2 className="font-display text-sm sm:text-base font-bold text-white">
-                Payment Windows
-              </h2>
-              <p className="text-[11px] text-[#A5AAB8]">
-                Live rolling totals across 24 hours, 7 days, month, and year
-              </p>
-            </div>
-          </div>
-
-          {onNavigateSection && (
-            <TooltipBubble label="Open full Payment Verifications ledger">
-              <button
-                type="button"
-                onClick={() => onNavigateSection('payments')}
-                className="min-h-[34px] px-3 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <span>View Payments</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </TooltipBubble>
-          )}
-        </div>
+      {/* 2. Rolling Live Payment Windows — Normal white container, dark card accent */}
+      <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">
+        <SectionHeadingBar
+          icon={<CreditCard className="w-4 h-4" />}
+          title="Payment Windows"
+          subtitle="Live rolling totals across 24 hours, 7 days, month, and year"
+          right={
+            onNavigateSection ? (
+              <TooltipBubble label="Open full Payment Verifications ledger">
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection('payments')}
+                  className="min-h-[34px] px-3 rounded-xl bg-white/12 hover:bg-white/20 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <span>View Payments</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </TooltipBubble>
+            ) : undefined
+          }
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
-          {rollingWindows.map((win) => (
-            <div key={win.id} className="rounded-2xl bg-white p-4 sm:p-5 space-y-3">
-              <div>
-                <p className="text-xs font-semibold text-[#686C78]">{win.label}</p>
-                <p className="font-display font-mono-tabular text-xl sm:text-2xl font-extrabold text-[#1A1B20] mt-1">
-                  ₦{win.totalRevenueNaira.toLocaleString()}
-                </p>
-                <p className="text-[11px] font-mono-tabular text-[#686C78]">
-                  {win.totalTransactions} total attempts
-                </p>
+          {rollingWindows.map((win) => {
+            const isDarkCard = win.id === '24h';
+            return (
+              <div
+                key={win.id}
+                className={`rounded-2xl p-4 sm:p-5 space-y-3 ${
+                  isDarkCard
+                    ? 'bg-[#1D1E23] text-white shadow-[0_10px_24px_-10px_rgba(20,21,28,0.45)]'
+                    : 'bg-white border border-[#1A1B20]/[0.08] text-[#1A1B20]'
+                }`}
+              >
+                <div>
+                  <p
+                    className={`text-xs font-semibold ${
+                      isDarkCard ? 'text-[#C3C7D2]' : 'text-[#686C78]'
+                    }`}
+                  >
+                    {win.label}
+                  </p>
+                  <p
+                    className={`font-display font-mono-tabular text-xl sm:text-2xl font-extrabold mt-1 ${
+                      isDarkCard ? 'text-white' : 'text-[#1A1B20]'
+                    }`}
+                  >
+                    ₦{win.totalRevenueNaira.toLocaleString()}
+                  </p>
+                  <p
+                    className={`text-[11px] font-mono-tabular ${
+                      isDarkCard ? 'text-[#A5AAB8]' : 'text-[#686C78]'
+                    }`}
+                  >
+                    {win.totalTransactions} total attempts
+                  </p>
+                </div>
+
+                <div
+                  className={`space-y-1.5 pt-2.5 border-t text-xs font-mono-tabular ${
+                    isDarkCard ? 'border-white/12' : 'border-[#1A1B20]/[0.07]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 font-semibold ${
+                        isDarkCard ? 'text-[#4ADE80]' : 'text-[#15803D]'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Successful</span>
+                    </span>
+                    <span className={`font-bold ${isDarkCard ? 'text-white' : 'text-[#1A1B20]'}`}>
+                      {win.successCount} · ₦{win.successNaira.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 font-semibold ${
+                        isDarkCard ? 'text-[#FBBF24]' : 'text-[#D97706]'
+                      }`}
+                    >
+                      <Clock3 className="w-3.5 h-3.5" />
+                      <span>Pending</span>
+                    </span>
+                    <span className={`font-bold ${isDarkCard ? 'text-white' : 'text-[#1A1B20]'}`}>
+                      {win.pendingCount} · ₦{win.pendingNaira.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 font-semibold ${
+                        isDarkCard ? 'text-[#F87171]' : 'text-[#B91C1C]'
+                      }`}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>Declined</span>
+                    </span>
+                    <span className={`font-bold ${isDarkCard ? 'text-white' : 'text-[#1A1B20]'}`}>
+                      {win.failedCount} · ₦{win.failedNaira.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
               </div>
-
-              <div className="space-y-1.5 pt-2 border-t border-[#1A1B20]/[0.07] text-xs font-mono-tabular">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[#15803D] font-semibold">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Successful</span>
-                  </span>
-                  <span className="font-bold text-[#1A1B20]">
-                    {win.successCount} · ₦{win.successNaira.toLocaleString()}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[#D97706] font-semibold">
-                    <Clock3 className="w-3.5 h-3.5" />
-                    <span>Pending</span>
-                  </span>
-                  <span className="font-bold text-[#1A1B20]">
-                    {win.pendingCount} · ₦{win.pendingNaira.toLocaleString()}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[#B91C1C] font-semibold">
-                    <XCircle className="w-3.5 h-3.5" />
-                    <span>Declined</span>
-                  </span>
-                  <span className="font-bold text-[#1A1B20]">
-                    {win.failedCount} · ₦{win.failedNaira.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-      </section>
+      </SurfaceCard>
 
-      {/* 3. Dark Rounded Container — Custom Calendar & Daily Payment Breakdown */}
-      <section
-        aria-label="Daily payment status calendar"
-        className="rounded-3xl bg-[#1D1E23] p-4 sm:p-6 space-y-4 shadow-[0_14px_34px_-14px_rgba(20,21,28,0.45)]"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-          <div className="flex items-center gap-2.5">
-            <span className="h-8 w-8 rounded-xl bg-white/10 text-white flex items-center justify-center shrink-0">
-              <CalendarDays className="w-4 h-4" />
-            </span>
-            <div>
-              <h2 className="font-display text-sm sm:text-base font-bold text-white">
-                Daily Payment Calendar
-              </h2>
-              <p className="text-[11px] text-[#A5AAB8]">
-                Pick any date to check Successful, Pending, and Declined records
-              </p>
-            </div>
-          </div>
-
-          {!isViewingToday && (
-            <button
-              type="button"
-              onClick={() => setSelectedDateKey(todayDateKey)}
-              className="min-h-[34px] px-3 rounded-xl bg-white text-[#1A1B20] hover:bg-[#F3F4F6] text-xs font-bold cursor-pointer transition-colors"
-            >
-              Return to Today
-            </button>
-          )}
-        </div>
+      {/* 3. Custom Calendar & Daily Payment Breakdown — Normal white container */}
+      <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">
+        <SectionHeadingBar
+          icon={<CalendarDays className="w-4 h-4" />}
+          title="Daily Payment Calendar"
+          subtitle="Pick any date to check Successful, Pending, and Declined records"
+          right={
+            !isViewingToday ? (
+              <button
+                type="button"
+                onClick={() => setSelectedDateKey(todayDateKey)}
+                className="min-h-[34px] px-3 rounded-xl bg-white text-[#1A1B20] hover:bg-[#F3F4F6] text-xs font-bold cursor-pointer transition-colors"
+              >
+                Return to Today
+              </button>
+            ) : undefined
+          }
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
           <div className="lg:col-span-5">
@@ -435,7 +453,7 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
             />
           </div>
 
-          <div className="lg:col-span-7 rounded-2xl bg-white p-4 sm:p-5 space-y-4">
+          <div className="lg:col-span-7 rounded-2xl bg-white border border-[#1A1B20]/[0.08] p-4 sm:p-5 space-y-4">
             {!isViewingToday ? (
               <div
                 role="status"
@@ -463,17 +481,17 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
             )}
 
             <div className="grid grid-cols-3 gap-2.5">
-              <div className="rounded-xl bg-[#F6F7F9] p-3 space-y-0.5">
-                <p className="text-[11px] font-semibold text-[#15803D]">Successful</p>
-                <p className="font-display font-mono-tabular text-lg font-extrabold text-[#1A1B20]">
+              <div className="rounded-xl bg-[#1D1E23] text-white p-3.5 space-y-0.5">
+                <p className="text-[11px] font-semibold text-[#4ADE80]">Successful</p>
+                <p className="font-display font-mono-tabular text-lg font-extrabold text-white">
                   {selectedDayDetails.successCount}
                 </p>
-                <p className="text-[11px] font-mono-tabular text-[#686C78]">
+                <p className="text-[11px] font-mono-tabular text-[#C3C7D2]">
                   ₦{selectedDayDetails.successNaira.toLocaleString()}
                 </p>
               </div>
 
-              <div className="rounded-xl bg-[#F6F7F9] p-3 space-y-0.5">
+              <div className="rounded-xl bg-white border border-[#1A1B20]/[0.08] p-3.5 space-y-0.5">
                 <p className="text-[11px] font-semibold text-[#D97706]">Pending</p>
                 <p className="font-display font-mono-tabular text-lg font-extrabold text-[#1A1B20]">
                   {selectedDayDetails.pendingCount}
@@ -483,7 +501,7 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
                 </p>
               </div>
 
-              <div className="rounded-xl bg-[#F6F7F9] p-3 space-y-0.5">
+              <div className="rounded-xl bg-white border border-[#1A1B20]/[0.08] p-3.5 space-y-0.5">
                 <p className="text-[11px] font-semibold text-[#B91C1C]">Declined</p>
                 <p className="font-display font-mono-tabular text-lg font-extrabold text-[#1A1B20]">
                   {selectedDayDetails.failedCount}
@@ -546,29 +564,18 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
             )}
           </div>
         </div>
-      </section>
+      </SurfaceCard>
 
-      {/* 4. Dark Rounded Container — Performance Data Analytics (Bar & Line Charts) */}
-      <section
-        aria-label="Platform performance analytics charts"
-        className="rounded-3xl bg-[#1D1E23] p-4 sm:p-6 space-y-4 shadow-[0_14px_34px_-14px_rgba(20,21,28,0.45)]"
-      >
-        <div className="flex items-center gap-2.5 px-1">
-          <span className="h-8 w-8 rounded-xl bg-white/10 text-white flex items-center justify-center shrink-0">
-            <BarChart2 className="w-4 h-4" />
-          </span>
-          <div>
-            <h2 className="font-display text-sm sm:text-base font-bold text-white">
-              Performance Analytics
-            </h2>
-            <p className="text-[11px] text-[#A5AAB8]">
-              Switch between Bar &amp; Line charts across 7 days, Month (30 days), and Year
-            </p>
-          </div>
-        </div>
+      {/* 4. Performance Data Analytics — Normal white container */}
+      <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">
+        <SectionHeadingBar
+          icon={<BarChart2 className="w-4 h-4" />}
+          title="Performance Analytics"
+          subtitle="Switch between Bar & Line charts across 7 days, Month (30 days), and Year"
+        />
 
         <OverviewPerformanceChart store={store} />
-      </section>
+      </SurfaceCard>
     </div>
   );
 };

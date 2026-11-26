@@ -357,7 +357,7 @@ export const OverviewPerformanceChart: React.FC<OverviewPerformanceChartProps> =
   };
 
   return (
-    <div className="rounded-2xl bg-white border border-[#1A1B20]/[0.08] p-4 sm:p-5 space-y-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5">
           {(
