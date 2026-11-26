@@ -1156,7 +1156,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-[#1A1B20] truncate">{student.fullName}</p>
                   <p className="text-[11px] font-mono-tabular text-[#686C78] truncate">
-                    {student.matricNumber}
+                    {student.role === 'student' ? student.matricNumber : roleBadgeLabel}
                   </p>
                 </div>
               </div>

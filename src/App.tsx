@@ -1606,8 +1606,16 @@ function AppContent() {
               currentUser={authenticatedStudent}
               activeSection={schoolAdminSection}
               onSelectSection={handleSelectSchoolAdminSection}
-              previewSchoolId={superAdminPreviewSchoolId}
-              onPreviewSchoolChange={setSuperAdminPreviewSchoolId}
+              previewSchoolId={
+                authenticatedStudent.role === 'super_admin'
+                  ? superAdminPreviewSchoolId
+                  : undefined
+              }
+              onPreviewSchoolChange={
+                authenticatedStudent.role === 'super_admin'
+                  ? setSuperAdminPreviewSchoolId
+                  : undefined
+              }
             />
           </ProtectedRoute>
         )}
