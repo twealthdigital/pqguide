@@ -92,6 +92,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
   // Forgot Password state
   const [forgotIdentifier, setForgotIdentifier] = useState('');
+  const [pendingResetToken, setPendingResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [resetIdentifierResult, setResetIdentifierResult] = useState('');
@@ -131,6 +132,20 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     }, 1000);
     return () => window.clearTimeout(id);
   }, [resendCooldown]);
+
+  useEffect(() => {
+    if ((view === 'signup_success' || view === 'verify_signup') && !pendingEmail) {
+      onSwitchView('signup', { replace: true });
+      return;
+    }
+    if (view === 'forgot_verify' && !pendingEmail) {
+      onSwitchView('forgot_request', { replace: true });
+      return;
+    }
+    if (view === 'forgot_reset' && (!pendingEmail || !pendingResetToken)) {
+      onSwitchView(pendingEmail ? 'forgot_verify' : 'forgot_request', { replace: true });
+    }
+  }, [onSwitchView, pendingEmail, pendingResetToken, view]);
 
   const scheduleDelay = (ms: number) =>
     new Promise<void>((resolve) => {
@@ -387,6 +402,9 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Could not create student account.');
       return;
     }
@@ -398,7 +416,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
-    setResendCooldown(30);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
 
     await scheduleDelay(450);
     if (!mountedRef.current) return;
@@ -420,6 +438,9 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     if (!mountedRef.current) return;
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Verification failed.');
       return;
     }
@@ -446,6 +467,9 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Could not resend code.');
       return;
     }
@@ -455,7 +479,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
-    setResendCooldown(30);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
     setInfoMsg(
       result.data.deliveryMode === 'email'
         ? `A new 6-digit verification code was emailed to ${pendingEmail}.`
@@ -482,6 +506,9 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'No student account found.');
       return;
     }
@@ -494,10 +521,11 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     setSuccessAction(null);
     setPendingEmail(result.data.email);
     setPendingMatric(result.data.matricNumber);
+    setPendingResetToken('');
     setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
-    setResendCooldown(30);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
     setInfoMsg(
       result.data.deliveryMode === 'email'
         ? `Reset code emailed to ${result.data.email}.`
@@ -520,10 +548,14 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Invalid reset code.');
       return;
     }
 
+    setPendingResetToken(result.data?.resetToken ?? '');
     setActiveAction(null);
     setSuccessAction('forgot_verify');
     await scheduleDelay(480);
@@ -548,7 +580,8 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     const result = await authService.completePasswordReset(
       pendingEmail,
       newPassword,
-      confirmNewPassword
+      confirmNewPassword,
+      pendingResetToken
     );
     if (!mountedRef.current) return;
 
@@ -558,6 +591,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
       return;
     }
 
+    setPendingResetToken('');
     setActiveAction(null);
     setSuccessAction('forgot_save');
     setResetIdentifierResult(result.data.identifier);
@@ -932,7 +966,11 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
               </div>
             </div>
             <p className="text-xs text-[#166534] leading-relaxed">
-              We created your registration for <span className="font-bold">{pendingEmail || signupEmail}</span> and generated a 6-digit verification code. Verify your email next to sign into your archive.
+              We created your registration for <span className="font-bold">{pendingEmail || signupEmail}</span> and{' '}
+              {pendingDeliveryMode === 'email'
+                ? 'sent a 6-digit verification code to your inbox.'
+                : 'prepared a 6-digit verification code.'}{' '}
+              Verify your email next to unlock your archive.
             </p>
           </div>
 
@@ -944,7 +982,11 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
             className="rounded-full"
             icon={<ArrowRight className="w-4 h-4" />}
             onClick={() => {
-              setInfoMsg(`Verification code sent to ${pendingEmail || signupEmail}`);
+              setInfoMsg(
+                pendingDeliveryMode === 'email'
+                  ? `Verification code emailed to ${pendingEmail || signupEmail}`
+                  : `Verification code ready for ${pendingEmail || signupEmail}`
+              );
               navigateView('verify_signup', true);
             }}
           >

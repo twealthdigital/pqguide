@@ -83,6 +83,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
   const [otpCode, setOtpCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [forgotEmail, setForgotEmail] = useState('');
+  const [pendingResetToken, setPendingResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
@@ -121,6 +122,16 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     }, 1000);
     return () => window.clearTimeout(id);
   }, [resendCooldown]);
+
+  useEffect(() => {
+    if (view === 'forgot_verify' && !pendingEmail) {
+      onSwitchView('forgot_request', { replace: true });
+      return;
+    }
+    if (view === 'forgot_reset' && (!pendingEmail || !pendingResetToken)) {
+      onSwitchView(pendingEmail ? 'forgot_verify' : 'forgot_request', { replace: true });
+    }
+  }, [onSwitchView, pendingEmail, pendingResetToken, view]);
 
   const scheduleDelay = (ms: number) =>
     new Promise<void>((resolve) => {
@@ -274,6 +285,9 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'No verified Super Admin matches that email.');
       return;
     }
@@ -285,11 +299,16 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     setSuccessAction(null);
     setPendingEmail(result.data.email);
+    setPendingResetToken('');
     setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
-    setResendCooldown(30);
-    setInfoMsg(`Security recovery code sent to ${result.data.email}.`);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
+    setInfoMsg(
+      result.data.deliveryMode === 'email'
+        ? `Security recovery code emailed to ${result.data.email}.`
+        : `Security recovery code ready for ${result.data.email}.`
+    );
     navigateView('forgot_verify', true);
   };
 
@@ -307,10 +326,14 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Invalid security code.');
       return;
     }
 
+    setPendingResetToken(result.data?.resetToken ?? '');
     setActiveAction(null);
     setSuccessAction('forgot_verify');
     await scheduleDelay(450);
@@ -335,7 +358,8 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     const result = await authService.completePasswordReset(
       pendingEmail,
       newPassword,
-      confirmNewPassword
+      confirmNewPassword,
+      pendingResetToken
     );
     if (!mountedRef.current) return;
 
@@ -345,6 +369,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
       return;
     }
 
+    setPendingResetToken('');
     setActiveAction(null);
     setSuccessAction('forgot_save');
     setSigninEmail(result.data.identifier);
@@ -369,6 +394,9 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Could not resend code.');
       return;
     }
@@ -378,8 +406,12 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
-    setResendCooldown(30);
-    setInfoMsg(`Fresh security code sent to ${pendingEmail}.`);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
+    setInfoMsg(
+      result.data.deliveryMode === 'email'
+        ? `Fresh security code emailed to ${pendingEmail}.`
+        : `Fresh security code ready for ${pendingEmail}.`
+    );
 
     await scheduleDelay(550);
     if (!mountedRef.current) return;

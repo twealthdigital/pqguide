@@ -22,7 +22,17 @@ const BOOTSTRAP_LOCK_KEY = 'pqguide_dev_bootstrap_lock_v1';
 
 export { evaluatePasswordStrength, validatePasswordForRole };
 
-export const IS_DEV_BOOTSTRAP_ENV: boolean = import.meta.env.DEV;
+export const IS_DEV_BOOTSTRAP_ENV: boolean =
+  typeof import.meta.env !== 'undefined'
+    ? Boolean(import.meta.env.DEV)
+    : typeof process !== 'undefined' && process.env?.NODE_ENV === 'test-dev-bootstrap';
+
+function isDevBootstrapEnabled(): boolean {
+  if (typeof import.meta.env !== 'undefined') {
+    return Boolean(import.meta.env.DEV);
+  }
+  return typeof process !== 'undefined' && process.env?.NODE_ENV === 'test-dev-bootstrap';
+}
 
 export const AAUA_FACULTIES: Record<string, string[]> = {
   'Computing & Information Sciences': [
@@ -237,8 +247,13 @@ async function dispatchServerEmailOtp(
   purpose: OtpPurpose,
   matricNumber?: string
 ): Promise<
-  | { ok: true; deliveryMode: OtpDeliveryMode; previewCode?: string }
-  | { ok: false; error: string }
+  | {
+      ok: true;
+      deliveryMode: OtpDeliveryMode;
+      cooldownSeconds: number;
+      previewCode?: string;
+    }
+  | { ok: false; error: string; retryAfterSeconds?: number }
 > {
   try {
     const response = await fetch('/api/auth/email-otp/send', {
@@ -254,12 +269,15 @@ async function dispatchServerEmailOtp(
       ok?: boolean;
       error?: string;
       deliveryMode?: OtpDeliveryMode;
+      cooldownSeconds?: number;
+      retryAfterSeconds?: number;
       previewCode?: string;
     };
     if (!response.ok || !payload.ok) {
       return {
         ok: false,
         error: payload.error || 'Could not send email verification code.',
+        retryAfterSeconds: payload.retryAfterSeconds,
       };
     }
     const deliveryMode: OtpDeliveryMode =
@@ -267,8 +285,9 @@ async function dispatchServerEmailOtp(
     return {
       ok: true,
       deliveryMode,
+      cooldownSeconds: payload.cooldownSeconds ?? 30,
       previewCode:
-        deliveryMode === 'preview' && IS_DEV_BOOTSTRAP_ENV
+        deliveryMode === 'preview' && isDevBootstrapEnabled()
           ? payload.previewCode
           : undefined,
     };
@@ -284,7 +303,10 @@ async function verifyServerEmailOtp(
   email: string,
   purpose: OtpPurpose,
   rawCode: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; resetToken?: string }
+  | { ok: false; error: string; retryAfterSeconds?: number }
+> {
   const code = rawCode.replace(/\s+/g, '').trim();
   if (!/^\d{6}$/.test(code)) {
     return { ok: false, error: 'Enter the 6-digit code sent to your email.' };
@@ -299,11 +321,53 @@ async function verifyServerEmailOtp(
         code,
       }),
     });
-    const payload = (await response.json()) as { ok?: boolean; error?: string };
+    const payload = (await response.json()) as {
+      ok?: boolean;
+      error?: string;
+      resetToken?: string;
+      retryAfterSeconds?: number;
+    };
     if (!response.ok || !payload.ok) {
       return {
         ok: false,
         error: payload.error || 'Incorrect or expired verification code.',
+        retryAfterSeconds: payload.retryAfterSeconds,
+      };
+    }
+    return { ok: true, resetToken: payload.resetToken };
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach verification server. Please try again.',
+    };
+  }
+}
+
+async function consumeServerResetGrant(
+  email: string,
+  resetToken: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!resetToken.trim()) {
+    return {
+      ok: false,
+      error: 'Password reset verification expired. Verify a fresh code first.',
+    };
+  }
+  try {
+    const response = await fetch('/api/auth/email-otp/consume-reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        resetToken: resetToken.trim(),
+      }),
+    });
+    const payload = (await response.json()) as { ok?: boolean; error?: string };
+    if (!response.ok || !payload.ok) {
+      return {
+        ok: false,
+        error:
+          payload.error || 'Password reset session expired. Verify a fresh code.',
       };
     }
     return { ok: true };
@@ -347,6 +411,7 @@ export interface AuthActionResult<T = void> {
   ok: boolean;
   error?: string;
   notConfigured?: boolean;
+  retryAfterSeconds?: number;
   data?: T;
 }
 
@@ -356,7 +421,7 @@ export const authService = {
   // -------------------------------------------------------------------------
 
   isDevBootstrapAvailable(): boolean {
-    if (!IS_DEV_BOOTSTRAP_ENV) return false;
+    if (!isDevBootstrapEnabled()) return false;
     if (localStore.getItem(BOOTSTRAP_LOCK_KEY) === '1') return false;
     const accounts = readAccounts();
     const hasSuperAdmin = accounts.some(
@@ -372,7 +437,7 @@ export const authService = {
   async bootstrapFirstSuperAdmin(
     input: SuperAdminBootstrapInput
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
-    if (!IS_DEV_BOOTSTRAP_ENV) {
+    if (!isDevBootstrapEnabled()) {
       return {
         ok: false,
         error: 'Local development bootstrap is disabled outside development mode.',
@@ -490,7 +555,7 @@ export const authService = {
     confirmationPhrase: string,
     actor?: AuthenticatedUser | null
   ): AuthActionResult {
-    if (!IS_DEV_BOOTSTRAP_ENV) {
+    if (!isDevBootstrapEnabled()) {
       return { ok: false, error: 'Development reset is only permitted in local development mode.' };
     }
     const active = actor ?? this.getActiveSession();
@@ -550,6 +615,7 @@ export const authService = {
       email: string;
       matricNumber: string;
       deliveryMode: OtpDeliveryMode;
+      cooldownSeconds: number;
       verificationCode?: string;
     }>
   > {
@@ -605,7 +671,11 @@ export const authService = {
 
     const otpSend = await dispatchServerEmailOtp(email, 'signup', matricCheck.normalized);
     if (!otpSend.ok) {
-      return { ok: false, error: otpSend.error };
+      return {
+        ok: false,
+        error: otpSend.error,
+        retryAfterSeconds: otpSend.retryAfterSeconds,
+      };
     }
 
     const accounts = readAccounts();
@@ -653,6 +723,7 @@ export const authService = {
         email,
         matricNumber: matricCheck.normalized,
         deliveryMode: otpSend.deliveryMode,
+        cooldownSeconds: otpSend.cooldownSeconds,
         verificationCode: otpSend.previewCode,
       },
     };
@@ -661,7 +732,13 @@ export const authService = {
   async resendCode(
     email: string,
     purpose: OtpPurpose
-  ): Promise<AuthActionResult<{ deliveryMode: OtpDeliveryMode; verificationCode?: string }>> {
+  ): Promise<
+    AuthActionResult<{
+      deliveryMode: OtpDeliveryMode;
+      cooldownSeconds: number;
+      verificationCode?: string;
+    }>
+  > {
     const normalizedEmail = email.trim().toLowerCase();
     const accounts = readAccounts();
     const matched = accounts.find((a) => a.email === normalizedEmail);
@@ -678,13 +755,18 @@ export const authService = {
       matched.role === 'student' ? matched.matricNumber : undefined
     );
     if (!otpSend.ok) {
-      return { ok: false, error: otpSend.error };
+      return {
+        ok: false,
+        error: otpSend.error,
+        retryAfterSeconds: otpSend.retryAfterSeconds,
+      };
     }
 
     return {
       ok: true,
       data: {
         deliveryMode: otpSend.deliveryMode,
+        cooldownSeconds: otpSend.cooldownSeconds,
         verificationCode: otpSend.previewCode,
       },
     };
@@ -696,15 +778,30 @@ export const authService = {
     rememberMe = true
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
     const normalizedEmail = email.trim().toLowerCase();
-    const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'signup', rawCode);
-    if (!verifyResult.ok) {
-      return { ok: false, error: verifyResult.error };
-    }
-
     const accounts = readAccounts();
     const target = accounts.find((a) => a.email === normalizedEmail);
     if (!target) {
       return { ok: false, error: 'Pending registration not found. Please sign up again.' };
+    }
+
+    const dup = this.isDuplicateMatricOrEmail({
+      matricNumber: target.matricNumber,
+      email: normalizedEmail,
+    });
+    if (dup.duplicateMatric || dup.duplicateEmail) {
+      return {
+        ok: false,
+        error: 'An account with this matric number or email is already verified.',
+      };
+    }
+
+    const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'signup', rawCode);
+    if (!verifyResult.ok) {
+      return {
+        ok: false,
+        error: verifyResult.error,
+        retryAfterSeconds: verifyResult.retryAfterSeconds,
+      };
     }
 
     const now = new Date().toISOString();
@@ -919,6 +1016,7 @@ export const authService = {
       fullName: string;
       schoolCode: string;
       deliveryMode: OtpDeliveryMode;
+      cooldownSeconds: number;
       verificationCode?: string;
     }>
   > {
@@ -952,7 +1050,11 @@ export const authService = {
 
     const otpSend = await dispatchServerEmailOtp(email, 'admin_activate');
     if (!otpSend.ok) {
-      return { ok: false, error: otpSend.error };
+      return {
+        ok: false,
+        error: otpSend.error,
+        retryAfterSeconds: otpSend.retryAfterSeconds,
+      };
     }
 
     return {
@@ -962,6 +1064,7 @@ export const authService = {
         fullName: target.fullName,
         schoolCode: target.assignedSchoolCode ?? 'AAUA',
         deliveryMode: otpSend.deliveryMode,
+        cooldownSeconds: otpSend.cooldownSeconds,
         verificationCode: otpSend.previewCode,
       },
     };
@@ -975,9 +1078,15 @@ export const authService = {
     rememberMe = true
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
     const normalizedEmail = sanitizeSingleLine(rawEmail, 160).toLowerCase();
-    const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'admin_activate', rawCode);
-    if (!verifyResult.ok) {
-      return { ok: false, error: verifyResult.error };
+    const accounts = readAccounts();
+    const target = accounts.find(
+      (a) => a.email === normalizedEmail && a.role === 'school_admin'
+    );
+    if (!target || target.status !== 'active') {
+      return { ok: false, error: 'School Admin account is unavailable.' };
+    }
+    if (target.adminVerified === false) {
+      return { ok: false, error: 'Your School Admin access is awaiting Super Admin verification.' };
     }
 
     const pwError = validatePasswordForRole(newPassword, 'school_admin');
@@ -988,12 +1097,13 @@ export const authService = {
       return { ok: false, error: 'Passwords do not match.' };
     }
 
-    const accounts = readAccounts();
-    const target = accounts.find(
-      (a) => a.email === normalizedEmail && a.role === 'school_admin'
-    );
-    if (!target || target.status !== 'active') {
-      return { ok: false, error: 'School Admin account is unavailable.' };
+    const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'admin_activate', rawCode);
+    if (!verifyResult.ok) {
+      return {
+        ok: false,
+        error: verifyResult.error,
+        retryAfterSeconds: verifyResult.retryAfterSeconds,
+      };
     }
 
     const salt = generateSalt();
@@ -1665,6 +1775,7 @@ export const authService = {
       email: string;
       matricNumber: string;
       deliveryMode: OtpDeliveryMode;
+      cooldownSeconds: number;
       verificationCode?: string;
     }>
   > {
@@ -1689,8 +1800,9 @@ export const authService = {
             : a.role === 'super_admin')
     );
     const lower = trimmed.toLowerCase();
+    const compactMatric = trimmed.replace(/\s+/g, '');
     const account = accounts.find(
-      (a) => a.matricNumber === trimmed || a.email === lower
+      (a) => a.matricNumber === compactMatric || a.email === lower
     );
 
     if (!account) {
@@ -1703,13 +1815,25 @@ export const authService = {
       };
     }
 
+    if (portal === 'school_admin' && account.needsPasswordSetup) {
+      return {
+        ok: false,
+        error:
+          'Complete "Activate approved email" first to verify your email and create your password.',
+      };
+    }
+
     const otpSend = await dispatchServerEmailOtp(
       account.email,
       'reset',
       portal === 'student' ? account.matricNumber : undefined
     );
     if (!otpSend.ok) {
-      return { ok: false, error: otpSend.error };
+      return {
+        ok: false,
+        error: otpSend.error,
+        retryAfterSeconds: otpSend.retryAfterSeconds,
+      };
     }
 
     return {
@@ -1718,24 +1842,36 @@ export const authService = {
         email: account.email,
         matricNumber: account.matricNumber,
         deliveryMode: otpSend.deliveryMode,
+        cooldownSeconds: otpSend.cooldownSeconds,
         verificationCode: otpSend.previewCode,
       },
     };
   },
 
-  async verifyResetCode(email: string, rawCode: string): Promise<AuthActionResult> {
+  async verifyResetCode(
+    email: string,
+    rawCode: string
+  ): Promise<AuthActionResult<{ resetToken?: string }>> {
     const normalizedEmail = email.trim().toLowerCase();
     const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'reset', rawCode);
     if (!verifyResult.ok) {
-      return { ok: false, error: verifyResult.error };
+      return {
+        ok: false,
+        error: verifyResult.error,
+        retryAfterSeconds: verifyResult.retryAfterSeconds,
+      };
     }
-    return { ok: true };
+    return {
+      ok: true,
+      data: { resetToken: verifyResult.resetToken },
+    };
   },
 
   async completePasswordReset(
     email: string,
     newPassword: string,
-    confirmPassword: string
+    confirmPassword: string,
+    resetToken = ''
   ): Promise<AuthActionResult<{ identifier: string; matricNumber: string }>> {
     const normalizedEmail = email.trim().toLowerCase();
     const accounts = readAccounts();
@@ -1753,6 +1889,11 @@ export const authService = {
     }
     if (newPassword !== confirmPassword) {
       return { ok: false, error: 'Passwords do not match.' };
+    }
+
+    const grantCheck = await consumeServerResetGrant(normalizedEmail, resetToken);
+    if (!grantCheck.ok) {
+      return { ok: false, error: grantCheck.error };
     }
 
     const salt = generateSalt();

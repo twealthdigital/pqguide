@@ -76,6 +76,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
   const [resendCooldown, setResendCooldown] = useState(0);
 
   const [forgotEmail, setForgotEmail] = useState('');
+  const [pendingResetToken, setPendingResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
@@ -114,6 +115,24 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     }, 1000);
     return () => window.clearTimeout(id);
   }, [resendCooldown]);
+
+  useEffect(() => {
+    if (view === 'admin_activate_verify' && !pendingEmail) {
+      onSwitchView('admin_activate_request', { replace: true });
+      return;
+    }
+    if (view === 'admin_activate_success' && !activatedAccount && !pendingEmail) {
+      onSwitchView('signin', { replace: true });
+      return;
+    }
+    if (view === 'forgot_verify' && !pendingEmail) {
+      onSwitchView('forgot_request', { replace: true });
+      return;
+    }
+    if (view === 'forgot_reset' && (!pendingEmail || !pendingResetToken)) {
+      onSwitchView(pendingEmail ? 'forgot_verify' : 'forgot_request', { replace: true });
+    }
+  }, [activatedAccount, onSwitchView, pendingEmail, pendingResetToken, view]);
 
   const scheduleDelay = (ms: number) =>
     new Promise<void>((resolve) => {
@@ -201,6 +220,9 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Could not verify approved administrator email.');
       return;
     }
@@ -214,7 +236,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     setOtpCode('');
     setActivatePassword('');
     setActivateConfirmPassword('');
-    setResendCooldown(30);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
     setInfoMsg(
       `Approved for ${result.data.schoolCode} (${result.data.fullName}). Verify your 6-digit code and set your administrator password.`
     );
@@ -241,6 +263,9 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Activation failed.');
       return;
     }
@@ -268,6 +293,9 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Could not resend code.');
       return;
     }
@@ -277,8 +305,12 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
-    setResendCooldown(30);
-    setInfoMsg(`A fresh 6-digit code was sent to ${pendingEmail}.`);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
+    setInfoMsg(
+      result.data.deliveryMode === 'email'
+        ? `A fresh 6-digit code was emailed to ${pendingEmail}.`
+        : `A fresh 6-digit code is ready for ${pendingEmail}.`
+    );
 
     await scheduleDelay(550);
     if (!mountedRef.current) return;
@@ -300,6 +332,9 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok || !result.data) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'No approved School Admin account matches this email.');
       return;
     }
@@ -311,11 +346,16 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     setSuccessAction(null);
     setPendingEmail(result.data.email);
+    setPendingResetToken('');
     setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
-    setResendCooldown(30);
-    setInfoMsg(`Reset verification code sent to ${result.data.email}.`);
+    setResendCooldown(result.data.cooldownSeconds ?? 30);
+    setInfoMsg(
+      result.data.deliveryMode === 'email'
+        ? `Reset verification code emailed to ${result.data.email}.`
+        : `Reset verification code ready for ${result.data.email}.`
+    );
     navigateView('forgot_verify', true);
   };
 
@@ -333,10 +373,14 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     if (!result.ok) {
       setActiveAction(null);
+      if (result.retryAfterSeconds) {
+        setResendCooldown(result.retryAfterSeconds);
+      }
       setErrorMsg(result.error ?? 'Invalid reset code.');
       return;
     }
 
+    setPendingResetToken(result.data?.resetToken ?? '');
     setActiveAction(null);
     setSuccessAction('forgot_verify');
     await scheduleDelay(450);
@@ -361,7 +405,8 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     const result = await authService.completePasswordReset(
       pendingEmail,
       newPassword,
-      confirmNewPassword
+      confirmNewPassword,
+      pendingResetToken
     );
     if (!mountedRef.current) return;
 
@@ -371,6 +416,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
       return;
     }
 
+    setPendingResetToken('');
     setActiveAction(null);
     setSuccessAction('forgot_save');
     setSigninEmail(result.data.identifier);
