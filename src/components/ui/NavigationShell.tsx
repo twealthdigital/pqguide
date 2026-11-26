@@ -120,10 +120,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [isScrolled, setIsScrolled] = useState(false);
   const [userPopoverOpen, setUserPopoverOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const [uiEditsExpanded, setUiEditsExpanded] = useState(true);
   const [settingsPopoverOpen, setSettingsPopoverOpen] = useState(false);
   const [mobileSettingsExpanded, setMobileSettingsExpanded] = useState(false);
-  const [mobileUiEditsExpanded, setMobileUiEditsExpanded] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem('pqguide:sidebar-collapsed') === '1';
@@ -492,22 +490,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const activeWorkspaceOption =
     workspaceModes.find((m) => m.id === effectiveWorkspace) ?? workspaceModes[0];
 
-  const uiEditOptions: Array<{
-    id: SettingsUiTarget;
-    label: string;
-    icon: React.ReactNode;
-    locked?: boolean;
-  }> = [
-    { id: 'normal_website', label: 'Normal Website', icon: <Globe className="w-3.5 h-3.5 shrink-0" /> },
-    { id: 'uni_admins', label: 'Uni Administrators', icon: <UploadCloud className="w-3.5 h-3.5 shrink-0" /> },
-    {
-      id: 'company_admins',
-      label: 'Company Administrators',
-      icon: <Lock className="w-3.5 h-3.5 shrink-0" />,
-      locked: true,
-    },
-  ];
-
   const onBanner = false;
   const userPopoverVisible = sidebarCollapsed && userPopoverOpen;
   const settingsPopoverVisible = sidebarCollapsed && settingsPopoverOpen;
@@ -608,15 +590,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     onNavigate(defaultScreen);
   };
 
-  const handlePickSettingsTarget = (target: SettingsUiTarget) => {
-    if (onSelectSettingsTarget) {
-      onSelectSettingsTarget(target);
-    } else if (onSelectAdminSection) {
-      onSelectAdminSection('settings');
-    }
-    if (activeScreen !== 'super_admin') {
-      onNavigate('super_admin');
-    }
+  const handleOpenUiEditsPage = () => {
+    handlePickSuperAdminSection('settings');
     setSettingsPopoverOpen(false);
   };
 
@@ -1024,9 +999,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                       setSettingsPopoverOpen((prev) => !prev);
                     } else {
                       setSettingsMenuOpen((prev) => !prev);
-                      if (activeScreen !== 'super_admin' || activeAdminSection !== 'settings') {
-                        handlePickSuperAdminSection('settings');
-                      }
                     }
                   }}
                   aria-expanded={sidebarCollapsed ? settingsPopoverVisible : settingsMenuOpen}
@@ -1034,7 +1006,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   className={`w-full min-h-[44px] rounded-2xl flex items-center text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
                     sidebarCollapsed ? 'justify-center px-0' : 'justify-between px-3'
                   } ${
-                    activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                    sidebarCollapsed &&
+                    activeScreen === 'super_admin' &&
+                    activeAdminSection === 'settings'
                       ? 'bg-[#1D1E23] text-white'
                       : 'bg-[#F6F7F9] text-[#1A1B20] hover:bg-[#ECEEF3]'
                   }`}
@@ -1059,110 +1033,46 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 </button>
               </TooltipBubble>
 
-              {/* Expanded sidebar nested Settings -> UI Edits dropdown */}
+              {/* Expanded sidebar Settings dropdown -> direct UI Edits item (no nested dropdown) */}
               {!sidebarCollapsed && settingsMenuOpen && (
-                <div className="mt-1.5 rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2 space-y-1.5 page-enter">
+                <div className="mt-1.5 rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-1.5 page-enter">
                   <button
                     type="button"
-                    onClick={() => setUiEditsExpanded((prev) => !prev)}
-                    aria-expanded={uiEditsExpanded}
-                    className="w-full min-h-[34px] px-2.5 rounded-xl flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.06em] text-[#505460] hover:bg-white cursor-pointer transition-colors"
+                    onClick={handleOpenUiEditsPage}
+                    className={`w-full min-h-[38px] px-2.5 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                      activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                        ? 'bg-[#1D1E23] text-white'
+                        : 'text-[#3A3D47] hover:bg-white hover:text-[#1A1B20]'
+                    }`}
                   >
-                    <span>UI Edits</span>
-                    <ChevronDown
-                      className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                        uiEditsExpanded ? 'rotate-180' : ''
-                      }`}
-                    />
+                    <Layers className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">UI Edits</span>
                   </button>
-
-                  {uiEditsExpanded && (
-                    <div className="space-y-1 pl-1">
-                      {uiEditOptions.map((opt) => {
-                        const isSelected =
-                          activeScreen === 'super_admin' &&
-                          activeAdminSection === 'settings' &&
-                          settingsTarget === opt.id;
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => handlePickSettingsTarget(opt.id)}
-                            className={`w-full min-h-[36px] px-2.5 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-[#1D1E23] text-white'
-                                : 'text-[#3A3D47] hover:bg-white hover:text-[#1A1B20]'
-                            }`}
-                          >
-                            <span className="flex items-center gap-2 min-w-0">
-                              {opt.icon}
-                              <span className="truncate">{opt.label}</span>
-                            </span>
-                            {opt.locked && (
-                              <span
-                                className={`text-[10px] font-mono-tabular px-1.5 py-0.5 rounded-md shrink-0 ${
-                                  isSelected
-                                    ? 'bg-white/15 text-white'
-                                    : 'bg-[#ECEEF3] text-[#686C78]'
-                                }`}
-                              >
-                                Locked
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
                 </div>
               )}
 
-              {/* Collapsed sidebar pop-out for Settings -> UI Edits */}
+              {/* Collapsed sidebar pop-out for Settings -> direct UI Edits item */}
               {settingsPopoverVisible && (
                 <div
                   role="dialog"
-                  aria-label="Settings UI Edits"
-                  className="absolute bottom-0 left-full ml-[30px] w-64 rounded-2xl bg-white border border-[#1A1B20]/[0.1] shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)] p-3 space-y-2 z-50 page-enter"
+                  aria-label="Settings"
+                  className="absolute bottom-0 left-full ml-[30px] w-52 rounded-2xl bg-white border border-[#1A1B20]/[0.1] shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)] p-2.5 space-y-1.5 z-50 page-enter"
                 >
-                  <p className="px-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
-                    Settings · UI Edits
+                  <p className="px-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                    Settings
                   </p>
-                  <div className="space-y-1">
-                    {uiEditOptions.map((opt) => {
-                      const isSelected =
-                        activeScreen === 'super_admin' &&
-                        activeAdminSection === 'settings' &&
-                        settingsTarget === opt.id;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => handlePickSettingsTarget(opt.id)}
-                          className={`w-full min-h-[38px] px-2.5 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
-                            isSelected
-                              ? 'bg-[#1D1E23] text-white'
-                              : 'text-[#3A3D47] hover:bg-[#F6F7F9] hover:text-[#1A1B20]'
-                          }`}
-                        >
-                          <span className="flex items-center gap-2 min-w-0">
-                            {opt.icon}
-                            <span className="truncate">{opt.label}</span>
-                          </span>
-                          {opt.locked && (
-                            <span
-                              className={`text-[10px] font-mono-tabular px-1.5 py-0.5 rounded-md shrink-0 ${
-                                isSelected
-                                  ? 'bg-white/15 text-white'
-                                  : 'bg-[#ECEEF3] text-[#686C78]'
-                              }`}
-                            >
-                              Locked
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOpenUiEditsPage}
+                    className={`w-full min-h-[38px] px-2.5 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                      activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                        ? 'bg-[#1D1E23] text-white'
+                        : 'text-[#3A3D47] hover:bg-[#F6F7F9] hover:text-[#1A1B20]'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">UI Edits</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -1753,11 +1663,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                       type="button"
                       onClick={() => setMobileSettingsExpanded((prev) => !prev)}
                       aria-expanded={mobileSettingsExpanded}
-                      className={`w-full min-h-[40px] px-3 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
-                        activeScreen === 'super_admin' && activeAdminSection === 'settings'
-                          ? 'bg-white text-[#1D1E23] shadow-xs'
-                          : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
-                      }`}
+                      className="w-full min-h-[40px] px-3 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white"
                     >
                       <span className="flex items-center gap-2.5">
                         <Settings className="w-4 h-4" />
@@ -1771,59 +1677,22 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     </button>
 
                     {mobileSettingsExpanded && (
-                      <div className="rounded-xl bg-white/[0.06] p-1.5 space-y-1">
+                      <div className="rounded-xl bg-white/[0.06] p-1">
                         <button
                           type="button"
-                          onClick={() => setMobileUiEditsExpanded((prev) => !prev)}
-                          aria-expanded={mobileUiEditsExpanded}
-                          className="w-full min-h-[32px] px-2 rounded-lg flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.06em] text-[#A5AAB8] hover:bg-white/[0.08] cursor-pointer"
+                          onClick={() => {
+                            handleOpenUiEditsPage();
+                            setDrawerOpen(false);
+                          }}
+                          className={`w-full min-h-[36px] px-2.5 rounded-lg flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                            activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                              ? 'bg-white text-[#1D1E23]'
+                              : 'text-[#D6DAE4] hover:bg-white/[0.1] hover:text-white'
+                          }`}
                         >
-                          <span>UI Edits</span>
-                          <ChevronDown
-                            className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                              mobileUiEditsExpanded ? 'rotate-180' : ''
-                            }`}
-                          />
+                          <Layers className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">UI Edits</span>
                         </button>
-
-                        {mobileUiEditsExpanded &&
-                          uiEditOptions.map((opt) => {
-                            const isSelected =
-                              activeScreen === 'super_admin' &&
-                              activeAdminSection === 'settings' &&
-                              settingsTarget === opt.id;
-                            return (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() => {
-                                  handlePickSettingsTarget(opt.id);
-                                  setDrawerOpen(false);
-                                }}
-                                className={`w-full min-h-[36px] px-2.5 rounded-lg flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
-                                  isSelected
-                                    ? 'bg-white text-[#1D1E23]'
-                                    : 'text-[#D6DAE4] hover:bg-white/[0.1] hover:text-white'
-                                }`}
-                              >
-                                <span className="flex items-center gap-2 min-w-0">
-                                  {opt.icon}
-                                  <span className="truncate">{opt.label}</span>
-                                </span>
-                                {opt.locked && (
-                                  <span
-                                    className={`text-[10px] font-mono-tabular px-1.5 py-0.5 rounded shrink-0 ${
-                                      isSelected
-                                        ? 'bg-[#ECEEF3] text-[#505460]'
-                                        : 'bg-white/10 text-[#C3C7D2]'
-                                    }`}
-                                  >
-                                    Locked
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          })}
                       </div>
                     )}
                   </div>
