@@ -135,10 +135,18 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
   const submitTimersRef = useRef<number[]>([]);
   const finishedRef = useRef(false);
 
-  // The phone's Back button during an exam asks before leaving (press again to dismiss).
-  useBackHandler(phase === 'exam', () => {
-    if (submitState !== 'idle' || finishedRef.current) return;
-    setConfirm((c) => (c !== null ? null : 'exit'));
+  const [leaving, setLeaving] = useState(false);
+
+  const isExamDialogBlocked = leaving || submitState !== 'idle' || finishedRef.current;
+
+  // Running exam claims device Back to ask before leaving.
+  useBackHandler(phase === 'exam' && confirm === null && !isExamDialogBlocked, () => {
+    setConfirm('exit');
+  });
+
+  // Open confirm dialog box ("Leave exam?" or "Submit exam?") has its own Back step.
+  useBackHandler(phase === 'exam' && confirm !== null && !isExamDialogBlocked, () => {
+    setConfirm(null);
   });
 
   useEffect(() => {
@@ -833,6 +841,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({ onBack, onSubmit
                   variant="dark"
                   size="sm"
                   onClick={() => {
+                    setLeaving(true);
                     setConfirm(null);
                     onBack();
                   }}

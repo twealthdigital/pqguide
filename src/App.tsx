@@ -7,9 +7,8 @@ import type {
   UserRole,
 } from './core/types';
 import {
-  getBackHandlerCount,
-  hasBackHandler,
-  runTopBackHandler,
+  closeBackLayer,
+  getBackLayers,
   subscribeBackHandlers,
 } from './core/navGuard';
 import type { AuthView } from './screens/AuthScreen';
@@ -112,7 +111,7 @@ type PreAuthScreen = 'onboarding' | 'auth';
 
 interface AppHistoryState {
   idx: number;
-  __pqgGuard?: boolean;
+  __pqgLayers?: string[];
   __pqgOut?: PreAuthScreen;
   __pqgStep?: number;
   __pqgAuthView?: AuthView;
@@ -158,11 +157,17 @@ function AppContent() {
   perfRef.current = perf;
 
   const historyIdxRef = useRef(0);
-  const skipGuardRef = useRef(false);
-  const skipGuardTimerRef = useRef<number | null>(null);
-  const ignoreGuardPopRef = useRef(false);
-  const guardTimerRef = useRef<number | null>(null);
-  const guardActiveRef = useRef(false);
+  const pushedLayerIdsRef = useRef<string[]>([]);
+  const poppedByHistoryRef = useRef<Set<string>>(new Set());
+  const supersededLayerIdsRef = useRef<Set<string>>(new Set());
+  const ignorePopToIdxRef = useRef<number | null>(null);
+  const ignorePopTimerRef = useRef<number | null>(null);
+  const pendingReplaceRef = useRef<{
+    targetIdx: number;
+    stateWithoutIdx: Omit<AppHistoryState, 'idx'>;
+  } | null>(null);
+  const pendingPopTimerRef = useRef<number | null>(null);
+  const syncScheduledRef = useRef(false);
   const enteredAuthFromOnboardingRef = useRef(false);
   const authTrailDepthRef = useRef(0);
   const resetCompletedInAuthRef = useRef(false);
@@ -191,44 +196,227 @@ function AppContent() {
 
   const scrollTop = () => window.scrollTo({ top: 0, behavior: 'instant' });
 
-  const buildCurrentState = useCallback((idx: number, guard = false): AppHistoryState => {
-    if (!authRef.current) {
-      const out: PreAuthScreen = hasCompletedOnboardingRef.current ? 'auth' : 'onboarding';
+  const buildStateWithoutIdx = useCallback(
+    (layerIds: string[] = pushedLayerIdsRef.current): Omit<AppHistoryState, 'idx'> => {
+      const layersPatch = layerIds.length > 0 ? { __pqgLayers: [...layerIds] } : {};
+      if (!authRef.current) {
+        const out: PreAuthScreen = hasCompletedOnboardingRef.current ? 'auth' : 'onboarding';
+        return {
+          __pqgOut: out,
+          ...(out === 'onboarding'
+            ? { __pqgStep: onboardingStepRef.current }
+            : { __pqgAuthView: authViewRef.current }),
+          ...layersPatch,
+        };
+      }
       return {
-        __pqgOut: out,
-        ...(out === 'onboarding'
-          ? { __pqgStep: onboardingStepRef.current }
-          : { __pqgAuthView: authViewRef.current }),
-        idx,
-        ...(guard ? { __pqgGuard: true } : {}),
+        nav: navRef.current,
+        perf: perfRef.current,
+        role: archiveRepository.getSnapshot().activeRole,
+        ...layersPatch,
       };
-    }
-    return {
-      nav: navRef.current,
-      perf: perfRef.current,
-      role: archiveRepository.getSnapshot().activeRole,
-      idx,
-      ...(guard ? { __pqgGuard: true } : {}),
-    };
-  }, []);
+    },
+    []
+  );
 
-  const pushHistory = useCallback((stateWithoutIdx: Omit<AppHistoryState, 'idx'>, replace = false) => {
-    const current = window.history.state as AppHistoryState | null;
-    if (replace || current?.__pqgGuard) {
-      guardActiveRef.current = false;
-      window.history.replaceState(
-        { ...stateWithoutIdx, idx: historyIdxRef.current } satisfies AppHistoryState,
-        ''
+  const buildCurrentState = useCallback(
+    (idx: number, layerIds: string[] = pushedLayerIdsRef.current): AppHistoryState => ({
+      ...buildStateWithoutIdx(layerIds),
+      idx,
+    }),
+    [buildStateWithoutIdx]
+  );
+
+  // Every open sheet, dialog box, popover, drawer, filter, or dropdown gets its own
+  // real browser history entry so device Back pops one layer at a time smoothly.
+  const syncLayers = useCallback(() => {
+    const rawLayers = getBackLayers();
+    const rawIdSet = new Set(rawLayers.map((l) => l.id));
+
+    poppedByHistoryRef.current.forEach((id) => {
+      if (!rawIdSet.has(id)) poppedByHistoryRef.current.delete(id);
+    });
+    supersededLayerIdsRef.current.forEach((id) => {
+      if (!rawIdSet.has(id)) supersededLayerIdsRef.current.delete(id);
+    });
+
+    const activeIds = rawLayers
+      .map((l) => l.id)
+      .filter(
+        (id) =>
+          !poppedByHistoryRef.current.has(id) &&
+          !supersededLayerIdsRef.current.has(id)
       );
+
+    const pushed = pushedLayerIdsRef.current;
+
+    if (
+      pushed.length === activeIds.length &&
+      pushed.every((id, i) => id === activeIds[i])
+    ) {
       return;
     }
-    historyIdxRef.current += 1;
-    guardActiveRef.current = false;
-    window.history.pushState(
-      { ...stateWithoutIdx, idx: historyIdxRef.current } satisfies AppHistoryState,
-      ''
-    );
-  }, []);
+
+    // Pure append: push one browser history entry per newly opened overlay/sheet/dialog
+    const isPureAppend =
+      activeIds.length > pushed.length &&
+      pushed.every((id, i) => id === activeIds[i]);
+    if (isPureAppend) {
+      const toAdd = activeIds.slice(pushed.length);
+      for (const id of toAdd) {
+        pushedLayerIdsRef.current = [...pushedLayerIdsRef.current, id];
+        historyIdxRef.current += 1;
+        window.history.pushState(
+          buildCurrentState(historyIdxRef.current, pushedLayerIdsRef.current),
+          ''
+        );
+      }
+      return;
+    }
+
+    // 1-for-1 swap at the top (e.g. Exam guard <-> Confirm dialog box)
+    if (pushed.length > 0 && activeIds.length === pushed.length) {
+      let prefix = 0;
+      while (prefix < pushed.length && pushed[prefix] === activeIds[prefix]) {
+        prefix += 1;
+      }
+      if (prefix === pushed.length - 1) {
+        pushedLayerIdsRef.current = [...activeIds];
+        window.history.replaceState(
+          buildCurrentState(historyIdxRef.current, pushedLayerIdsRef.current),
+          ''
+        );
+        return;
+      }
+    }
+
+    // Programmatic close (X button, backdrop tap, Select item chosen, etc.)
+    let common = 0;
+    while (
+      common < pushed.length &&
+      common < activeIds.length &&
+      pushed[common] === activeIds[common]
+    ) {
+      common += 1;
+    }
+    const removedCount = pushed.length - common;
+    const addedAfter = activeIds.slice(common);
+
+    if (removedCount > 0 && addedAfter.length === 0) {
+      const nextIdx = Math.max(0, historyIdxRef.current - removedCount);
+      historyIdxRef.current = nextIdx;
+      pushedLayerIdsRef.current = pushed.slice(0, common);
+      ignorePopToIdxRef.current = nextIdx;
+      if (ignorePopTimerRef.current !== null) window.clearTimeout(ignorePopTimerRef.current);
+      ignorePopTimerRef.current = window.setTimeout(() => {
+        ignorePopToIdxRef.current = null;
+        ignorePopTimerRef.current = null;
+      }, 400);
+      if (removedCount === 1) {
+        window.history.back();
+      } else {
+        window.history.go(-removedCount);
+      }
+      return;
+    }
+
+    if (removedCount > 0 && addedAfter.length > 0) {
+      const deltaBack = removedCount - 1;
+      const targetIdx = Math.max(0, historyIdxRef.current - deltaBack);
+      const nextLayers = [...pushed.slice(0, common), addedAfter[0]];
+      historyIdxRef.current = targetIdx;
+      pushedLayerIdsRef.current = nextLayers;
+      if (deltaBack === 0) {
+        window.history.replaceState(buildCurrentState(targetIdx, nextLayers), '');
+      } else {
+        pendingReplaceRef.current = {
+          targetIdx,
+          stateWithoutIdx: buildStateWithoutIdx(nextLayers),
+        };
+        if (pendingPopTimerRef.current !== null) window.clearTimeout(pendingPopTimerRef.current);
+        pendingPopTimerRef.current = window.setTimeout(() => {
+          pendingReplaceRef.current = null;
+          pendingPopTimerRef.current = null;
+        }, 400);
+        window.history.go(-deltaBack);
+      }
+    }
+  }, [buildCurrentState, buildStateWithoutIdx]);
+
+  useEffect(() => {
+    const scheduleSync = () => {
+      if (syncScheduledRef.current) return;
+      syncScheduledRef.current = true;
+      queueMicrotask(() => {
+        syncScheduledRef.current = false;
+        syncLayers();
+      });
+    };
+    scheduleSync();
+    return subscribeBackHandlers(scheduleSync);
+  }, [syncLayers]);
+
+  const pushHistory = useCallback(
+    (stateWithoutIdx: Omit<AppHistoryState, 'idx'>, replace = false) => {
+      const pushed = pushedLayerIdsRef.current;
+      const k = pushed.length;
+      pushed.forEach((id) => supersededLayerIdsRef.current.add(id));
+      pushedLayerIdsRef.current = [];
+
+      if (replace) {
+        if (k === 0) {
+          window.history.replaceState(
+            { ...stateWithoutIdx, idx: historyIdxRef.current } satisfies AppHistoryState,
+            ''
+          );
+          return;
+        }
+        const targetIdx = Math.max(0, historyIdxRef.current - k);
+        historyIdxRef.current = targetIdx;
+        pendingReplaceRef.current = { targetIdx, stateWithoutIdx };
+        if (pendingPopTimerRef.current !== null) window.clearTimeout(pendingPopTimerRef.current);
+        pendingPopTimerRef.current = window.setTimeout(() => {
+          pendingReplaceRef.current = null;
+          pendingPopTimerRef.current = null;
+        }, 400);
+        if (k === 1) {
+          window.history.back();
+        } else {
+          window.history.go(-k);
+        }
+        return;
+      }
+
+      if (k === 0) {
+        historyIdxRef.current += 1;
+        window.history.pushState(
+          { ...stateWithoutIdx, idx: historyIdxRef.current } satisfies AppHistoryState,
+          ''
+        );
+        return;
+      }
+
+      if (k === 1) {
+        // Reuse the single open overlay's slot synchronously so Back returns straight to the page behind it.
+        window.history.replaceState(
+          { ...stateWithoutIdx, idx: historyIdxRef.current } satisfies AppHistoryState,
+          ''
+        );
+        return;
+      }
+
+      const targetIdx = Math.max(1, historyIdxRef.current - k + 1);
+      historyIdxRef.current = targetIdx;
+      pendingReplaceRef.current = { targetIdx, stateWithoutIdx };
+      if (pendingPopTimerRef.current !== null) window.clearTimeout(pendingPopTimerRef.current);
+      pendingPopTimerRef.current = window.setTimeout(() => {
+        pendingReplaceRef.current = null;
+        pendingPopTimerRef.current = null;
+      }, 400);
+      window.history.go(-(k - 1));
+    },
+    []
+  );
 
   // Every move to a new screen or Performance sub-view adds a browser-history entry,
   // so the phone's Back button / gesture walks back through the same views.
@@ -248,39 +436,21 @@ function AppContent() {
     [pushHistory]
   );
 
-  // Keep a guard entry armed whenever an overlay/dropdown opens at the root (idx === 0)
-  // so pressing hardware/gesture Back closes the overlay instead of exiting the app.
   useEffect(() => {
-    const syncRootGuard = () => {
-      const count = getBackHandlerCount();
-      const st = window.history.state as AppHistoryState | null;
-      if (count > 0 && historyIdxRef.current === 0 && !st?.__pqgGuard) {
-        historyIdxRef.current = 1;
-        guardActiveRef.current = true;
-        window.history.pushState(buildCurrentState(1, true), '');
-      } else if (count === 0 && st?.__pqgGuard) {
-        guardActiveRef.current = false;
-        ignoreGuardPopRef.current = true;
-        if (guardTimerRef.current !== null) window.clearTimeout(guardTimerRef.current);
-        guardTimerRef.current = window.setTimeout(() => {
-          ignoreGuardPopRef.current = false;
-          guardTimerRef.current = null;
-        }, 300);
-        window.history.back();
-      }
-    };
-    syncRootGuard();
-    return subscribeBackHandlers(syncRootGuard);
-  }, [buildCurrentState]);
+    getBackLayers().forEach((l) => supersededLayerIdsRef.current.add(l.id));
+    pushedLayerIdsRef.current = [];
+    poppedByHistoryRef.current.clear();
+    ignorePopToIdxRef.current = null;
+    pendingReplaceRef.current = null;
 
-  useEffect(() => {
     if (authenticatedStudent) {
       const existing = window.history.state as AppHistoryState | null;
-      historyIdxRef.current =
-        existing && !existing.__pqgOut && !existing.__pqgGuard && typeof existing.idx === 'number'
-          ? existing.idx
-          : 0;
-      guardActiveRef.current = false;
+      const hasValidSignedInRoot =
+        existing &&
+        !existing.__pqgOut &&
+        !(existing.__pqgLayers && existing.__pqgLayers.length > 0) &&
+        typeof existing.idx === 'number';
+      historyIdxRef.current = hasValidSignedInRoot ? existing.idx : 0;
       navRef.current = INITIAL_NAV;
       perfRef.current = INITIAL_PERF;
       setNav(INITIAL_NAV);
@@ -296,7 +466,6 @@ function AppContent() {
       );
     } else {
       historyIdxRef.current = 0;
-      guardActiveRef.current = false;
       enteredAuthFromOnboardingRef.current = false;
       authTrailDepthRef.current = 0;
       resetCompletedInAuthRef.current = false;
@@ -327,8 +496,8 @@ function AppContent() {
 
   useEffect(() => {
     return () => {
-      if (guardTimerRef.current !== null) window.clearTimeout(guardTimerRef.current);
-      if (skipGuardTimerRef.current !== null) window.clearTimeout(skipGuardTimerRef.current);
+      if (ignorePopTimerRef.current !== null) window.clearTimeout(ignorePopTimerRef.current);
+      if (pendingPopTimerRef.current !== null) window.clearTimeout(pendingPopTimerRef.current);
     };
   }, []);
 
@@ -337,52 +506,71 @@ function AppContent() {
       const st = event.state as AppHistoryState | null;
       const idx = typeof st?.idx === 'number' ? st.idx : 0;
 
-      if (ignoreGuardPopRef.current) {
-        ignoreGuardPopRef.current = false;
-        if (guardTimerRef.current !== null) {
-          window.clearTimeout(guardTimerRef.current);
-          guardTimerRef.current = null;
-        }
-        guardActiveRef.current = false;
-        historyIdxRef.current = idx;
-        if (!authRef.current && st?.nav) {
-          historyIdxRef.current = 0;
-          window.history.replaceState(buildCurrentState(0, false), '');
+      if (pendingReplaceRef.current) {
+        if (idx <= pendingReplaceRef.current.targetIdx) {
+          const pending = pendingReplaceRef.current;
+          pendingReplaceRef.current = null;
+          if (pendingPopTimerRef.current !== null) {
+            window.clearTimeout(pendingPopTimerRef.current);
+            pendingPopTimerRef.current = null;
+          }
+          historyIdxRef.current = idx;
+          window.history.replaceState(
+            { ...pending.stateWithoutIdx, idx } satisfies AppHistoryState,
+            ''
+          );
         }
         return;
       }
 
-      // An open sheet / drawer / menu / dropdown / running exam takes the Back press first:
-      // stay on this screen and let it close (or ask to confirm).
-      if (skipGuardRef.current) {
-        skipGuardRef.current = false;
-        if (skipGuardTimerRef.current !== null) {
-          window.clearTimeout(skipGuardTimerRef.current);
-          skipGuardTimerRef.current = null;
+      if (ignorePopToIdxRef.current !== null) {
+        if (idx <= ignorePopToIdxRef.current) {
+          ignorePopToIdxRef.current = null;
+          if (ignorePopTimerRef.current !== null) {
+            window.clearTimeout(ignorePopTimerRef.current);
+            ignorePopTimerRef.current = null;
+          }
+          historyIdxRef.current = idx;
+          if (!authRef.current && st?.nav) {
+            historyIdxRef.current = 0;
+            window.history.replaceState(buildCurrentState(0, []), '');
+          }
         }
-      } else if (hasBackHandler()) {
-        const keepRootGuard = guardActiveRef.current;
-        historyIdxRef.current = idx + 1;
-        window.history.pushState(buildCurrentState(historyIdxRef.current, keepRootGuard), '');
-        runTopBackHandler();
         return;
       }
 
-      guardActiveRef.current = Boolean(st?.__pqgGuard);
+      const targetLayers = st?.__pqgLayers ?? [];
+      const currentPushed = pushedLayerIdsRef.current;
+      const layersPopped = currentPushed.filter((id) => !targetLayers.includes(id));
+
       historyIdxRef.current = idx;
+      if (layersPopped.length > 0) {
+        pushedLayerIdsRef.current = currentPushed.filter((id) => targetLayers.includes(id));
+        for (let i = layersPopped.length - 1; i >= 0; i--) {
+          const id = layersPopped[i];
+          poppedByHistoryRef.current.add(id);
+          closeBackLayer(id);
+        }
+      } else {
+        pushedLayerIdsRef.current = [...targetLayers];
+      }
 
       if (!authRef.current) {
         if (st?.__pqgOut === 'onboarding') {
           const nextStep = typeof st.__pqgStep === 'number' ? st.__pqgStep : 0;
+          const screenChanged =
+            hasCompletedOnboardingRef.current || onboardingStepRef.current !== nextStep;
           authService.setOnboardingCompleted(false);
           hasCompletedOnboardingRef.current = false;
           onboardingStepRef.current = nextStep;
           authTrailDepthRef.current = 0;
           setHasCompletedOnboarding(false);
           setOnboardingStep(nextStep);
-          scrollTop();
+          if (screenChanged && layersPopped.length === 0) scrollTop();
         } else if (st?.__pqgOut === 'auth') {
           const nextView = st.__pqgAuthView ?? 'signin';
+          const screenChanged =
+            !hasCompletedOnboardingRef.current || authViewRef.current !== nextView;
           authService.setOnboardingCompleted(true);
           hasCompletedOnboardingRef.current = true;
           authViewRef.current = nextView;
@@ -393,18 +581,18 @@ function AppContent() {
           }
           setHasCompletedOnboarding(true);
           setAuthView(nextView);
-          scrollTop();
+          if (screenChanged && layersPopped.length === 0) scrollTop();
         } else if (st?.nav) {
-          // Stale signed-in entry reached after sign-out: keep user on signed-out screen.
           historyIdxRef.current = 0;
-          window.history.replaceState(buildCurrentState(0, false), '');
+          pushedLayerIdsRef.current = [];
+          window.history.replaceState(buildCurrentState(0, []), '');
         }
         return;
       }
 
       if (st?.__pqgOut) {
-        // Stale pre-auth entry popped while signed in: keep user cleanly at Home.
         historyIdxRef.current = 0;
+        pushedLayerIdsRef.current = [];
         navRef.current = INITIAL_NAV;
         perfRef.current = INITIAL_PERF;
         setNav(INITIAL_NAV);
@@ -428,26 +616,25 @@ function AppContent() {
 
       const nextNav = st?.nav ?? INITIAL_NAV;
       const nextPerf = st?.perf ?? INITIAL_PERF;
+      const navOrPerfChanged =
+        navRef.current.screen !== nextNav.screen ||
+        navRef.current.docId !== nextNav.docId ||
+        navRef.current.materialId !== nextNav.materialId ||
+        perfRef.current.view !== nextPerf.view ||
+        perfRef.current.selectedId !== nextPerf.selectedId;
+
       navRef.current = nextNav;
       perfRef.current = nextPerf;
       setNav(nextNav);
       setPerf(nextPerf);
-      scrollTop();
+      if (navOrPerfChanged && layersPopped.length === 0) {
+        scrollTop();
+      }
     };
 
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, [buildCurrentState]);
-
-  const popBypassingGuard = useCallback(() => {
-    skipGuardRef.current = true;
-    if (skipGuardTimerRef.current !== null) window.clearTimeout(skipGuardTimerRef.current);
-    skipGuardTimerRef.current = window.setTimeout(() => {
-      skipGuardRef.current = false;
-      skipGuardTimerRef.current = null;
-    }, 600);
-    window.history.back();
-  }, []);
 
   // Tabs reset the trail. Alerts (opened from the bell) and Practice Exam remember where you were.
   const handleNavigate = useCallback(
@@ -476,10 +663,22 @@ function AppContent() {
 
   // Back goes to exactly where the person came from (home if there is no trail).
   const handleBack = useCallback(() => {
-    if (historyIdxRef.current > 0) {
-      popBypassingGuard();
+    const pushed = pushedLayerIdsRef.current;
+    const k = pushed.length;
+    const baseIdx = Math.max(0, historyIdxRef.current - k);
+    pushed.forEach((id) => supersededLayerIdsRef.current.add(id));
+    pushedLayerIdsRef.current = [];
+
+    if (baseIdx > 0) {
+      const steps = k + 1;
+      if (steps === 1) {
+        window.history.back();
+      } else {
+        window.history.go(-steps);
+      }
       return;
     }
+
     const prev = navRef.current;
     const last = prev.stack[prev.stack.length - 1];
     const next: NavState = last
@@ -489,8 +688,30 @@ function AppContent() {
     perfRef.current = INITIAL_PERF;
     setNav(next);
     setPerf(INITIAL_PERF);
+
+    if (k > 0) {
+      historyIdxRef.current = 0;
+      pendingReplaceRef.current = {
+        targetIdx: 0,
+        stateWithoutIdx: {
+          nav: next,
+          perf: INITIAL_PERF,
+          role: archiveRepository.getSnapshot().activeRole,
+        },
+      };
+      if (pendingPopTimerRef.current !== null) window.clearTimeout(pendingPopTimerRef.current);
+      pendingPopTimerRef.current = window.setTimeout(() => {
+        pendingReplaceRef.current = null;
+        pendingPopTimerRef.current = null;
+      }, 400);
+      if (k === 1) {
+        window.history.back();
+      } else {
+        window.history.go(-k);
+      }
+    }
     scrollTop();
-  }, [popBypassingGuard]);
+  }, []);
 
   const handleOpenDocument = useCallback(
     (doc: PastQuestionDoc) => {
@@ -529,8 +750,8 @@ function AppContent() {
   }, [go]);
 
   const handleExamSubmitted = useCallback(() => {
-    // Replace the mock_exam entry so pressing Back from Performance returns
-    // to where the exam was opened from, never back into the submitted exam.
+    // Replace the mock_exam entry (and any open exam/confirm layer) so pressing Back
+    // from Performance returns to where the exam was opened from, never back into it.
     const nextNav: NavState = { ...navRef.current, screen: 'performance', stack: [] };
     navRef.current = nextNav;
     perfRef.current = INITIAL_PERF;
@@ -559,14 +780,26 @@ function AppContent() {
   }, [go]);
 
   const handlePerfBackView = useCallback(() => {
-    if (historyIdxRef.current > 0) {
-      popBypassingGuard();
+    const pushed = pushedLayerIdsRef.current;
+    const k = pushed.length;
+    const baseIdx = Math.max(0, historyIdxRef.current - k);
+    pushed.forEach((id) => supersededLayerIdsRef.current.add(id));
+    pushedLayerIdsRef.current = [];
+
+    if (baseIdx > 0) {
+      const steps = k + 1;
+      if (steps === 1) {
+        window.history.back();
+      } else {
+        window.history.go(-steps);
+      }
       return;
     }
+
     perfRef.current = INITIAL_PERF;
     setPerf(INITIAL_PERF);
     scrollTop();
-  }, [popBypassingGuard]);
+  }, []);
 
   const handlePerfViewList = useCallback(() => {
     if (perfRef.current.view === 'list') return;
@@ -585,8 +818,15 @@ function AppContent() {
   );
 
   const handleOnboardingBackStep = useCallback(() => {
-    if (historyIdxRef.current > 0) {
-      popBypassingGuard();
+    const pushed = pushedLayerIdsRef.current;
+    const k = pushed.length;
+    const baseIdx = Math.max(0, historyIdxRef.current - k);
+    if (baseIdx > 0) {
+      pushed.forEach((id) => supersededLayerIdsRef.current.add(id));
+      pushedLayerIdsRef.current = [];
+      const steps = k + 1;
+      if (steps === 1) window.history.back();
+      else window.history.go(-steps);
       return;
     }
     const nextStep = Math.max(0, onboardingStepRef.current - 1);
@@ -594,7 +834,7 @@ function AppContent() {
     setOnboardingStep(nextStep);
     pushHistory({ __pqgOut: 'onboarding', __pqgStep: nextStep }, true);
     scrollTop();
-  }, [popBypassingGuard, pushHistory]);
+  }, [pushHistory]);
 
   const handleOnboardingComplete = useCallback(() => {
     authService.setOnboardingCompleted(true);
@@ -629,9 +869,16 @@ function AppContent() {
 
   const handleAuthBack = useCallback(
     (fallbackView: AuthView) => {
-      if (authTrailDepthRef.current > 0 && historyIdxRef.current > 0) {
+      const pushed = pushedLayerIdsRef.current;
+      const k = pushed.length;
+      const baseIdx = Math.max(0, historyIdxRef.current - k);
+      if (authTrailDepthRef.current > 0 && baseIdx > 0) {
         authTrailDepthRef.current -= 1;
-        popBypassingGuard();
+        pushed.forEach((id) => supersededLayerIdsRef.current.add(id));
+        pushedLayerIdsRef.current = [];
+        const steps = k + 1;
+        if (steps === 1) window.history.back();
+        else window.history.go(-steps);
         return;
       }
       authTrailDepthRef.current = 0;
@@ -640,17 +887,24 @@ function AppContent() {
       pushHistory({ __pqgOut: 'auth', __pqgAuthView: fallbackView }, true);
       scrollTop();
     },
-    [popBypassingGuard, pushHistory]
+    [pushHistory]
   );
 
   const handleBackToOnboarding = useCallback(() => {
+    const pushed = pushedLayerIdsRef.current;
+    const k = pushed.length;
+    const baseIdx = Math.max(0, historyIdxRef.current - k);
     if (
       enteredAuthFromOnboardingRef.current &&
       authTrailDepthRef.current === 0 &&
       !resetCompletedInAuthRef.current &&
-      historyIdxRef.current > 0
+      baseIdx > 0
     ) {
-      popBypassingGuard();
+      pushed.forEach((id) => supersededLayerIdsRef.current.add(id));
+      pushedLayerIdsRef.current = [];
+      const steps = k + 1;
+      if (steps === 1) window.history.back();
+      else window.history.go(-steps);
       return;
     }
     authService.setOnboardingCompleted(false);
@@ -661,7 +915,7 @@ function AppContent() {
     setOnboardingStep(2);
     pushHistory({ __pqgOut: 'onboarding', __pqgStep: 2 });
     scrollTop();
-  }, [popBypassingGuard, pushHistory]);
+  }, [pushHistory]);
 
   const handleSignOut = useCallback(() => {
     authService.clearActiveSession();

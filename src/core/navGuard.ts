@@ -1,28 +1,44 @@
 import { useEffect, useRef } from 'react';
 
 /**
- * Lets an open overlay (answer sheet, drawer, filter dropdown, select menu,
- * running exam...) claim the phone's Back button. While one is registered,
- * pressing Back runs its handler instead of leaving the screen.
+ * Lets each open overlay (answer sheet, confirm dialog, drawer, filter dropdown,
+ * select menu, running exam...) claim its own Back layer in exact stack order.
+ * Pressing device Back closes the topmost layer first, then returns down the page trail.
  */
-type BackHandler = () => void;
+export type BackHandler = () => void;
+
+export interface BackLayer {
+  id: string;
+  close: () => void;
+}
+
 type Listener = () => void;
 
-const handlers: BackHandler[] = [];
+let nextLayerSeq = 1;
+const layers: BackLayer[] = [];
 const listeners = new Set<Listener>();
 
 const notify = () => {
   listeners.forEach((l) => l());
 };
 
-export const hasBackHandler = (): boolean => handlers.length > 0;
+export const getBackLayers = (): readonly BackLayer[] => layers;
 
-export const getBackHandlerCount = (): number => handlers.length;
+export const hasBackHandler = (): boolean => layers.length > 0;
+
+export const getBackHandlerCount = (): number => layers.length;
+
+export const closeBackLayer = (id: string): boolean => {
+  const layer = layers.find((l) => l.id === id);
+  if (!layer) return false;
+  layer.close();
+  return true;
+};
 
 export const runTopBackHandler = (): boolean => {
-  const top = handlers[handlers.length - 1];
+  const top = layers[layers.length - 1];
   if (!top) return false;
-  top();
+  top.close();
   return true;
 };
 
@@ -39,12 +55,15 @@ export const useBackHandler = (active: boolean, handler: BackHandler): void => {
 
   useEffect(() => {
     if (!active) return;
-    const fn: BackHandler = () => handlerRef.current();
-    handlers.push(fn);
+    const layer: BackLayer = {
+      id: `layer-${nextLayerSeq++}`,
+      close: () => handlerRef.current(),
+    };
+    layers.push(layer);
     notify();
     return () => {
-      const i = handlers.lastIndexOf(fn);
-      if (i >= 0) handlers.splice(i, 1);
+      const i = layers.findIndex((l) => l.id === layer.id);
+      if (i >= 0) layers.splice(i, 1);
       notify();
     };
   }, [active]);
