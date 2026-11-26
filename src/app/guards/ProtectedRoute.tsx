@@ -7,7 +7,7 @@ import {
   isActiveAccount,
   type Permission,
 } from '../../core/permissions';
-import type { AppScreen, AuthenticatedUser } from '../../core/types';
+import type { AppScreen, AuthenticatedUser, WorkspaceViewMode } from '../../core/types';
 import { SurfaceCard } from '../../components/ui/SurfaceCard';
 import { TactileButton } from '../../components/ui/TactileButton';
 
@@ -15,6 +15,7 @@ interface ProtectedRouteProps {
   user: AuthenticatedUser | null;
   screen?: AppScreen;
   requiredPermission?: Permission;
+  workspaceMode?: WorkspaceViewMode;
   onFallbackNavigate: (screen: AppScreen) => void;
   children: React.ReactNode;
 }
@@ -28,6 +29,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   user,
   screen,
   requiredPermission,
+  workspaceMode,
   onFallbackNavigate,
   children,
 }) => {
@@ -37,7 +39,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     active && (!requiredPermission || hasPermission(user, requiredPermission));
 
   if (!active || !screenAllowed || !permissionAllowed) {
-    const safeHome = user ? getDefaultScreenForRole(user.role) : 'home';
+    const safeHome = user ? getDefaultScreenForRole(user.role, workspaceMode) : 'home';
     return (
       <div className="max-w-lg mx-auto py-8 page-enter">
         <SurfaceCard tone="white" className="p-6 sm:p-8 text-center space-y-4">

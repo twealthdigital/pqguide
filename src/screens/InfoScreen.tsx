@@ -29,6 +29,7 @@ export type InfoPage = 'about' | 'services' | 'help' | 'support';
 
 interface InfoScreenProps {
   page: InfoPage;
+  restrictedAdminView?: boolean;
   onNavigate: (screen: AppScreen) => void;
 }
 
@@ -117,50 +118,55 @@ const AboutPage: React.FC = () => (
   </div>
 );
 
-const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavigate }) => (
+const ServicesPage: React.FC<{
+  onNavigate: (s: AppScreen) => void;
+  restrictedAdminView?: boolean;
+}> = ({ onNavigate, restrictedAdminView = false }) => (
   <div className="space-y-4">
     <FeatureRow
       icon={<Search className="w-5 h-5" />}
       title="Past questions home"
       text="Find past questions by course code, keyword, session, semester and level."
-      action={{ label: 'Open Home', onClick: () => onNavigate('home') }}
+      action={!restrictedAdminView ? { label: 'Open Home', onClick: () => onNavigate('home') } : undefined}
     />
     <FeatureRow
       icon={<FileText className="w-5 h-5" />}
       title="Worked answers"
       text="Open a past question, then tap View answer under a question to see how it is solved."
-      action={{ label: 'Browse past questions', onClick: () => onNavigate('past_questions') }}
+      action={!restrictedAdminView ? { label: 'Browse past questions', onClick: () => onNavigate('past_questions') } : undefined}
     />
     <FeatureRow
       icon={<ClipboardCheck className="w-5 h-5" />}
       title="Practice exams"
       text="Choose OBJ Paper, Theory Paper, True / False, or CBT (one question at a time). Set custom question counts and exam timers, tap Suggest for topics, and submit to record your attempt."
-      action={{ label: 'Start a practice exam', onClick: () => onNavigate('mock_exam') }}
+      action={!restrictedAdminView ? { label: 'Start a practice exam', onClick: () => onNavigate('mock_exam') } : undefined}
     />
     <FeatureRow
       icon={<BarChart3 className="w-5 h-5" />}
       title="Performance & overall rating"
       text="Review every submitted exam, inspect the questions you took and answers you missed, and open Check overall rating to see your combined score out of 100%."
-      action={{ label: 'Open Performance', onClick: () => onNavigate('performance') }}
+      action={!restrictedAdminView ? { label: 'Open Performance', onClick: () => onNavigate('performance') } : undefined}
     />
     <FeatureRow
       icon={<BookOpen className="w-5 h-5" />}
       title="Reading guides"
       text="Free study notes to help you prepare for your exams."
-      action={{ label: 'Open materials', onClick: () => onNavigate('materials') }}
+      action={!restrictedAdminView ? { label: 'Open materials', onClick: () => onNavigate('materials') } : undefined}
     />
     <FeatureRow
       icon={<Bell className="w-5 h-5" />}
       title="Alerts"
-      text="Get notified when new past questions are added to Home."
+      text="Get notified when new past questions and system broadcasts are published."
       action={{ label: 'See alerts', onClick: () => onNavigate('notifications') }}
     />
-    <FeatureRow
-      icon={<Crown className="w-5 h-5" />}
-      title="Subscription plans & AI Scholar"
-      text="View Monthly, Semester, and Yearly plans across Free, Standard Pass, and upcoming AI Scholar (Tier 3) from the side menu."
-      action={{ label: 'View plans', onClick: () => onNavigate('subscription') }}
-    />
+    {!restrictedAdminView && (
+      <FeatureRow
+        icon={<Crown className="w-5 h-5" />}
+        title="Subscription plans & AI Scholar"
+        text="View Monthly, Semester, and Yearly plans across Free, Standard Pass, and upcoming AI Scholar (Tier 3) from the side menu."
+        action={{ label: 'View plans', onClick: () => onNavigate('subscription') }}
+      />
+    )}
     <FeatureRow
       icon={<ScanLine className="w-5 h-5" />}
       title="Scan-to-PDF uploads for schools"
@@ -379,11 +385,18 @@ const FaqItem: React.FC<{
   </details>
 );
 
-const HelpPage: React.FC<{ query: string; onNavigate: (s: AppScreen) => void }> = ({
-  query,
-  onNavigate,
-}) => {
+const HelpPage: React.FC<{
+  query: string;
+  onNavigate: (s: AppScreen) => void;
+  restrictedAdminView?: boolean;
+}> = ({ query, onNavigate, restrictedAdminView = false }) => {
   const needle = query.trim().toLowerCase();
+  const isActionAllowed = (action?: HelpAction) =>
+    action &&
+    (!restrictedAdminView ||
+      action.screen === 'notifications' ||
+      action.screen === 'help' ||
+      action.screen === 'support');
 
   const steps = useMemo(
     () => HOW_IT_WORKS.filter((item) => !needle || matchesQuery(item, needle)),
@@ -415,7 +428,7 @@ const HelpPage: React.FC<{ query: string; onNavigate: (s: AppScreen) => void }> 
                 {steps.map((item, i) => (
                   <StepCard
                     key={item.id}
-                    item={item}
+                    item={{ ...item, action: isActionAllowed(item.action) ? item.action : undefined }}
                     number={needle ? undefined : i + 1}
                     onNavigate={onNavigate}
                   />
@@ -430,7 +443,7 @@ const HelpPage: React.FC<{ query: string; onNavigate: (s: AppScreen) => void }> 
               {faqs.map((item) => (
                 <FaqItem
                   key={item.id}
-                  item={item}
+                  item={{ ...item, action: isActionAllowed(item.action) ? item.action : undefined }}
                   defaultOpen={Boolean(needle)}
                   onNavigate={onNavigate}
                 />
@@ -608,7 +621,11 @@ const SupportPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavig
   );
 };
 
-export const InfoScreen: React.FC<InfoScreenProps> = ({ page, onNavigate }) => {
+export const InfoScreen: React.FC<InfoScreenProps> = ({
+  page,
+  restrictedAdminView = false,
+  onNavigate,
+}) => {
   const header = HEADERS[page];
   const [helpQuery, setHelpQuery] = useState('');
 
@@ -633,8 +650,16 @@ export const InfoScreen: React.FC<InfoScreenProps> = ({ page, onNavigate }) => {
       </DarkHeaderCard>
 
       {page === 'about' && <AboutPage />}
-      {page === 'services' && <ServicesPage onNavigate={onNavigate} />}
-      {page === 'help' && <HelpPage query={helpQuery} onNavigate={onNavigate} />}
+      {page === 'services' && (
+        <ServicesPage onNavigate={onNavigate} restrictedAdminView={restrictedAdminView} />
+      )}
+      {page === 'help' && (
+        <HelpPage
+          query={helpQuery}
+          onNavigate={onNavigate}
+          restrictedAdminView={restrictedAdminView}
+        />
+      )}
       {page === 'support' && <SupportPage onNavigate={onNavigate} />}
     </div>
   );

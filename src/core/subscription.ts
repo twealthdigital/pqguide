@@ -193,6 +193,11 @@ export const subscriptionService = {
     notify();
   },
 
+  activateTier(activeTier: SubscriptionTierId) {
+    currentState = { ...currentState, activeTier };
+    notify();
+  },
+
   hasStandardAccess(): boolean {
     if (FREE_TIER_ENABLED) return true;
     return currentState.activeTier === 'standard' || currentState.activeTier === 'pro_ai';

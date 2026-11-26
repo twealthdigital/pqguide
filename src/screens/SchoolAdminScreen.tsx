@@ -23,18 +23,32 @@ import { CustomSelect, SurfaceCard, TactileButton } from '../components/ui';
 
 interface SchoolAdminScreenProps {
   currentUser: AuthenticatedUser;
+  previewSchoolId?: string;
+  onPreviewSchoolChange?: (schoolId: string) => void;
 }
 
-export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({ currentUser }) => {
+export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
+  currentUser,
+  previewSchoolId,
+  onPreviewSchoolChange,
+}) => {
   const store = useArchiveStore();
+  const isSuperAdminPreview = currentUser.role === 'super_admin';
 
-  const assignedSchool = useMemo(
-    () =>
-      currentUser.assignedSchoolId
-        ? store.schools.find((s) => s.id === currentUser.assignedSchoolId) ?? null
-        : null,
-    [store.schools, currentUser.assignedSchoolId]
-  );
+  const assignedSchool = useMemo(() => {
+    if (isSuperAdminPreview) {
+      return (
+        (previewSchoolId
+          ? store.schools.find((s) => s.id === previewSchoolId)
+          : undefined) ??
+        store.schools[0] ??
+        null
+      );
+    }
+    return currentUser.assignedSchoolId
+      ? store.schools.find((s) => s.id === currentUser.assignedSchoolId) ?? null
+      : null;
+  }, [store.schools, currentUser.assignedSchoolId, isSuperAdminPreview, previewSchoolId]);
 
   const [courseCode, setCourseCode] = useState('');
   const [courseTitle, setCourseTitle] = useState('');
@@ -235,23 +249,42 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({ currentUse
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium text-[#A5AAB8]">
-              School Admin Panel · {assignedSchool.code} Ingestion Desk
+              {isSuperAdminPreview
+                ? `Super Admin View · Inspecting ${assignedSchool.code} School Desk`
+                : `School Admin Panel · ${assignedSchool.code} Ingestion Desk`}
             </p>
             <h1 className="font-display text-2xl sm:text-3xl font-bold text-white mt-1.5">
               Upload &amp; Manage {assignedSchool.code} Past Questions
             </h1>
             <p className="text-sm text-[#B8BCC8] mt-2 max-w-2xl">
-              Your administrator account is scoped strictly to {assignedSchool.name}. Upload PDF, DOCX, TXT, or scanned exam pages to preview, save as draft, or publish.
+              {isSuperAdminPreview
+                ? `You are viewing the School Admin experience for ${assignedSchool.name} while keeping full Super Admin privileges.`
+                : `Your administrator account is scoped strictly to ${assignedSchool.name}. Upload PDF, DOCX, TXT, or scanned exam pages to preview, save as draft, or publish.`}
             </p>
           </div>
 
-          <div className="rounded-2xl bg-white/10 border border-white/15 px-3.5 py-2.5 flex items-center gap-2.5 text-xs text-white shrink-0">
-            <Lock className="w-4 h-4 text-[#C3C7D2] shrink-0" />
-            <div>
-              <p className="font-bold leading-tight">{assignedSchool.code} · {assignedSchool.shortName}</p>
-              <p className="text-[11px] text-[#C3C7D2]">Locked by account policy</p>
+          {isSuperAdminPreview && onPreviewSchoolChange ? (
+            <div className="min-w-[230px] rounded-2xl bg-white p-2.5 text-[#1A1B20] shrink-0">
+              <CustomSelect
+                label="Preview University"
+                size="sm"
+                value={assignedSchool.id}
+                options={store.schools.map((s) => ({
+                  value: s.id,
+                  label: `${s.code} — ${s.shortName}`,
+                }))}
+                onChange={onPreviewSchoolChange}
+              />
             </div>
-          </div>
+          ) : (
+            <div className="rounded-2xl bg-white/10 border border-white/15 px-3.5 py-2.5 flex items-center gap-2.5 text-xs text-white shrink-0">
+              <Lock className="w-4 h-4 text-[#C3C7D2] shrink-0" />
+              <div>
+                <p className="font-bold leading-tight">{assignedSchool.code} · {assignedSchool.shortName}</p>
+                <p className="text-[11px] text-[#C3C7D2]">Locked by account policy</p>
+              </div>
+            </div>
+          )}
         </div>
       </SurfaceCard>
 

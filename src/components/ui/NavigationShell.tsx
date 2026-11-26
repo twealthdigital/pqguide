@@ -6,14 +6,18 @@ import {
   ChevronLeft,
   ClipboardCheck,
   Crown,
+  Eye as PreviewEye,
+  EyeOff as PreviewOff,
   FileText,
   Folder,
+  Globe,
   Headphones,
   HelpCircle,
   Home,
   Info,
   Layers,
   LogOut,
+  Megaphone,
   MoreVertical,
   Search,
   ShieldCheck,
@@ -24,6 +28,8 @@ import {
 import type {
   AppScreen,
   AuthenticatedUser,
+  HeaderMarqueeConfig,
+  WorkspaceViewMode,
 } from '../../core/types';
 import {
   canAccessScreen,
@@ -40,6 +46,9 @@ interface NavigationShellProps {
   activeScreen: AppScreen;
   /** Screen Back returns to; keeps the right tab lit while a paper/guide is open. */
   parentScreen?: AppScreen;
+  workspaceMode?: WorkspaceViewMode;
+  onWorkspaceModeChange?: (mode: WorkspaceViewMode) => void;
+  marquee?: HeaderMarqueeConfig;
   onNavigate: (screen: AppScreen) => void;
   onOpenPaywall: (context?: PaywallContext) => void;
   onQuickFind: () => void;
@@ -59,6 +68,9 @@ function getStudentInitials(fullName: string): string {
 export const NavigationShell: React.FC<NavigationShellProps> = ({
   activeScreen,
   parentScreen = 'home',
+  workspaceMode,
+  onWorkspaceModeChange,
+  marquee,
   onNavigate,
   onOpenPaywall,
   onQuickFind,
@@ -301,7 +313,32 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         ? 'materials'
         : activeScreen;
 
-  const defaultScreen = getDefaultScreenForRole(student.role);
+  const isSuperAdmin = student.role === 'super_admin';
+  const isSchoolAdmin = student.role === 'school_admin';
+  const effectiveWorkspace: WorkspaceViewMode = isSuperAdmin
+    ? workspaceMode ?? 'super_admin'
+    : isSchoolAdmin
+      ? 'school_admin'
+      : 'student';
+  const isAdminWorkspace = effectiveWorkspace !== 'student';
+  const showStudentBottomBar = !isAdminWorkspace;
+  const showSubscriptionCta = !isSchoolAdmin && (!isSuperAdmin || effectiveWorkspace === 'student');
+
+  const showMarquee = Boolean(
+    marquee?.enabled &&
+      marquee.message.trim() &&
+      (marquee.audience === 'all' ||
+        (isAdminWorkspace ? marquee.audience === 'admins' : marquee.audience === 'students'))
+  );
+
+  const marqueeToneClass =
+    marquee?.tone === 'urgent'
+      ? 'bg-[#B91C1C] text-white'
+      : marquee?.tone === 'important'
+        ? 'bg-[#92400E] text-white'
+        : 'bg-[#1D1E23] text-white';
+
+  const defaultScreen = getDefaultScreenForRole(student.role, effectiveWorkspace);
   const roleBadgeLabel =
     student.role === 'school_admin' && student.assignedSchoolCode
       ? `${ROLE_LABELS[student.role]} · ${student.assignedSchoolCode}`
@@ -312,28 +349,66 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     label: string;
     icon: React.ReactNode;
     badge?: number;
-  }> = [
-    ...(student.role === 'super_admin'
-      ? [{ id: 'super_admin' as AppScreen, label: 'Super Admin', icon: <ShieldCheck className="w-5 h-5" /> }]
-      : []),
-    ...(student.role === 'school_admin'
-      ? [{ id: 'school_admin' as AppScreen, label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> }]
-      : []),
-    { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
-    { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
-    { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
-    { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
-    { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
-  ];
+  }> = isSchoolAdmin
+    ? [
+        { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
+        {
+          id: 'notifications',
+          label: 'Notifications',
+          icon: <Bell className="w-5 h-5" />,
+          badge: unreadCount,
+        },
+      ]
+    : isSuperAdmin
+      ? effectiveWorkspace === 'student'
+        ? [
+            { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
+            { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
+            { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
+            { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
+            { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
+          ]
+        : effectiveWorkspace === 'school_admin'
+          ? [
+              { id: 'school_admin', label: 'School Admin Desk', icon: <UploadCloud className="w-5 h-5" /> },
+              {
+                id: 'notifications',
+                label: 'Notifications',
+                icon: <Bell className="w-5 h-5" />,
+                badge: unreadCount,
+              },
+            ]
+          : [
+              { id: 'super_admin', label: 'Super Admin Console', icon: <ShieldCheck className="w-5 h-5" /> },
+              {
+                id: 'notifications',
+                label: 'Notifications',
+                icon: <Bell className="w-5 h-5" />,
+                badge: unreadCount,
+              },
+            ]
+      : [
+          { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
+          { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
+          { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
+          { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
+          { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
+        ];
 
   const navItems = allNavItems.filter((item) => canAccessScreen(student, item.id));
 
-  // Company links: top bar on desktop, side panel on mobile and tablet.
+  // Company / constant links: top bar on desktop, side panel on mobile and tablet.
   const infoLinks: Array<{ id: AppScreen; label: string; icon: React.ReactNode }> = [
     { id: 'about', label: 'About', icon: <Info className="w-5 h-5" /> },
     { id: 'services', label: 'Services', icon: <Layers className="w-5 h-5" /> },
     { id: 'help', label: 'Help', icon: <HelpCircle className="w-5 h-5" /> },
     { id: 'support', label: 'Customer Support', icon: <Headphones className="w-5 h-5" /> },
+  ];
+
+  const workspaceModes: Array<{ id: WorkspaceViewMode; label: string; shortLabel: string; icon: React.ReactNode }> = [
+    { id: 'super_admin', label: 'Super Admin', shortLabel: 'Super Admin', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+    { id: 'school_admin', label: 'School Admin View', shortLabel: 'School Admin', icon: <UploadCloud className="w-3.5 h-3.5" /> },
+    { id: 'student', label: 'Student Website', shortLabel: 'Student Site', icon: <Globe className="w-3.5 h-3.5" /> },
   ];
 
   const onBanner = false;
@@ -428,9 +503,44 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 sidebarCollapsed ? 'max-h-0 opacity-0 mt-0' : 'max-h-6 opacity-100 mt-2'
               }`}
             >
-              University Exam Home
+              {isSchoolAdmin
+                ? `School Admin · ${student.assignedSchoolCode ?? 'AAUA'}`
+                : isSuperAdmin
+                  ? effectiveWorkspace === 'super_admin'
+                    ? 'Super Admin Control'
+                    : effectiveWorkspace === 'school_admin'
+                      ? 'Preview: School Admin'
+                      : 'Preview: Student Site'
+                  : 'University Exam Home'}
             </span>
           </button>
+
+          {/* Super-Admin-Only Workspace View Switcher (Desktop Sidebar) */}
+          {isSuperAdmin && onWorkspaceModeChange && !sidebarCollapsed && (
+            <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] p-1.5 space-y-1">
+              <p className="px-2 pt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                Active Workspace
+              </p>
+              {workspaceModes.map((mode) => {
+                const active = effectiveWorkspace === mode.id;
+                return (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => onWorkspaceModeChange(mode.id)}
+                    className={`w-full min-h-[34px] px-2.5 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                      active
+                        ? 'bg-[#1D1E23] text-white'
+                        : 'text-[#505460] hover:bg-white hover:text-[#1A1B20]'
+                    }`}
+                  >
+                    {mode.icon}
+                    <span className="truncate">{mode.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <nav aria-label="Primary desktop navigation" className="space-y-1.5">
             {navItems.map((item) => {
@@ -471,43 +581,45 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             })}
           </nav>
 
-          {/* Prominent Solid Subscription CTA (Desktop Sidebar) */}
-          <button
-            type="button"
-            onClick={() => onOpenPaywall()}
-            title={sidebarCollapsed ? 'Subscription Plans' : undefined}
-            aria-label="Open subscription plans"
-            className={`w-full rounded-2xl bg-[#1D1E23] text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer ${
-              sidebarCollapsed
-                ? 'min-h-[44px] px-3 py-2.5 flex items-center justify-center'
-                : 'p-3.5 text-left'
-            }`}
-          >
-            <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between gap-2.5'}`}>
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
-                  <Crown className="h-4 w-4" />
-                </span>
-                {!sidebarCollapsed && (
-                  <div className="min-w-0">
-                    <p className="font-display text-xs font-bold text-white truncate">
-                      Subscription Plans
-                    </p>
-                    <p className="text-[11px] text-[#C3C7D2] truncate">
-                      {activeTier === 'standard'
-                        ? 'Standard · Upgrade to AI'
-                        : activeTier === 'pro_ai'
-                          ? 'AI Scholar Preview'
-                          : FREE_TIER_ENABLED
-                            ? 'Free plan · Upgrade anytime'
-                            : 'Unlock full access'}
-                    </p>
-                  </div>
-                )}
+          {/* Prominent Solid Subscription CTA (Hidden on isolated Admin Views) */}
+          {showSubscriptionCta && (
+            <button
+              type="button"
+              onClick={() => onOpenPaywall()}
+              title={sidebarCollapsed ? 'Subscription Plans' : undefined}
+              aria-label="Open subscription plans"
+              className={`w-full rounded-2xl bg-[#1D1E23] text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer ${
+                sidebarCollapsed
+                  ? 'min-h-[44px] px-3 py-2.5 flex items-center justify-center'
+                  : 'p-3.5 text-left'
+              }`}
+            >
+              <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between gap-2.5'}`}>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
+                    <Crown className="h-4 w-4" />
+                  </span>
+                  {!sidebarCollapsed && (
+                    <div className="min-w-0">
+                      <p className="font-display text-xs font-bold text-white truncate">
+                        Subscription Plans
+                      </p>
+                      <p className="text-[11px] text-[#C3C7D2] truncate">
+                        {activeTier === 'standard'
+                          ? 'Standard · Upgrade to AI'
+                          : activeTier === 'pro_ai'
+                            ? 'AI Scholar Preview'
+                            : FREE_TIER_ENABLED
+                              ? 'Free plan · Upgrade anytime'
+                              : 'Unlock full access'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                {!sidebarCollapsed && <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />}
               </div>
-              {!sidebarCollapsed && <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />}
-            </div>
-          </button>
+            </button>
+          )}
         </div>
 
         {/* Verified Account Card & Sign Out (No public role switcher) */}
@@ -701,6 +813,33 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </nav>
 
           <div className="flex items-center gap-2.5 shrink-0">
+            {isSuperAdmin && onWorkspaceModeChange && (
+              <div
+                role="group"
+                aria-label="Super Admin view switcher"
+                className="hidden xl:inline-flex items-center rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-1 gap-1"
+              >
+                {workspaceModes.map((mode) => {
+                  const active = effectiveWorkspace === mode.id;
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => onWorkspaceModeChange(mode.id)}
+                      className={`min-h-[32px] px-2.5 rounded-lg inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer transition-colors ${
+                        active
+                          ? 'bg-[#1D1E23] text-white'
+                          : 'text-[#5A5E6B] hover:text-[#1A1B20]'
+                      }`}
+                    >
+                      {mode.icon}
+                      <span>{mode.shortLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => onNavigate('notifications')}
@@ -732,7 +871,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               type="button"
               aria-haspopup="menu"
               aria-expanded={accountMenuOpen}
-              aria-label="Open student account menu"
+              aria-label="Open account menu"
               onClick={() => setAccountMenuOpen((prev) => !prev)}
               className={`min-h-[40px] px-2.5 rounded-xl flex items-center gap-2 border transition-colors cursor-pointer ${
                 accountMenuOpen
@@ -749,6 +888,45 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             </button>
           </div>
         </header>
+
+        {/* Live Super Admin Broadcast Header Marquee (Desktop Top Ribbon) */}
+        {showMarquee && marquee && (
+          <div
+            role="region"
+            aria-label="Platform broadcast notice"
+            className={`hidden lg:flex items-center gap-3 px-8 py-2 text-xs font-semibold overflow-hidden ${marqueeToneClass}`}
+          >
+            <Megaphone className="w-3.5 h-3.5 shrink-0 opacity-90" />
+            <div className="min-w-0 flex-1 overflow-hidden">
+              <div className="animate-marquee-x whitespace-nowrap">
+                {marquee.message}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Super Admin Preview Return Strip */}
+        {isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange && (
+          <div className="hidden lg:flex items-center justify-between gap-4 px-8 py-2 bg-[#ECEEF3] border-b border-[#1A1B20]/[0.08] text-xs">
+            <div className="flex items-center gap-2 font-semibold text-[#1A1B20]">
+              <PreviewEye className="w-3.5 h-3.5 text-[#1D1E23]" />
+              <span>
+                Super Admin Preview Mode:{' '}
+                {effectiveWorkspace === 'school_admin'
+                  ? 'School Admin Interface'
+                  : 'Normal Student Website'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onWorkspaceModeChange('super_admin')}
+              className="px-3 py-1 rounded-lg bg-[#1D1E23] text-white font-semibold hover:bg-[#2B2D35] cursor-pointer inline-flex items-center gap-1.5"
+            >
+              <PreviewOff className="w-3.5 h-3.5" />
+              <span>Back to Super Admin Desk</span>
+            </button>
+          </div>
+        )}
 
         {/* Desktop Student Account Popover */}
         {accountMenuOpen && (
@@ -856,7 +1034,11 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 >
                   <BrandLockup className="h-8 w-auto text-[#1A1B20]" />
                   <span className="block text-xs text-[#686C78] truncate">
-                    University Exam Home
+                    {isSchoolAdmin
+                      ? `School Admin · ${student.assignedSchoolCode ?? 'AAUA'}`
+                      : isSuperAdmin
+                        ? 'Super Admin Workspace'
+                        : 'University Exam Home'}
                   </span>
                 </button>
 
@@ -894,6 +1076,38 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   <p className="text-[#686C78] truncate">{student.email}</p>
                 </div>
               </div>
+
+              {/* Super-Admin-Only Mobile Workspace Switcher */}
+              {isSuperAdmin && onWorkspaceModeChange && (
+                <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] p-2 space-y-1.5">
+                  <p className="px-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                    Switch Workspace View
+                  </p>
+                  <div className="grid grid-cols-1 gap-1">
+                    {workspaceModes.map((mode) => {
+                      const active = effectiveWorkspace === mode.id;
+                      return (
+                        <button
+                          key={mode.id}
+                          type="button"
+                          onClick={() => {
+                            onWorkspaceModeChange(mode.id);
+                            setDrawerOpen(false);
+                          }}
+                          className={`min-h-[38px] px-3 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                            active
+                              ? 'bg-[#1D1E23] text-white'
+                              : 'bg-white text-[#505460] hover:text-[#1A1B20]'
+                          }`}
+                        >
+                          {mode.icon}
+                          <span>{mode.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Primary Navigation Links */}
               <nav aria-label="Mobile drawer navigation" className="space-y-1">
@@ -963,39 +1177,41 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 })}
               </nav>
 
-              {/* Prominent Solid Subscription CTA (Mobile Drawer) */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDrawerOpen(false);
-                    onOpenPaywall();
-                  }}
-                  aria-label="Open subscription plans"
-                  className="w-full rounded-2xl bg-[#1D1E23] p-3.5 text-left text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
-                        <Crown className="h-4 w-4" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="font-display text-sm font-bold text-white truncate">
-                          Subscription Plans
-                        </p>
-                        <p className="text-xs text-[#C3C7D2] truncate">
-                          {activeTier === 'standard'
-                            ? 'Standard · View Tier 3 AI'
-                            : FREE_TIER_ENABLED
-                              ? 'Free plan · View 3 tiers'
-                              : 'Upgrade to continue'}
-                        </p>
+              {/* Prominent Solid Subscription CTA (Mobile Drawer, hidden for isolated Admin views) */}
+              {showSubscriptionCta && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDrawerOpen(false);
+                      onOpenPaywall();
+                    }}
+                    aria-label="Open subscription plans"
+                    className="w-full rounded-2xl bg-[#1D1E23] p-3.5 text-left text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
+                          <Crown className="h-4 w-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="font-display text-sm font-bold text-white truncate">
+                            Subscription Plans
+                          </p>
+                          <p className="text-xs text-[#C3C7D2] truncate">
+                            {activeTier === 'standard'
+                              ? 'Standard · View Tier 3 AI'
+                              : FREE_TIER_ENABLED
+                                ? 'Free plan · View 3 tiers'
+                                : 'Upgrade to continue'}
+                          </p>
+                        </div>
                       </div>
+                      <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />
                     </div>
-                    <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />
-                  </div>
-                </button>
-              </div>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Bottom Controls: Sign Out Only (Role switching removed) */}
@@ -1019,88 +1235,127 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
         {/* Scrollable Content */}
         <main
-          className={`flex-1 w-full mx-auto pb-24 ${
+          className={`flex-1 w-full mx-auto ${showStudentBottomBar ? 'pb-24' : 'pb-10'} ${
             hasBanner
               ? 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-0 lg:pt-8 lg:pb-8'
               : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
           }`}
         >
+          {/* Mobile Marquee Banner & Super Admin Return Bar */}
+          {showMarquee && marquee && (
+            <div
+              role="region"
+              aria-label="Platform broadcast notice"
+              className={`lg:hidden mb-3 rounded-xl px-3.5 py-2 text-xs font-semibold flex items-center gap-2.5 overflow-hidden ${
+                hasBanner ? 'mt-[calc(64px+env(safe-area-inset-top))]' : ''
+              } ${marqueeToneClass}`}
+            >
+              <Megaphone className="w-3.5 h-3.5 shrink-0" />
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <div className="animate-marquee-x whitespace-nowrap">
+                  {marquee.message}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange && (
+            <div
+              className={`lg:hidden mb-3 rounded-xl bg-[#ECEEF3] border border-[#1A1B20]/10 px-3.5 py-2 flex items-center justify-between gap-2 text-xs ${
+                hasBanner && !showMarquee ? 'mt-[calc(64px+env(safe-area-inset-top))]' : ''
+              }`}
+            >
+              <span className="font-semibold text-[#1A1B20] truncate">
+                Preview: {effectiveWorkspace === 'school_admin' ? 'School Admin' : 'Student Site'}
+              </span>
+              <button
+                type="button"
+                onClick={() => onWorkspaceModeChange('super_admin')}
+                className="px-2.5 py-1 rounded-lg bg-[#1D1E23] text-white font-semibold shrink-0 cursor-pointer"
+              >
+                Return to Super Admin
+              </button>
+            </div>
+          )}
+
           {children}
         </main>
       </div>
 
-      {/* Mobile Bottom Tab Footer (<= 15% mobile height) */}
-      <nav
-        aria-label="Mobile bottom navigation"
-        className={`lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#1D1E23] border-t border-white/[0.08] pb-safe transition-transform duration-200 ${
-          keyboardOpen ? 'translate-y-[calc(100%+24px)] pointer-events-none' : ''
-        }`}
-        aria-hidden={keyboardOpen || undefined}
-      >
-        <div className="grid grid-cols-5 items-center h-[52px] max-w-lg mx-auto px-2">
-          <button
-            type="button"
-            onClick={() => onNavigate('home')}
-            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              tabScreen === 'home'
-                ? 'text-white font-semibold'
-                : 'text-[#9CA0AE]'
-            }`}
-          >
-            <Home className="w-5 h-5" />
-            <span className="text-[10px] leading-none">Home</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigate('past_questions')}
-            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              tabScreen === 'past_questions'
-                ? 'text-white font-semibold'
-                : 'text-[#9CA0AE]'
-            }`}
-          >
-            <FileText className="w-5 h-5" />
-            <span className="text-[10px] leading-none">PQs</span>
-          </button>
-
-          {/* Raised Center Tactile Dark Ash Quick Action Button */}
-          <div className="flex items-center justify-center">
+      {/* Mobile Bottom Tab Footer (Student Website Only; strictly hidden for School Admin & Admin Views) */}
+      {showStudentBottomBar && (
+        <nav
+          aria-label="Mobile bottom navigation"
+          className={`lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#1D1E23] border-t border-white/[0.08] pb-safe transition-transform duration-200 ${
+            keyboardOpen ? 'translate-y-[calc(100%+24px)] pointer-events-none' : ''
+          }`}
+          aria-hidden={keyboardOpen || undefined}
+        >
+          <div className="grid grid-cols-5 items-center h-[52px] max-w-lg mx-auto px-2">
             <button
               type="button"
-              onClick={onQuickFind}
-              aria-label="Quick find past question"
-              className="-mt-5 h-12 w-12 rounded-full bg-white text-[#1D1E23] shadow-[0_6px_16px_-4px_rgba(0,0,0,0.5)] flex items-center justify-center ring-4 ring-[#1D1E23] transition-transform duration-150 active:scale-90 cursor-pointer"
+              onClick={() => onNavigate('home')}
+              className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+                tabScreen === 'home'
+                  ? 'text-white font-semibold'
+                  : 'text-[#9CA0AE]'
+              }`}
             >
-              <Search className="w-5 h-5" />
+              <Home className="w-5 h-5" />
+              <span className="text-[10px] leading-none">Home</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('past_questions')}
+              className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+                tabScreen === 'past_questions'
+                  ? 'text-white font-semibold'
+                  : 'text-[#9CA0AE]'
+              }`}
+            >
+              <FileText className="w-5 h-5" />
+              <span className="text-[10px] leading-none">PQs</span>
+            </button>
+
+            {/* Raised Center Tactile Dark Ash Quick Action Button */}
+            <div className="flex items-center justify-center">
+              <button
+                type="button"
+                onClick={onQuickFind}
+                aria-label="Quick find past question"
+                className="-mt-5 h-12 w-12 rounded-full bg-white text-[#1D1E23] shadow-[0_6px_16px_-4px_rgba(0,0,0,0.5)] flex items-center justify-center ring-4 ring-[#1D1E23] transition-transform duration-150 active:scale-90 cursor-pointer"
+              >
+                <Search className="w-5 h-5" />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('materials')}
+              className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+                tabScreen === 'materials'
+                  ? 'text-white font-semibold'
+                  : 'text-[#9CA0AE]'
+              }`}
+            >
+              <Folder className="w-5 h-5" />
+              <span className="text-[10px] leading-none">Materials</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('mock_exam')}
+              className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
+                activeScreen === 'mock_exam' ? 'text-white font-semibold' : 'text-[#9CA0AE]'
+              }`}
+            >
+              <ClipboardCheck className="w-5 h-5" />
+              <span className="text-[10px] leading-none">Exam</span>
             </button>
           </div>
-
-          <button
-            type="button"
-            onClick={() => onNavigate('materials')}
-            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              tabScreen === 'materials'
-                ? 'text-white font-semibold'
-                : 'text-[#9CA0AE]'
-            }`}
-          >
-            <Folder className="w-5 h-5" />
-            <span className="text-[10px] leading-none">Materials</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigate('mock_exam')}
-            className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 cursor-pointer transition-colors ${
-              activeScreen === 'mock_exam' ? 'text-white font-semibold' : 'text-[#9CA0AE]'
-            }`}
-          >
-            <ClipboardCheck className="w-5 h-5" />
-            <span className="text-[10px] leading-none">Exam</span>
-          </button>
-        </div>
-      </nav>
+        </nav>
+      )}
     </div>
   );
 };

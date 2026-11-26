@@ -1,6 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowLeft, Bell, CheckCheck, FileText } from 'lucide-react';
-import type { AppNotification, PastQuestionDoc } from '../core/types';
+import type {
+  AppNotification,
+  PastQuestionDoc,
+  WorkspaceViewMode,
+} from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { archiveRepository } from '../services/archiveRepository';
 import { SurfaceCard } from '../components/ui/SurfaceCard';
@@ -8,11 +12,15 @@ import { TactileButton } from '../components/ui/TactileButton';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 
 interface NotificationsScreenProps {
+  workspaceMode?: WorkspaceViewMode;
+  restrictedAdminView?: boolean;
   onBack: () => void;
   onOpenDocument: (doc: PastQuestionDoc) => void;
 }
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
+  workspaceMode = 'student',
+  restrictedAdminView = false,
   onBack,
   onOpenDocument,
 }) => {
@@ -20,27 +28,29 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const [openedId, setOpenedId] = useState<string | null>(null);
 
+  const scopedNotifications = useMemo(
+    () => archiveRepository.getNotificationsForWorkspace(workspaceMode),
+    [store.notifications, workspaceMode]
+  );
+
   const unreadCount = useMemo(
-    () => store.notifications.filter((n) => !n.isRead).length,
-    [store.notifications]
+    () => scopedNotifications.filter((n) => !n.isRead).length,
+    [scopedNotifications]
   );
 
   const visibleNotifications = useMemo(
     () =>
       filter === 'unread'
-        ? store.notifications.filter((n) => !n.isRead)
-        : store.notifications,
-    [store.notifications, filter]
+        ? scopedNotifications.filter((n) => !n.isRead)
+        : scopedNotifications,
+    [scopedNotifications, filter]
   );
 
   const handleOpenNotification = (notif: AppNotification) => {
-    // Always land on "All" so the message you just opened never vanishes from
-    // under you (Unread drops it the moment it is marked read), and so Back
-    // from the reader returns to the All side.
     setFilter('all');
     setOpenedId(notif.id);
     archiveRepository.markNotificationRead(notif.id);
-    if (notif.targetDocId) {
+    if (!restrictedAdminView && notif.targetDocId) {
       const targetDoc = store.documents.find((d) => d.id === notif.targetDocId);
       if (targetDoc) {
         onOpenDocument(targetDoc);
@@ -67,7 +77,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
               variant="light"
               size="sm"
               icon={<CheckCheck className="w-4 h-4" />}
-              onClick={() => archiveRepository.markAllNotificationsRead()}
+              onClick={() => archiveRepository.markAllNotificationsReadForWorkspace(workspaceMode)}
             >
               Mark all read
             </TactileButton>

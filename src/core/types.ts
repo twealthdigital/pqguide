@@ -4,9 +4,17 @@ export type DocumentSourceType = 'scanned_image' | 'typed_document';
 
 export type UserRole = 'student' | 'school_admin' | 'super_admin';
 
+export type WorkspaceViewMode = 'super_admin' | 'school_admin' | 'student';
+
+export type AuthPortal = 'student' | 'school_admin' | 'super_admin';
+
+export type StudentLevel = '100L' | '200L' | '300L' | '400L' | '500L';
+
 export type AccountStatus = 'active' | 'suspended' | 'revoked';
 
 export type ContentStatus = 'published' | 'draft' | 'review';
+
+export type BroadcastAudience = 'all' | 'students' | 'admins';
 
 export type AppScreen =
   | 'home'
@@ -85,7 +93,7 @@ export interface PastQuestionDoc {
   courseTitle: string;
   department: string;
   faculty: string;
-  level: '100L' | '200L' | '300L' | '400L' | '500L';
+  level: StudentLevel;
   session: string; // e.g. "2023/2024"
   year: number; // e.g. 2024
   semester: SemesterType;
@@ -97,6 +105,7 @@ export interface PastQuestionDoc {
   /** Optional worked answers, index-aligned with `questions` (null = not added yet). */
   solutions?: Array<QuestionSolution | null>;
   uploadedBy: string;
+  uploadedById?: string;
   uploadedAt: string; // ISO string
   updatedAt?: string;
   viewsCount: number;
@@ -108,9 +117,68 @@ export interface AppNotification {
   title: string;
   message: string;
   category: 'upload' | 'access' | 'system';
+  audience?: BroadcastAudience;
   createdAt: string;
   isRead: boolean;
   targetDocId?: string;
+  createdBy?: string;
+}
+
+export interface HeaderMarqueeConfig {
+  enabled: boolean;
+  message: string;
+  audience: BroadcastAudience;
+  tone: 'neutral' | 'important' | 'urgent';
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export type PaymentProvider = 'paystack' | 'flutterwave';
+
+export interface PaymentTransaction {
+  id: string;
+  reference: string;
+  provider: PaymentProvider;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  matricNumber?: string;
+  level?: StudentLevel;
+  tierId: 'standard' | 'pro_ai';
+  tierName: string;
+  billingPeriod: 'monthly' | 'semester' | 'yearly';
+  amountNaira: number;
+  status: 'verified_auto' | 'pending' | 'failed';
+  autoActivated: boolean;
+  createdAt: string;
+  verifiedAt?: string;
+}
+
+export interface UserActivityEvent {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: UserRole;
+  matricNumber?: string;
+  level?: StudentLevel;
+  type:
+    | 'site_visit'
+    | 'signup'
+    | 'login'
+    | 'logout'
+    | 'doc_opened'
+    | 'material_opened'
+    | 'exam_completed'
+    | 'payment_verified';
+  detail: string;
+}
+
+export interface VisitorTelemetry {
+  totalVisits: number;
+  uniqueVisitorIds: string[];
+  lastVisitAt?: string;
 }
 
 export interface ManagedAccount {
@@ -121,6 +189,15 @@ export interface ManagedAccount {
   schoolId?: string;
   schoolCode: string;
   status: AccountStatus;
+  adminVerified?: boolean;
+  needsPasswordSetup?: boolean;
+  level?: StudentLevel;
+  faculty?: string;
+  department?: string;
+  subscriptionTier?: 'free' | 'standard' | 'pro_ai';
+  sessionState?: 'logged_in' | 'logged_out';
+  lastLoginAt?: string;
+  lastLogoutAt?: string;
   lastActiveAt: string;
   createdBy?: string;
   createdAt?: string;
@@ -143,11 +220,14 @@ export interface StudentAccount {
   id: string;
   fullName: string;
   matricNumber: string;
+  level?: StudentLevel;
   faculty: string;
   department: string;
   email: string;
   role: UserRole;
   status: AccountStatus;
+  adminVerified?: boolean;
+  needsPasswordSetup?: boolean;
   assignedSchoolId?: string;
   assignedSchoolCode?: string;
   passwordHash: string;
@@ -174,11 +254,14 @@ export interface ActiveSessionRecord {
 export type AuditActionType =
   | 'super_admin_bootstrapped'
   | 'admin_created'
+  | 'admin_invited'
   | 'admin_updated'
+  | 'admin_verified'
   | 'admin_university_changed'
   | 'admin_suspended'
   | 'admin_reactivated'
   | 'admin_revoked'
+  | 'account_verified'
   | 'account_suspended'
   | 'account_reactivated'
   | 'role_changed'
@@ -195,6 +278,9 @@ export type AuditActionType =
   | 'material_published'
   | 'material_unpublished'
   | 'material_deleted'
+  | 'broadcast_sent'
+  | 'marquee_updated'
+  | 'payment_verified'
   | 'dev_data_reset';
 
 export interface AuditLogEntry {
@@ -205,7 +291,14 @@ export interface AuditLogEntry {
   actorEmail: string;
   actorRole: UserRole;
   action: AuditActionType;
-  targetType: 'account' | 'school' | 'past_question' | 'study_material' | 'system';
+  targetType:
+    | 'account'
+    | 'school'
+    | 'past_question'
+    | 'study_material'
+    | 'broadcast'
+    | 'payment'
+    | 'system';
   targetId: string;
   summary: string;
   schoolId?: string;

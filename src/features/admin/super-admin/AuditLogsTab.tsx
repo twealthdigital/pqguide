@@ -14,16 +14,21 @@ type AuditCategoryFilter =
   | 'school'
   | 'past_question'
   | 'study_material'
+  | 'payment'
+  | 'broadcast'
   | 'system';
 
 const ACTION_LABELS: Record<AuditLogEntry['action'], string> = {
   super_admin_bootstrapped: 'Super Admin Initialized',
   admin_created: 'School Admin Created',
+  admin_invited: 'School Admin Email Access Granted',
   admin_updated: 'School Admin Updated',
+  admin_verified: 'Admin Login Verification Updated',
   admin_university_changed: 'Admin University Changed',
   admin_suspended: 'Admin Suspended',
   admin_reactivated: 'Admin Reactivated',
   admin_revoked: 'Admin Access Revoked',
+  account_verified: 'Student Verification Updated',
   account_suspended: 'Account Suspended',
   account_reactivated: 'Account Reactivated',
   role_changed: 'Role Changed',
@@ -40,6 +45,9 @@ const ACTION_LABELS: Record<AuditLogEntry['action'], string> = {
   material_published: 'Study Material Published',
   material_unpublished: 'Study Material Unpublished',
   material_deleted: 'Study Material Deleted',
+  broadcast_sent: 'Notification Broadcast Sent',
+  marquee_updated: 'Header Marquee Updated',
+  payment_verified: 'Automatic Payment Verified',
   dev_data_reset: 'Dev Data Reset',
 };
 
@@ -67,6 +75,8 @@ export const AuditLogsTab: React.FC<AuditLogsTabProps> = ({ store }) => {
     { id: 'school', label: 'Universities' },
     { id: 'past_question', label: 'Past Questions' },
     { id: 'study_material', label: 'Study Materials' },
+    { id: 'payment', label: 'Payments' },
+    { id: 'broadcast', label: 'Broadcasts' },
     { id: 'system', label: 'System' },
   ];
 

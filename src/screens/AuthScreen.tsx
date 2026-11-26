@@ -10,7 +10,11 @@ import {
   RotateCcw,
   ShieldCheck,
 } from 'lucide-react';
-import type { AuthenticatedUser } from '../core/types';
+import type {
+  AuthenticatedUser,
+  AuthPortal,
+  StudentLevel,
+} from '../core/types';
 import {
   AAUA_FACULTIES,
   authService,
@@ -28,6 +32,8 @@ export type AuthView =
   | 'forgot_request'
   | 'forgot_verify'
   | 'forgot_reset'
+  | 'admin_activate_request'
+  | 'admin_activate_verify'
   | 'dev_super_admin_setup';
 
 type ButtonActionKey =
@@ -38,10 +44,15 @@ type ButtonActionKey =
   | 'forgot_request'
   | 'forgot_verify'
   | 'forgot_save'
+  | 'admin_activate_request'
+  | 'admin_activate_complete'
   | 'dev_bootstrap'
   | 'dev_reset';
 
+const STUDENT_LEVELS: StudentLevel[] = ['100L', '200L', '300L', '400L', '500L'];
+
 interface AuthScreenProps {
+  portal?: AuthPortal;
   view?: AuthView;
   onViewChange?: (next: AuthView, options?: { replace?: boolean }) => void;
   onAuthBack?: (fallbackView: AuthView) => void;
@@ -136,6 +147,7 @@ const OtpCodeInput: React.FC<OtpCodeInputProps> = ({
 };
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({
+  portal = 'student',
   view: controlledView,
   onViewChange,
   onAuthBack,
@@ -162,14 +174,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [showDevResetBox, setShowDevResetBox] = useState(false);
   const [devResetPhrase, setDevResetPhrase] = useState('');
 
-  // Sign In fields (Matric Number or Email)
+  // Sign In fields (Portal-isolated)
   const [signinMatric, setSigninMatric] = useState('');
   const [signinPassword, setSigninPassword] = useState('');
   const [showSigninPassword, setShowSigninPassword] = useState(false);
 
-  // Sign Up fields
+  // Sign Up fields (Student only)
   const [fullName, setFullName] = useState('');
   const [signupMatric, setSignupMatric] = useState('');
+  const [signupLevel, setSignupLevel] = useState<StudentLevel>('100L');
   const [faculty, setFaculty] = useState('');
   const [department, setDepartment] = useState('');
   const [extraFaculties, setExtraFaculties] = useState<string[]>([]);
@@ -179,6 +192,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
+
+  // School Admin email activation fields
+  const [activateEmail, setActivateEmail] = useState('');
+  const [activatePassword, setActivatePassword] = useState('');
+  const [activateConfirmPassword, setActivateConfirmPassword] = useState('');
+  const [showActivatePassword, setShowActivatePassword] = useState(false);
 
   // Verification / Reset OTP state
   const [pendingEmail, setPendingEmail] = useState('');
@@ -368,7 +387,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     await scheduleDelay(450);
     if (!mountedRef.current) return;
 
-    const result = await authService.signinWithIdentifier(
+    const result = await authService.signinWithPortal(
+      portal,
       signinMatric,
       signinPassword
     );
@@ -383,6 +403,68 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setActiveAction(null);
     setSuccessAction('signin');
     await scheduleDelay(500);
+    if (!mountedRef.current) return;
+
+    setSuccessAction(null);
+    onAuthenticated(result.data.account);
+  };
+
+  const handleAdminActivateRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setInfoMsg(null);
+    setActiveAction('admin_activate_request');
+
+    await scheduleDelay(450);
+    if (!mountedRef.current) return;
+
+    const result = authService.startSchoolAdminActivation(activateEmail);
+    if (!result.ok || !result.data) {
+      setActiveAction(null);
+      setErrorMsg(result.error ?? 'Could not verify approved email.');
+      return;
+    }
+
+    setActiveAction(null);
+    setPendingEmail(result.data.email);
+    setPendingCodePreview(result.data.verificationCode);
+    setOtpCode('');
+    setActivatePassword('');
+    setActivateConfirmPassword('');
+    setResendCooldown(30);
+    setInfoMsg(
+      `Approved for ${result.data.schoolCode} (${result.data.fullName}). Enter the 6-digit code and set your password.`
+    );
+    switchView('admin_activate_verify', true);
+  };
+
+  const handleAdminActivateComplete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setActiveAction('admin_activate_complete');
+
+    await scheduleDelay(500);
+    if (!mountedRef.current) return;
+
+    const result = await authService.completeSchoolAdminActivation(
+      pendingEmail,
+      otpCode,
+      activatePassword,
+      activateConfirmPassword
+    );
+    if (!mountedRef.current) return;
+
+    if (!result.ok || !result.data) {
+      setActiveAction(null);
+      setErrorMsg(result.error ?? 'Activation failed.');
+      return;
+    }
+
+    setActiveAction(null);
+    setSuccessAction('admin_activate_complete');
+    await scheduleDelay(550);
     if (!mountedRef.current) return;
 
     setSuccessAction(null);
@@ -460,6 +542,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     const result = await authService.startSignup({
       fullName,
       matricNumber: signupMatric,
+      level: signupLevel,
       faculty: faculty.trim(),
       department: department.trim(),
       email: signupEmail,
@@ -512,7 +595,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     onAuthenticated(result.data.account);
   };
 
-  const handleResendCode = async (purpose: 'signup' | 'reset') => {
+  const handleResendCode = async (purpose: 'signup' | 'reset' | 'admin_activate') => {
     if (isBusy || resendCooldown > 0) return;
     setErrorMsg(null);
     setActiveAction('resend_code');
@@ -551,7 +634,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     await scheduleDelay(550);
     if (!mountedRef.current) return;
 
-    const result = authService.requestPasswordReset(forgotIdentifier);
+    const result = authService.requestPasswordReset(forgotIdentifier, portal);
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -653,7 +736,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
   const viewHeading =
     view === 'signin'
-      ? 'Sign in'
+      ? portal === 'super_admin'
+        ? 'Super Admin Login'
+        : portal === 'school_admin'
+          ? 'School Admin Login'
+          : 'Sign in'
       : view === 'signup'
       ? 'Sign up'
       : view === 'verify_signup'
@@ -662,21 +749,35 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       ? 'Forgot Password'
       : view === 'forgot_verify'
       ? 'Enter Reset Code'
+      : view === 'admin_activate_request'
+      ? 'Activate School Admin'
+      : view === 'admin_activate_verify'
+      ? 'Set Admin Password'
       : view === 'dev_super_admin_setup'
       ? 'Dev Super Admin Setup'
       : 'Set New Password';
 
   const viewSubheading =
     view === 'signin'
-      ? 'Sign in with your matric number or assigned administrator email.'
+      ? portal === 'super_admin'
+        ? 'Restricted platform control console.'
+        : portal === 'school_admin'
+          ? 'Sign in with the university admin email approved by Super Admin.'
+          : 'Sign in with your matric number or registered student email.'
       : view === 'signup'
       ? 'Create your verified student account with your matric number.'
       : view === 'verify_signup'
       ? `Enter the 6-digit verification key sent to ${pendingEmail}.`
       : view === 'forgot_request'
-      ? 'Enter your matric number or email to receive a reset code.'
+      ? portal === 'student'
+        ? 'Enter your matric number or email to receive a reset code.'
+        : 'Enter your registered administrator email to receive a reset code.'
       : view === 'forgot_verify'
       ? `Enter the 6-digit reset code sent to ${pendingEmail}.`
+      : view === 'admin_activate_request'
+      ? 'Enter the email granted School Admin access to confirm ownership and choose your password.'
+      : view === 'admin_activate_verify'
+      ? `Verify the 6-digit code sent to ${pendingEmail} and create your password.`
       : view === 'dev_super_admin_setup'
       ? 'Local development bootstrap for initializing the first Super Admin account.'
       : 'Choose a new password for your account.';
@@ -716,9 +817,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 if (view === 'verify_signup') goBackAuth('signup');
                 else if (view === 'forgot_reset') goBackAuth('forgot_verify');
                 else if (view === 'forgot_verify') goBackAuth('forgot_request');
+                else if (view === 'admin_activate_verify') goBackAuth('admin_activate_request');
                 else if (
                   view === 'signup' ||
                   view === 'forgot_request' ||
+                  view === 'admin_activate_request' ||
                   view === 'dev_super_admin_setup'
                 ) {
                   goBackAuth('signin');
@@ -743,13 +846,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </div>
 
           <p className="mt-3 text-xs lg:text-sm text-[#A5AAB8] max-w-xs leading-relaxed">
-            University past questions indexed by session, semester, faculty, and course code.
+            {portal === 'super_admin'
+              ? 'Platform Governance, University Management, Payments & Broadcasts.'
+              : portal === 'school_admin'
+                ? 'University Examination Desk for verified School Administrators.'
+                : 'University past questions indexed by session, semester, faculty, and course code.'}
           </p>
         </div>
 
         {/* Desktop quiet footer */}
         <div className="hidden lg:block relative z-10 px-12 pb-8 text-xs text-[#7E8392]">
-          Currently open to AAUA students via verified matriculation number.
+          {portal === 'super_admin'
+            ? 'Authorized Super Administrator access only.'
+            : portal === 'school_admin'
+              ? 'Authorized University Administrators only.'
+              : 'Currently open to AAUA students via verified matriculation number.'}
         </div>
       </div>
 
@@ -795,18 +906,28 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     htmlFor="signin-matric"
                     className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
                   >
-                    Matric Number or Email
+                    {portal === 'student'
+                      ? 'Matric Number or Email'
+                      : portal === 'school_admin'
+                        ? 'Approved Admin Email'
+                        : 'Super Admin Email'}
                   </label>
                   <input
                     id="signin-matric"
-                    type="text"
-                    inputMode="text"
+                    type={portal === 'student' ? 'text' : 'email'}
+                    inputMode={portal === 'student' ? 'text' : 'email'}
                     autoCapitalize="none"
                     autoCorrect="off"
                     disabled={isBusy}
                     value={signinMatric}
                     onChange={(e) => setSigninMatric(e.target.value)}
-                    placeholder="e.g. 230404001 or admin@aaua.edu.ng"
+                    placeholder={
+                      portal === 'student'
+                        ? 'e.g. 230404001 or student@aaua.edu.ng'
+                        : portal === 'school_admin'
+                          ? 'coordinator@university.edu.ng'
+                          : 'superadmin@pqguide.local'
+                    }
                     className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                   />
                 </div>
@@ -870,24 +991,44 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     successLabel="Signed in!"
                     disabled={isBusy}
                   >
-                    Login
+                    {portal === 'student' ? 'Login' : 'Sign in to Console'}
                   </TactileButton>
                 </div>
 
-                <p className="text-center text-xs text-[#686C78] pt-2">
-                  New student here?{' '}
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => switchView('signup')}
-                    className="font-bold text-[#1D1E23] underline underline-offset-4 cursor-pointer disabled:opacity-45"
-                  >
-                    Create an account
-                  </button>
-                </p>
+                {portal === 'student' && (
+                  <p className="text-center text-xs text-[#686C78] pt-2">
+                    New student here?{' '}
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => switchView('signup')}
+                      className="font-bold text-[#1D1E23] underline underline-offset-4 cursor-pointer disabled:opacity-45"
+                    >
+                      Create an account
+                    </button>
+                  </p>
+                )}
+
+                {portal === 'school_admin' && (
+                  <p className="text-center text-xs text-[#686C78] pt-2">
+                    Granted email access by Super Admin?{' '}
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setActivateEmail(signinMatric.includes('@') ? signinMatric : '');
+                        switchView('admin_activate_request');
+                      }}
+                      className="font-bold text-[#1D1E23] underline underline-offset-4 cursor-pointer disabled:opacity-45"
+                    >
+                      Activate approved email
+                    </button>
+                  </p>
+                )}
               </form>
 
-              {IS_DEV_BOOTSTRAP_ENV && (
+              {/* Dev Super Admin Bootstrap & Reset strictly restricted to Super Admin Portal */}
+              {portal === 'super_admin' && IS_DEV_BOOTSTRAP_ENV && (
                 <div className="mt-5 pt-4 border-t border-[#1A1B20]/[0.08] space-y-2.5">
                   {devBootstrapAvailable && (
                     <button
@@ -952,8 +1093,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </div>
           )}
 
-          {/* VIEW 2: SIGN UP */}
-          {view === 'signup' && (
+          {/* VIEW 2: SIGN UP (Student Portal Only) */}
+          {view === 'signup' && portal === 'student' && (
             <form onSubmit={handleSignUpSubmit} className="space-y-3.5 page-enter" noValidate>
               <div>
                 <label
@@ -973,36 +1114,60 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 />
               </div>
 
-              <div>
-                <label
-                  htmlFor="signup-matric"
-                  className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
-                >
-                  Matric Number
-                </label>
-                <input
-                  id="signup-matric"
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={9}
-                  disabled={isBusy}
-                  value={signupMatric}
-                  onChange={(e) =>
-                    setSignupMatric(e.target.value.replace(/\D/g, '').slice(0, 9))
-                  }
-                  placeholder="e.g. 230404001"
-                  className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 font-mono-tabular text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
-                />
-                {liveMatricFeedback && (
-                  <p
-                    className={`mt-1 pl-2 text-[11px] ${
-                      liveMatricFeedback.valid ? 'text-[#15803D]' : 'text-[#B91C1C]'
-                    }`}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label
+                    htmlFor="signup-matric"
+                    className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
                   >
-                    {liveMatricFeedback.text}
-                  </p>
-                )}
+                    Matric Number
+                  </label>
+                  <input
+                    id="signup-matric"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={9}
+                    disabled={isBusy}
+                    value={signupMatric}
+                    onChange={(e) =>
+                      setSignupMatric(e.target.value.replace(/\D/g, '').slice(0, 9))
+                    }
+                    placeholder="e.g. 230404001"
+                    className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 font-mono-tabular text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="signup-level"
+                    className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+                  >
+                    Level
+                  </label>
+                  <select
+                    id="signup-level"
+                    disabled={isBusy}
+                    value={signupLevel}
+                    onChange={(e) => setSignupLevel(e.target.value as StudentLevel)}
+                    className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-3.5 text-sm font-mono-tabular text-[#1A1B20] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
+                  >
+                    {STUDENT_LEVELS.map((lvl) => (
+                      <option key={lvl} value={lvl}>
+                        {lvl}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+              {liveMatricFeedback && (
+                <p
+                  className={`-mt-2 pl-2 text-[11px] ${
+                    liveMatricFeedback.valid ? 'text-[#15803D]' : 'text-[#B91C1C]'
+                  }`}
+                >
+                  {liveMatricFeedback.text}
+                </p>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <CreatableSelectInput
@@ -1235,15 +1400,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   htmlFor="forgot-identifier"
                   className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
                 >
-                  Matric Number or Registered Email
+                  {portal === 'student'
+                    ? 'Matric Number or Registered Email'
+                    : 'Registered Administrator Email'}
                 </label>
                 <input
                   id="forgot-identifier"
-                  type="text"
+                  type={portal === 'student' ? 'text' : 'email'}
                   disabled={isBusy}
                   value={forgotIdentifier}
                   onChange={(e) => setForgotIdentifier(e.target.value)}
-                  placeholder="e.g. 230404001 or student@aaua.edu.ng"
+                  placeholder={
+                    portal === 'student'
+                      ? 'e.g. 230404001 or student@aaua.edu.ng'
+                      : 'coordinator@university.edu.ng'
+                  }
                   className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                 />
               </div>
@@ -1350,8 +1521,168 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </form>
           )}
 
-          {/* VIEW 7: DEV-ONLY FIRST SUPER ADMIN BOOTSTRAP */}
-          {view === 'dev_super_admin_setup' && (
+          {/* VIEW 6B: SCHOOL ADMIN FIRST-TIME EMAIL ACTIVATION (REQUEST CODE) */}
+          {view === 'admin_activate_request' && portal === 'school_admin' && (
+            <form onSubmit={handleAdminActivateRequest} className="space-y-4 page-enter" noValidate>
+              <div>
+                <label
+                  htmlFor="activate-admin-email"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+                >
+                  Super-Admin Approved Email
+                </label>
+                <input
+                  id="activate-admin-email"
+                  type="email"
+                  disabled={isBusy}
+                  value={activateEmail}
+                  onChange={(e) => setActivateEmail(e.target.value)}
+                  placeholder="coordinator@university.edu.ng"
+                  className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
+                />
+              </div>
+
+              <TactileButton
+                type="submit"
+                variant="dark"
+                size="lg"
+                fullWidth
+                className="rounded-full"
+                loading={activeAction === 'admin_activate_request'}
+                disabled={isBusy}
+              >
+                Send Activation Code
+              </TactileButton>
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => goBackAuth('signin')}
+                  className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to School Admin Login</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* VIEW 6C: SCHOOL ADMIN FIRST-TIME EMAIL ACTIVATION (VERIFY + SET PASSWORD) */}
+          {view === 'admin_activate_verify' && portal === 'school_admin' && (
+            <form onSubmit={handleAdminActivateComplete} className="space-y-4 page-enter" noValidate>
+              <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-3.5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="h-9 w-9 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center shrink-0">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold text-[#686C78]">
+                      Email Inbox Preview
+                    </p>
+                    <p className="font-mono-tabular text-sm font-bold text-[#1A1B20] truncate">
+                      Code: {pendingCodePreview}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={handleCopyPreviewCode}
+                  className="min-h-[36px] px-3 rounded-xl bg-white border border-[#1A1B20]/10 text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1.5 shrink-0 cursor-pointer hover:bg-[#EFF1F5]"
+                >
+                  {copiedCode ? <Check className="w-3.5 h-3.5 text-[#16A34A]" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedCode ? 'Filled' : 'Auto-fill'}</span>
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#1A1B20] mb-2 pl-1">
+                  Enter 6-Digit Key Code
+                </label>
+                <OtpCodeInput value={otpCode} onChange={setOtpCode} disabled={isBusy} />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="activate-admin-pw"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+                >
+                  Create Password (min. 8 characters)
+                </label>
+                <div className="relative">
+                  <input
+                    id="activate-admin-pw"
+                    type={showActivatePassword ? 'text' : 'password'}
+                    disabled={isBusy}
+                    value={activatePassword}
+                    onChange={(e) => setActivatePassword(e.target.value)}
+                    placeholder="Choose strong password"
+                    className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white pl-4 pr-12 text-sm text-[#1A1B20]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowActivatePassword((s) => !s)}
+                    aria-label={showActivatePassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full flex items-center justify-center text-[#686C78] hover:text-[#1A1B20] cursor-pointer"
+                  >
+                    {showActivatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="activate-admin-pw2"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+                >
+                  Confirm Password
+                </label>
+                <input
+                  id="activate-admin-pw2"
+                  type={showActivatePassword ? 'text' : 'password'}
+                  disabled={isBusy}
+                  value={activateConfirmPassword}
+                  onChange={(e) => setActivateConfirmPassword(e.target.value)}
+                  placeholder="Re-enter password"
+                  className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
+                />
+              </div>
+
+              <div className="space-y-2.5 pt-1">
+                <TactileButton
+                  type="submit"
+                  variant="dark"
+                  size="lg"
+                  fullWidth
+                  className="rounded-full"
+                  loading={activeAction === 'admin_activate_complete'}
+                  success={successAction === 'admin_activate_complete'}
+                  successLabel="Activated!"
+                  disabled={isBusy}
+                >
+                  Verify &amp; Enter School Admin
+                </TactileButton>
+
+                <TactileButton
+                  type="button"
+                  variant="light"
+                  size="md"
+                  fullWidth
+                  className="rounded-full"
+                  icon={<RefreshCw className="w-3.5 h-3.5" />}
+                  loading={activeAction === 'resend_code'}
+                  disabled={isBusy || resendCooldown > 0}
+                  onClick={() => handleResendCode('admin_activate')}
+                >
+                  {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
+                </TactileButton>
+              </div>
+            </form>
+          )}
+
+          {/* VIEW 7: DEV-ONLY FIRST SUPER ADMIN BOOTSTRAP (Super Admin Portal Only) */}
+          {view === 'dev_super_admin_setup' && portal === 'super_admin' && (
             <div className="space-y-4 page-enter">
               <div className="rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] px-4 py-3 text-xs text-[#92400E] leading-relaxed">
                 <p className="font-bold">Local Development Only — Not Production Auth</p>

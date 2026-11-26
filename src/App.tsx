@@ -2,9 +2,13 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useStat
 import type {
   AppScreen,
   AuthenticatedUser,
+  AuthPortal,
   PastQuestionDoc,
   StudyMaterial,
+  WorkspaceViewMode,
 } from './core/types';
+import { getDefaultScreenForRole } from './core/permissions';
+import { detectAuthPortal, getPortalPath } from './app/portal';
 import {
   closeBackLayer,
   getBackLayers,
@@ -18,6 +22,7 @@ import type { PerformanceSubView } from './screens/PerformanceScreen';
 import { useArchiveStore } from './hooks/useArchiveStore';
 import { archiveRepository } from './services/archiveRepository';
 import { authService } from './services/authService';
+import { localStore } from './services/storage/localStore';
 import {
   subscriptionService,
   type PaywallContext,
@@ -142,9 +147,14 @@ const entryOf = (n: NavState): NavEntry => ({
 
 function AppContent() {
   const store = useArchiveStore();
+  const [portal, setPortal] = useState<AuthPortal>(() => detectAuthPortal());
   const [authenticatedStudent, setAuthenticatedStudent] = useState<AuthenticatedUser | null>(() =>
     authService.getActiveSession()
   );
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceViewMode>(
+    () => authService.getActiveSession()?.role ?? 'student'
+  );
+  const [superAdminPreviewSchoolId, setSuperAdminPreviewSchoolId] = useState('sch-aaua');
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
     () => authService.hasCompletedOnboarding() || authService.getActiveSession() !== null
   );
@@ -157,6 +167,8 @@ function AppContent() {
 
   const authRef = useRef(authenticatedStudent);
   authRef.current = authenticatedStudent;
+  const workspaceModeRef = useRef<WorkspaceViewMode>(workspaceMode);
+  workspaceModeRef.current = workspaceMode;
   const hasCompletedOnboardingRef = useRef(hasCompletedOnboarding);
   hasCompletedOnboardingRef.current = hasCompletedOnboarding;
   const onboardingStepRef = useRef(onboardingStep);
@@ -193,9 +205,23 @@ function AppContent() {
   // while a paper or guide is open.
   const parentScreen: AppScreen = nav.stack[nav.stack.length - 1]?.screen ?? 'home';
 
+  const effectiveWorkspace: WorkspaceViewMode =
+    authenticatedStudent?.role === 'super_admin'
+      ? workspaceMode
+      : authenticatedStudent?.role === 'school_admin'
+        ? 'school_admin'
+        : 'student';
+
+  const isRestrictedAdmin =
+    authenticatedStudent?.role === 'school_admin' ||
+    (authenticatedStudent?.role === 'super_admin' && effectiveWorkspace === 'school_admin');
+
   const unreadCount = useMemo(
-    () => store.notifications.filter((n) => !n.isRead).length,
-    [store.notifications]
+    () =>
+      archiveRepository
+        .getNotificationsForWorkspace(effectiveWorkspace)
+        .filter((n) => !n.isRead).length,
+    [store.notifications, effectiveWorkspace]
   );
 
   const selectedDoc = useMemo(
@@ -446,7 +472,7 @@ function AppContent() {
     ) => {
       const safeNav: NavState = {
         ...nextNav,
-        screen: resolveSafeScreen(authRef.current, nextNav.screen),
+        screen: resolveSafeScreen(authRef.current, nextNav.screen, workspaceModeRef.current),
       };
       navRef.current = safeNav;
       perfRef.current = nextPerf;
@@ -464,6 +490,26 @@ function AppContent() {
     [pushHistory]
   );
 
+  // Sync separated sign-in portal on URL hash/path change & record visitor telemetry
+  useEffect(() => {
+    let visitorId = localStore.getItem('pqguide_visitor_id_v1');
+    if (!visitorId) {
+      visitorId = `vis-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      localStore.setItem('pqguide_visitor_id_v1', visitorId);
+    }
+    archiveRepository.recordSiteVisit(visitorId);
+
+    const syncPortal = () => {
+      setPortal(detectAuthPortal());
+    };
+    window.addEventListener('hashchange', syncPortal);
+    window.addEventListener('popstate', syncPortal);
+    return () => {
+      window.removeEventListener('hashchange', syncPortal);
+      window.removeEventListener('popstate', syncPortal);
+    };
+  }, []);
+
   useEffect(() => {
     getBackLayers().forEach((l) => supersededLayerIdsRef.current.add(l.id));
     pushedLayerIdsRef.current = [];
@@ -472,6 +518,10 @@ function AppContent() {
     pendingReplaceRef.current = null;
 
     if (authenticatedStudent) {
+      const nextWorkspace: WorkspaceViewMode = authenticatedStudent.role;
+      workspaceModeRef.current = nextWorkspace;
+      setWorkspaceMode(nextWorkspace);
+
       const existing = window.history.state as AppHistoryState | null;
       const hasValidSignedInRoot =
         existing &&
@@ -482,7 +532,7 @@ function AppContent() {
 
       const landingNav: NavState = {
         ...INITIAL_NAV,
-        screen: getInitialScreenForUser(authenticatedStudent),
+        screen: getInitialScreenForUser(authenticatedStudent, nextWorkspace),
       };
 
       navRef.current = landingNav;
@@ -655,7 +705,7 @@ function AppContent() {
       const rawNav = st?.nav ?? INITIAL_NAV;
       const nextNav: NavState = {
         ...rawNav,
-        screen: resolveSafeScreen(authRef.current, rawNav.screen),
+        screen: resolveSafeScreen(authRef.current, rawNav.screen, workspaceModeRef.current),
       };
       const nextPerf = st?.perf ?? INITIAL_PERF;
       const nextPaywall = st?.paywall ?? null;
@@ -683,6 +733,7 @@ function AppContent() {
 
   const openPaywallDirect = useCallback(
     (context?: PaywallContext) => {
+      if (authRef.current?.role === 'school_admin') return;
       const prev = navRef.current;
       const nextStack =
         prev.screen === 'subscription' ? prev.stack : [...prev.stack, entryOf(prev)];
@@ -710,6 +761,9 @@ function AppContent() {
   // Single paywall gate used when FREE_TIER_ENABLED is set to false.
   const ensureStandardAccess = useCallback(
     (reason?: string) => {
+      if (authRef.current?.role === 'school_admin' || authRef.current?.role === 'super_admin') {
+        return true;
+      }
       if (subscriptionService.hasStandardAccess()) return true;
       openPaywallDirect({
         highlightTier: 'standard',
@@ -724,7 +778,7 @@ function AppContent() {
   // Tabs reset the trail. Alerts (opened from the bell) and Practice Exam remember where you were.
   const navigateDirect = useCallback(
     (screen: AppScreen) => {
-      const safeScreen = resolveSafeScreen(authRef.current, screen);
+      const safeScreen = resolveSafeScreen(authRef.current, screen, workspaceModeRef.current);
       if (safeScreen === 'subscription') {
         openPaywallDirect();
         return;
@@ -826,6 +880,19 @@ function AppContent() {
         }
         archiveRepository.incrementView(doc.id);
         archiveRepository.recordRecent(doc.id);
+        const actor = authRef.current;
+        if (actor) {
+          archiveRepository.recordUserActivity({
+            userId: actor.id,
+            userName: actor.fullName,
+            userEmail: actor.email,
+            userRole: actor.role,
+            matricNumber: actor.matricNumber,
+            level: actor.level,
+            type: 'doc_opened',
+            detail: `Opened past question ${doc.courseCode} (${doc.session})`,
+          });
+        }
         const prev = navRef.current;
         go({
           screen: 'reader',
@@ -843,6 +910,19 @@ function AppContent() {
       runNavigationGuard(() => {
         if (!ensureStandardAccess('Subscribe to open course study guides.')) {
           return;
+        }
+        const actor = authRef.current;
+        if (actor) {
+          archiveRepository.recordUserActivity({
+            userId: actor.id,
+            userName: actor.fullName,
+            userEmail: actor.email,
+            userRole: actor.role,
+            matricNumber: actor.matricNumber,
+            level: actor.level,
+            type: 'material_opened',
+            detail: `Opened study guide ${material.courseCode} — ${material.title}`,
+          });
         }
         const prev = navRef.current;
         go({
@@ -874,6 +954,19 @@ function AppContent() {
   }, [ensureStandardAccess, go]);
 
   const handleExamSubmitted = useCallback(() => {
+    const actor = authRef.current;
+    if (actor) {
+      archiveRepository.recordUserActivity({
+        userId: actor.id,
+        userName: actor.fullName,
+        userEmail: actor.email,
+        userRole: actor.role,
+        matricNumber: actor.matricNumber,
+        level: actor.level,
+        type: 'exam_completed',
+        detail: 'Completed timed CBT / theory practice exam',
+      });
+    }
     // Replace the mock_exam entry (and any open exam/confirm layer) so pressing Back
     // from Performance returns to where the exam was opened from, never back into it.
     const nextNav: NavState = { ...navRef.current, screen: 'performance', stack: [] };
@@ -1040,20 +1133,60 @@ function AppContent() {
     scrollTop();
   }, [pushHistory]);
 
+  const handleSwitchWorkspace = useCallback(
+    (nextMode: WorkspaceViewMode) => {
+      const actor = authRef.current;
+      if (!actor || actor.role !== 'super_admin') return;
+      runNavigationGuard(() => {
+        workspaceModeRef.current = nextMode;
+        setWorkspaceMode(nextMode);
+        const targetScreen = getDefaultScreenForRole('super_admin', nextMode);
+        go(
+          {
+            screen: targetScreen,
+            docId: null,
+            materialId: null,
+            stack: [],
+          },
+          INITIAL_PERF
+        );
+      });
+    },
+    [go]
+  );
+
   const handleSignOut = useCallback(() => {
     runNavigationGuard(() => {
-      authService.clearActiveSession();
+      const current = authRef.current;
+      const currentPortal: AuthPortal =
+        current?.role === 'super_admin'
+          ? 'super_admin'
+          : current?.role === 'school_admin'
+            ? 'school_admin'
+            : 'student';
+
+      authService.clearActiveSession(current);
       setAuthenticatedStudent(null);
+      workspaceModeRef.current = 'student';
+      setWorkspaceMode('student');
       navRef.current = INITIAL_NAV;
       perfRef.current = INITIAL_PERF;
       paywallRef.current = null;
       setNav(INITIAL_NAV);
       setPerf(INITIAL_PERF);
       setPaywallContext(null);
+
+      if (currentPortal !== 'student') {
+        const nextHash = getPortalPath(currentPortal);
+        if (window.location.hash !== nextHash) {
+          window.history.replaceState(null, '', nextHash);
+        }
+        setPortal(currentPortal);
+      }
     });
   }, []);
 
-  if (!hasCompletedOnboarding) {
+  if (!hasCompletedOnboarding && portal === 'student' && !authenticatedStudent) {
     return (
       <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
         <OnboardingScreen
@@ -1070,6 +1203,7 @@ function AppContent() {
     return (
       <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
         <AuthScreen
+          portal={portal}
           view={authView}
           onViewChange={handleAuthViewChange}
           onAuthBack={handleAuthBack}
@@ -1077,16 +1211,17 @@ function AppContent() {
             authService.saveActiveSession(account);
             setAuthenticatedStudent(account);
           }}
-          onBackToOnboarding={handleBackToOnboarding}
+          onBackToOnboarding={portal === 'student' ? handleBackToOnboarding : undefined}
         />
       </Suspense>
     );
   }
 
-  if (activeScreen === 'subscription') {
+  if (activeScreen === 'subscription' && authenticatedStudent.role !== 'school_admin') {
     return (
       <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
         <SubscriptionScreen
+          currentUser={authenticatedStudent}
           paywallContext={paywallContext}
           onBack={handleBack}
           onClose={handleBack}
@@ -1099,6 +1234,11 @@ function AppContent() {
     <NavigationShell
       activeScreen={activeScreen}
       parentScreen={parentScreen}
+      workspaceMode={effectiveWorkspace}
+      onWorkspaceModeChange={
+        authenticatedStudent.role === 'super_admin' ? handleSwitchWorkspace : undefined
+      }
+      marquee={store.marquee}
       onNavigate={handleNavigate}
       onOpenPaywall={openPaywall}
       onQuickFind={handleQuickFind}
@@ -1129,6 +1269,8 @@ function AppContent() {
 
         {activeScreen === 'notifications' && (
           <NotificationsScreen
+            workspaceMode={effectiveWorkspace}
+            restrictedAdminView={isRestrictedAdmin}
             onBack={handleBack}
             onOpenDocument={handleOpenDocument}
           />
@@ -1170,16 +1312,25 @@ function AppContent() {
           activeScreen === 'services' ||
           activeScreen === 'help' ||
           activeScreen === 'support') && (
-          <InfoScreen page={activeScreen} onNavigate={handleNavigate} />
+          <InfoScreen
+            page={activeScreen}
+            restrictedAdminView={isRestrictedAdmin}
+            onNavigate={handleNavigate}
+          />
         )}
 
         {activeScreen === 'school_admin' && (
           <ProtectedRoute
             user={authenticatedStudent}
             screen="school_admin"
+            workspaceMode={effectiveWorkspace}
             onFallbackNavigate={handleNavigate}
           >
-            <SchoolAdminScreen currentUser={authenticatedStudent} />
+            <SchoolAdminScreen
+              currentUser={authenticatedStudent}
+              previewSchoolId={superAdminPreviewSchoolId}
+              onPreviewSchoolChange={setSuperAdminPreviewSchoolId}
+            />
           </ProtectedRoute>
         )}
 
@@ -1187,11 +1338,13 @@ function AppContent() {
           <ProtectedRoute
             user={authenticatedStudent}
             screen="super_admin"
+            workspaceMode={effectiveWorkspace}
             onFallbackNavigate={handleNavigate}
           >
             <SuperAdminScreen
               currentUser={authenticatedStudent}
               onSignedOutReset={handleSignOut}
+              onSwitchWorkspace={handleSwitchWorkspace}
             />
           </ProtectedRoute>
         )}

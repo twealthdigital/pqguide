@@ -17,12 +17,18 @@ import type {
   AuditActionType,
   AuditLogEntry,
   AuthenticatedUser,
+  BroadcastAudience,
   ContentStatus,
+  HeaderMarqueeConfig,
   ManagedAccount,
   PastQuestionDoc,
+  PaymentTransaction,
   School,
   StudyMaterial,
+  UserActivityEvent,
   UserRole,
+  VisitorTelemetry,
+  WorkspaceViewMode,
 } from '../core/types';
 import { STUDY_MATERIALS } from '../data/materials';
 import {
@@ -44,9 +50,24 @@ export interface AppStoreState {
   notifications: AppNotification[];
   accounts: ManagedAccount[];
   auditLogs: AuditLogEntry[];
+  payments: PaymentTransaction[];
+  userActivities: UserActivityEvent[];
+  telemetry: VisitorTelemetry;
+  marquee: HeaderMarqueeConfig;
   selectedSchoolId: string;
   /** Most recently opened past question ids, newest first. */
   recentDocIds: string[];
+}
+
+function getDefaultMarquee(): HeaderMarqueeConfig {
+  return {
+    enabled: false,
+    message: '',
+    audience: 'all',
+    tone: 'neutral',
+    updatedAt: '',
+    updatedBy: '',
+  };
 }
 
 function getDefaultState(): AppStoreState {
@@ -58,6 +79,13 @@ function getDefaultState(): AppStoreState {
     notifications: SEED_NOTIFICATIONS,
     accounts: SEED_ACCOUNTS,
     auditLogs: [],
+    payments: [],
+    userActivities: [],
+    telemetry: {
+      totalVisits: 0,
+      uniqueVisitorIds: [],
+    },
+    marquee: getDefaultMarquee(),
     selectedSchoolId: 'sch-aaua',
     recentDocIds: [],
   };
@@ -129,11 +157,46 @@ function loadState(): AppStoreState {
     const accounts = Array.isArray(parsed.accounts)
       ? parsed.accounts.map((a) => ({
           ...a,
+          adminVerified: a.adminVerified ?? true,
           schoolId:
             a.schoolId ??
             schools.find((s) => s.code.toUpperCase() === (a.schoolCode || '').toUpperCase())?.id,
         }))
       : defaults.accounts;
+
+    const marquee: HeaderMarqueeConfig =
+      parsed.marquee && typeof parsed.marquee === 'object'
+        ? {
+            enabled: Boolean(parsed.marquee.enabled),
+            message: sanitizeSingleLine(parsed.marquee.message ?? '', 300),
+            audience:
+              parsed.marquee.audience === 'students' || parsed.marquee.audience === 'admins'
+                ? parsed.marquee.audience
+                : 'all',
+            tone:
+              parsed.marquee.tone === 'important' || parsed.marquee.tone === 'urgent'
+                ? parsed.marquee.tone
+                : 'neutral',
+            updatedAt: parsed.marquee.updatedAt ?? '',
+            updatedBy: parsed.marquee.updatedBy ?? '',
+          }
+        : defaults.marquee;
+
+    const telemetry: VisitorTelemetry =
+      parsed.telemetry && typeof parsed.telemetry === 'object'
+        ? {
+            totalVisits:
+              typeof parsed.telemetry.totalVisits === 'number'
+                ? Math.max(0, parsed.telemetry.totalVisits)
+                : 0,
+            uniqueVisitorIds: Array.isArray(parsed.telemetry.uniqueVisitorIds)
+              ? parsed.telemetry.uniqueVisitorIds.filter(
+                  (id): id is string => typeof id === 'string'
+                )
+              : [],
+            lastVisitAt: parsed.telemetry.lastVisitAt,
+          }
+        : defaults.telemetry;
 
     return {
       schools,
@@ -146,6 +209,12 @@ function loadState(): AppStoreState {
       notifications,
       accounts,
       auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs.slice(0, 300) : [],
+      payments: Array.isArray(parsed.payments) ? parsed.payments.slice(0, 300) : [],
+      userActivities: Array.isArray(parsed.userActivities)
+        ? parsed.userActivities.slice(0, 500)
+        : [],
+      telemetry,
+      marquee,
       selectedSchoolId: parsed.selectedSchoolId ?? defaults.selectedSchoolId,
       recentDocIds: Array.isArray(parsed.recentDocIds)
         ? parsed.recentDocIds.filter((id): id is string => typeof id === 'string')
@@ -269,6 +338,14 @@ class ArchiveRepository {
     }));
   }
 
+  getNotificationsForWorkspace(workspace: WorkspaceViewMode): AppNotification[] {
+    return this.state.notifications.filter((n) => {
+      const audience = n.audience ?? 'all';
+      if (audience === 'all') return true;
+      return workspace === 'student' ? audience === 'students' : audience === 'admins';
+    });
+  }
+
   markNotificationRead(notifId: string): void {
     this.update((prev) => ({
       ...prev,
@@ -282,6 +359,19 @@ class ArchiveRepository {
     this.update((prev) => ({
       ...prev,
       notifications: prev.notifications.map((n) => ({ ...n, isRead: true })),
+    }));
+  }
+
+  markAllNotificationsReadForWorkspace(workspace: WorkspaceViewMode): void {
+    this.update((prev) => ({
+      ...prev,
+      notifications: prev.notifications.map((n) => {
+        const audience = n.audience ?? 'all';
+        const matches =
+          audience === 'all' ||
+          (workspace === 'student' ? audience === 'students' : audience === 'admins');
+        return matches ? { ...n, isRead: true } : n;
+      }),
     }));
   }
 
@@ -330,6 +420,7 @@ class ArchiveRepository {
         .map((q) => sanitizeSingleLine(q, 1000))
         .filter(Boolean),
       uploadedBy: sanitizeSingleLine(actor.fullName, 120),
+      uploadedById: actor.id,
       uploadedAt: doc.uploadedAt || new Date().toISOString(),
       status: doc.status === 'draft' || doc.status === 'review' ? doc.status : 'published',
     };
@@ -942,6 +1033,8 @@ class ArchiveRepository {
       schoolId?: string;
       schoolCode?: string;
       status?: AccountStatus;
+      adminVerified?: boolean;
+      needsPasswordSetup?: boolean;
     },
     action: AuditActionType,
     summary: string
@@ -957,6 +1050,283 @@ class ArchiveRepository {
         ...prev.auditLogs,
       ].slice(0, 300),
     }));
+  }
+
+  // -------------------------------------------------------------------------
+  // Verification, Telemetry, Payments & Broadcast Controls
+  // -------------------------------------------------------------------------
+
+  recordSiteVisit(visitorId: string): void {
+    const cleanId = sanitizeIdentifier(visitorId, 80);
+    if (!cleanId) return;
+    const now = new Date().toISOString();
+    this.update((prev) => {
+      const seen = prev.telemetry.uniqueVisitorIds.includes(cleanId)
+        ? prev.telemetry.uniqueVisitorIds
+        : [cleanId, ...prev.telemetry.uniqueVisitorIds].slice(0, 500);
+      return {
+        ...prev,
+        telemetry: {
+          totalVisits: prev.telemetry.totalVisits + 1,
+          uniqueVisitorIds: seen,
+          lastVisitAt: now,
+        },
+      };
+    });
+  }
+
+  recordUserActivity(event: Omit<UserActivityEvent, 'id' | 'timestamp'>): void {
+    const now = new Date().toISOString();
+    const entry: UserActivityEvent = {
+      id: `uact-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: now,
+      userId: event.userId,
+      userName: sanitizeSingleLine(event.userName, 120),
+      userEmail: sanitizeSingleLine(event.userEmail, 160),
+      userRole: event.userRole,
+      matricNumber: event.matricNumber ? sanitizeIdentifier(event.matricNumber, 32) : undefined,
+      level: event.level,
+      type: event.type,
+      detail: sanitizeSingleLine(event.detail, 260),
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      userActivities: [entry, ...prev.userActivities].slice(0, 500),
+      accounts: prev.accounts.map((acc) =>
+        acc.id === event.userId ? { ...acc, lastActiveAt: now } : acc
+      ),
+    }));
+  }
+
+  setAccountSessionState(accountId: string, state: 'logged_in' | 'logged_out'): void {
+    const now = new Date().toISOString();
+    this.update((prev) => ({
+      ...prev,
+      accounts: prev.accounts.map((acc) => {
+        if (acc.id !== accountId) return acc;
+        return {
+          ...acc,
+          sessionState: state,
+          lastActiveAt: now,
+          ...(state === 'logged_in' ? { lastLoginAt: now } : { lastLogoutAt: now }),
+        };
+      }),
+    }));
+  }
+
+  setAccountAdminVerified(
+    actor: AuthenticatedUser | null | undefined,
+    accountId: string,
+    verified: boolean
+  ): void {
+    this.requirePermission(
+      actor,
+      'accounts:manage',
+      'Only Super Administrators can verify or unverify accounts.'
+    );
+    const target = this.state.accounts.find((a) => a.id === accountId);
+    if (!target) {
+      throw new Error('Target account not found.');
+    }
+    if (target.role === 'super_admin') {
+      throw new Error('Super Admin verification cannot be revoked here.');
+    }
+
+    const action: AuditActionType =
+      target.role === 'school_admin' ? 'admin_verified' : 'account_verified';
+
+    this.update((prev) => ({
+      ...prev,
+      accounts: prev.accounts.map((acc) =>
+        acc.id === accountId ? { ...acc, adminVerified: verified } : acc
+      ),
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          action,
+          'account',
+          accountId,
+          `${verified ? 'Verified' : 'Marked pending'} ${
+            target.role === 'school_admin' ? 'School Admin' : 'Student'
+          } ${target.fullName} (${target.email})`,
+          target.schoolId
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+  }
+
+  recordPaymentTransaction(
+    user: AuthenticatedUser,
+    tx: Omit<
+      PaymentTransaction,
+      'id' | 'createdAt' | 'verifiedAt' | 'status' | 'autoActivated'
+    >
+  ): PaymentTransaction {
+    if (!isActiveAccount(user)) {
+      throw new Error('Active account required to verify payment.');
+    }
+    const now = new Date().toISOString();
+    const record: PaymentTransaction = {
+      ...tx,
+      id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      reference: sanitizeIdentifier(tx.reference, 48).toUpperCase(),
+      userId: user.id,
+      userName: sanitizeSingleLine(user.fullName, 120),
+      userEmail: sanitizeSingleLine(user.email, 160),
+      matricNumber: user.matricNumber,
+      level: user.level,
+      status: 'verified_auto',
+      autoActivated: true,
+      createdAt: now,
+      verifiedAt: now,
+    };
+
+    const providerLabel = record.provider === 'paystack' ? 'Paystack' : 'Flutterwave';
+    const activity: UserActivityEvent = {
+      id: `uact-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: now,
+      userId: user.id,
+      userName: record.userName,
+      userEmail: record.userEmail,
+      userRole: user.role,
+      matricNumber: user.matricNumber,
+      level: user.level,
+      type: 'payment_verified',
+      detail: `${providerLabel} auto-verified ${record.tierName} (₦${record.amountNaira.toLocaleString()}) · Ref ${record.reference}`,
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      payments: [record, ...prev.payments].slice(0, 300),
+      userActivities: [activity, ...prev.userActivities].slice(0, 500),
+      accounts: prev.accounts.map((acc) =>
+        acc.id === user.id || acc.email.toLowerCase() === user.email.toLowerCase()
+          ? {
+              ...acc,
+              subscriptionTier: record.tierId,
+              lastActiveAt: now,
+            }
+          : acc
+      ),
+      notifications: [
+        {
+          id: `notif-pay-${Date.now()}`,
+          title: `${record.tierName} Activated`,
+          message: `${providerLabel} verified payment of ₦${record.amountNaira.toLocaleString()} (Ref: ${record.reference}). Your plan is now active.`,
+          category: 'system',
+          audience: user.role === 'student' ? 'students' : 'all',
+          createdAt: now,
+          isRead: false,
+          createdBy: providerLabel,
+        },
+        ...prev.notifications,
+      ],
+      auditLogs: [
+        createAuditEntry(
+          user,
+          'payment_verified',
+          'payment',
+          record.id,
+          `${providerLabel} auto-verified ₦${record.amountNaira.toLocaleString()} for ${record.userName} (${record.matricNumber || record.userEmail}) · Ref ${record.reference}`
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return record;
+  }
+
+  updateHeaderMarquee(
+    actor: AuthenticatedUser | null | undefined,
+    config: Omit<HeaderMarqueeConfig, 'updatedAt' | 'updatedBy'>
+  ): HeaderMarqueeConfig {
+    this.requirePermission(
+      actor,
+      'broadcasts:manage',
+      'Only Super Administrators can configure the header marquee.'
+    );
+
+    const next: HeaderMarqueeConfig = {
+      enabled: Boolean(config.enabled),
+      message: sanitizeSingleLine(config.message, 280),
+      audience: config.audience,
+      tone: config.tone,
+      updatedAt: new Date().toISOString(),
+      updatedBy: sanitizeSingleLine(actor.fullName, 120),
+    };
+
+    if (next.enabled && !next.message) {
+      throw new Error('Enter a marquee message before turning the header banner on.');
+    }
+
+    this.update((prev) => ({
+      ...prev,
+      marquee: next,
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'marquee_updated',
+          'broadcast',
+          'header-marquee',
+          `${next.enabled ? 'Enabled' : 'Disabled'} header marquee (${next.audience}): ${next.message || 'Cleared'}`
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return next;
+  }
+
+  sendBroadcastNotification(
+    actor: AuthenticatedUser | null | undefined,
+    payload: {
+      title: string;
+      message: string;
+      category: AppNotification['category'];
+      audience: BroadcastAudience;
+    }
+  ): AppNotification {
+    this.requirePermission(
+      actor,
+      'broadcasts:manage',
+      'Only Super Administrators can send platform notifications.'
+    );
+
+    const title = sanitizeSingleLine(payload.title, 120);
+    const message = sanitizePlainText(payload.message, 600).trim();
+    if (!title || !message) {
+      throw new Error('Enter both a notification title and message.');
+    }
+
+    const notif: AppNotification = {
+      id: `notif-bc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      message,
+      category: payload.category,
+      audience: payload.audience,
+      createdAt: new Date().toISOString(),
+      isRead: false,
+      createdBy: sanitizeSingleLine(actor.fullName, 120),
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      notifications: [notif, ...prev.notifications],
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'broadcast_sent',
+          'broadcast',
+          notif.id,
+          `Sent notification "${notif.title}" to audience: ${notif.audience}`
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return notif;
   }
 
   // -------------------------------------------------------------------------

@@ -658,3 +658,30 @@ input::-ms-clear {
   }
 }
 
+/* Top Broadcast Header Marquee Ticker */
+@keyframes marqueeX {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-marquee-x {
+  display: inline-flex;
+  width: max-content;
+  animation: marqueeX 28s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee-x:hover {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee-x {
+    animation: none !important;
+    transform: none !important;
+  }
+}

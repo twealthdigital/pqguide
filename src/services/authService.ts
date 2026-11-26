@@ -3,7 +3,9 @@ import { sanitizeIdentifier, sanitizeSingleLine } from '../core/security';
 import type {
   AccountStatus,
   AuthenticatedUser,
+  AuthPortal,
   StudentAccount,
+  StudentLevel,
   UserRole,
 } from '../core/types';
 import { archiveRepository } from './archiveRepository';
@@ -118,7 +120,7 @@ export function validateEmailAddress(raw: string): boolean {
 
 interface PendingOtpRecord {
   email: string;
-  purpose: 'signup' | 'reset';
+  purpose: 'signup' | 'reset' | 'admin_activate';
   code: string;
   expiresAt: number;
 }
@@ -132,6 +134,9 @@ function normalizeStoredAccount(raw: StudentAccount): StudentAccount {
     ...raw,
     role,
     status,
+    level: raw.level ?? (role === 'student' ? '100L' : undefined),
+    adminVerified: raw.adminVerified ?? true,
+    needsPasswordSetup: Boolean(raw.needsPasswordSetup),
     assignedSchoolId:
       raw.assignedSchoolId ?? (role === 'student' ? 'sch-aaua' : undefined),
     assignedSchoolCode:
@@ -241,7 +246,10 @@ async function verifyPassword(password: string, salt: string, storedHash: string
   return candidateLegacy === storedHash;
 }
 
-function issueOtp(email: string, purpose: 'signup' | 'reset'): string {
+function issueOtp(
+  email: string,
+  purpose: 'signup' | 'reset' | 'admin_activate'
+): string {
   const normalizedEmail = email.trim().toLowerCase();
   const code = generateSixDigitCode();
   const next: PendingOtpRecord = {
@@ -260,6 +268,7 @@ function issueOtp(email: string, purpose: 'signup' | 'reset'): string {
 export interface SignupInput {
   fullName: string;
   matricNumber: string;
+  level?: StudentLevel;
   faculty: string;
   department: string;
   email: string;
@@ -278,7 +287,8 @@ export interface CreateSchoolAdminInput {
   fullName: string;
   email: string;
   schoolId: string;
-  password: string;
+  password?: string;
+  grantEmailAccessOnly?: boolean;
 }
 
 export interface AuthActionResult<T = void> {
@@ -377,6 +387,8 @@ export const authService = {
       email,
       role: 'super_admin',
       status: 'active',
+      adminVerified: true,
+      needsPasswordSetup: false,
       passwordHash,
       passwordSalt: salt,
       isEmailVerified: true,
@@ -395,6 +407,9 @@ export const authService = {
       role: 'super_admin',
       schoolCode: 'ALL',
       status: 'active',
+      adminVerified: true,
+      sessionState: 'logged_in',
+      lastLoginAt: now,
       lastActiveAt: now,
       createdAt: now,
       createdBy: 'local-dev-bootstrap',
@@ -406,6 +421,14 @@ export const authService = {
       publicUser.id,
       `Initialized first local-dev Super Admin account (${publicUser.email})`
     );
+    archiveRepository.recordUserActivity({
+      userId: publicUser.id,
+      userName: publicUser.fullName,
+      userEmail: publicUser.email,
+      userRole: 'super_admin',
+      type: 'login',
+      detail: 'Initialized and signed into Super Admin console',
+    });
 
     this.saveActiveSession(publicUser);
     return { ok: true, data: { account: publicUser } };
@@ -487,15 +510,23 @@ export const authService = {
     const salt = generateSalt();
     const passwordHash = await hashPassword(input.password, salt);
 
+    const level: StudentLevel =
+      input.level && ['100L', '200L', '300L', '400L', '500L'].includes(input.level)
+        ? input.level
+        : '100L';
+
     const pendingAccount: StudentAccount = {
       id: `stu-${Date.now()}`,
       fullName,
       matricNumber: matricCheck.normalized,
+      level,
       faculty,
       department,
       email,
       role: 'student',
       status: 'active',
+      adminVerified: true,
+      needsPasswordSetup: false,
       assignedSchoolId: 'sch-aaua',
       assignedSchoolCode: 'AAUA',
       passwordHash,
@@ -526,7 +557,7 @@ export const authService = {
 
   resendCode(
     email: string,
-    purpose: 'signup' | 'reset'
+    purpose: 'signup' | 'reset' | 'admin_activate'
   ): AuthActionResult<{ verificationCode: string }> {
     const normalizedEmail = email.trim().toLowerCase();
     const accounts = readAccounts();
@@ -565,10 +596,13 @@ export const authService = {
       return { ok: false, error: 'Pending registration not found. Please sign up again.' };
     }
 
+    const now = new Date().toISOString();
     const verifiedAccount: StudentAccount = {
       ...target,
       role: 'student',
       status: 'active',
+      adminVerified: true,
+      level: target.level ?? '100L',
       isEmailVerified: true,
     };
     writeAccounts(
@@ -584,12 +618,29 @@ export const authService = {
       fullName: publicUser.fullName,
       email: publicUser.email,
       matricNumber: publicUser.matricNumber,
+      level: publicUser.level ?? '100L',
+      faculty: publicUser.faculty,
+      department: publicUser.department,
+      subscriptionTier: 'free',
       role: 'student',
       schoolId: 'sch-aaua',
       schoolCode: 'AAUA',
       status: 'active',
-      lastActiveAt: new Date().toISOString(),
+      adminVerified: true,
+      sessionState: 'logged_in',
+      lastLoginAt: now,
+      lastActiveAt: now,
       createdAt: publicUser.createdAt,
+    });
+    archiveRepository.recordUserActivity({
+      userId: publicUser.id,
+      userName: publicUser.fullName,
+      userEmail: publicUser.email,
+      userRole: 'student',
+      matricNumber: publicUser.matricNumber,
+      level: publicUser.level,
+      type: 'signup',
+      detail: `Completed student signup (${publicUser.matricNumber} · ${publicUser.level ?? '100L'} · ${publicUser.department})`,
     });
 
     this.saveActiveSession(publicUser);
@@ -597,37 +648,69 @@ export const authService = {
   },
 
   // -------------------------------------------------------------------------
-  // Unified Sign-In (Student Matric OR Registered Student/Admin Email)
+  // Portal-Isolated Sign-In & School Admin Email Activation
   // -------------------------------------------------------------------------
 
-  async signinWithIdentifier(
+  async signinWithPortal(
+    portal: AuthPortal,
     rawIdentifier: string,
     password: string
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
     const trimmed = rawIdentifier.trim();
     if (!trimmed) {
-      return { ok: false, error: 'Enter your matric number or email address.' };
+      return {
+        ok: false,
+        error:
+          portal === 'student'
+            ? 'Enter your matric number or email address.'
+            : 'Enter your approved administrator email address.',
+      };
     }
     if (!password) {
       return { ok: false, error: 'Enter your password.' };
     }
 
+    const accounts = readAccounts();
     const isEmailInput = trimmed.includes('@');
     let account: StudentAccount | undefined;
-    const accounts = readAccounts();
 
-    if (isEmailInput) {
+    if (portal !== 'student') {
+      const normalizedEmail = trimmed.toLowerCase();
+      if (!validateEmailAddress(normalizedEmail)) {
+        return { ok: false, error: 'Enter a valid administrator email address.' };
+      }
+      const requiredRole: UserRole = portal === 'super_admin' ? 'super_admin' : 'school_admin';
+      account = accounts.find(
+        (a) => a.email === normalizedEmail && a.role === requiredRole && a.isEmailVerified
+      );
+      if (!account) {
+        return {
+          ok: false,
+          error:
+            portal === 'super_admin'
+              ? 'No verified Super Admin account matches this email address.'
+              : 'This email does not have approved School Admin access.',
+        };
+      }
+      if (account.role === 'school_admin' && account.needsPasswordSetup) {
+        return {
+          ok: false,
+          error:
+            'Your email access is approved for first-time setup. Tap "Activate approved email" below to verify and create your password.',
+        };
+      }
+    } else if (isEmailInput) {
       const normalizedEmail = trimmed.toLowerCase();
       if (!validateEmailAddress(normalizedEmail)) {
         return { ok: false, error: 'Enter a valid email address.' };
       }
       account = accounts.find(
-        (a) => a.email === normalizedEmail && a.isEmailVerified
+        (a) => a.email === normalizedEmail && a.role === 'student' && a.isEmailVerified
       );
       if (!account) {
         return {
           ok: false,
-          error: 'No verified account matches this email address.',
+          error: 'No verified student account matches this email address.',
         };
       }
     } else {
@@ -636,7 +719,10 @@ export const authService = {
         return { ok: false, error: matricCheck.error };
       }
       account = accounts.find(
-        (a) => a.matricNumber === matricCheck.normalized && a.isEmailVerified
+        (a) =>
+          a.matricNumber === matricCheck.normalized &&
+          a.role === 'student' &&
+          a.isEmailVerified
       );
       if (!account) {
         return {
@@ -659,6 +745,28 @@ export const authService = {
       };
     }
 
+    const repoAcc = archiveRepository
+      .getSnapshot()
+      .accounts.find((a) => a.id === account.id || a.email.toLowerCase() === account.email);
+    if (repoAcc?.status === 'suspended') {
+      return {
+        ok: false,
+        error: 'This account is suspended. Contact a Super Administrator.',
+      };
+    }
+    if (repoAcc?.status === 'revoked') {
+      return {
+        ok: false,
+        error: 'Access for this account has been revoked.',
+      };
+    }
+    if (account.adminVerified === false || repoAcc?.adminVerified === false) {
+      return {
+        ok: false,
+        error: 'Login is pending Super Admin verification.',
+      };
+    }
+
     const passwordValid = await verifyPassword(
       password,
       account.passwordSalt,
@@ -668,16 +776,195 @@ export const authService = {
       return { ok: false, error: 'Incorrect credentials. Check and try again.' };
     }
 
+    const now = new Date().toISOString();
     const publicUser = toAuthenticatedUser(account);
+
+    archiveRepository.syncManagedAccount({
+      id: publicUser.id,
+      fullName: publicUser.fullName,
+      email: publicUser.email,
+      matricNumber: publicUser.matricNumber,
+      level: publicUser.level,
+      faculty: publicUser.faculty,
+      department: publicUser.department,
+      role: publicUser.role,
+      schoolId: publicUser.assignedSchoolId,
+      schoolCode: publicUser.assignedSchoolCode ?? (publicUser.role === 'super_admin' ? 'ALL' : 'AAUA'),
+      status: publicUser.status,
+      adminVerified: publicUser.adminVerified ?? true,
+      needsPasswordSetup: false,
+      sessionState: 'logged_in',
+      lastLoginAt: now,
+      lastActiveAt: now,
+      createdAt: publicUser.createdAt,
+      createdBy: publicUser.createdBy,
+    });
+    archiveRepository.setAccountSessionState(publicUser.id, 'logged_in');
+    archiveRepository.recordUserActivity({
+      userId: publicUser.id,
+      userName: publicUser.fullName,
+      userEmail: publicUser.email,
+      userRole: publicUser.role,
+      matricNumber: publicUser.matricNumber,
+      level: publicUser.level,
+      type: 'login',
+      detail: `Signed in on ${portal.replace('_', ' ')} portal`,
+    });
+
     this.saveActiveSession(publicUser);
     return { ok: true, data: { account: publicUser } };
+  },
+
+  startSchoolAdminActivation(
+    rawEmail: string
+  ): AuthActionResult<{ email: string; fullName: string; schoolCode: string; verificationCode: string }> {
+    const email = sanitizeSingleLine(rawEmail, 160).toLowerCase();
+    if (!validateEmailAddress(email)) {
+      return { ok: false, error: 'Enter a valid email address.' };
+    }
+
+    const accounts = readAccounts();
+    const target = accounts.find(
+      (a) => a.email === email && a.role === 'school_admin'
+    );
+    if (!target) {
+      return {
+        ok: false,
+        error: 'This email has not been granted School Admin access by a Super Admin.',
+      };
+    }
+    if (target.status !== 'active') {
+      return {
+        ok: false,
+        error: 'This School Admin account is suspended or revoked.',
+      };
+    }
+    if (target.adminVerified === false) {
+      return {
+        ok: false,
+        error: 'Your School Admin access is awaiting Super Admin verification.',
+      };
+    }
+
+    const verificationCode = issueOtp(email, 'admin_activate');
+    return {
+      ok: true,
+      data: {
+        email,
+        fullName: target.fullName,
+        schoolCode: target.assignedSchoolCode ?? 'AAUA',
+        verificationCode,
+      },
+    };
+  },
+
+  async completeSchoolAdminActivation(
+    rawEmail: string,
+    rawCode: string,
+    newPassword: string,
+    confirmPassword: string
+  ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
+    const normalizedEmail = sanitizeSingleLine(rawEmail, 160).toLowerCase();
+    const code = rawCode.replace(/\s+/g, '').trim();
+    if (code.length !== 6) {
+      return { ok: false, error: 'Enter the 6-digit verification code.' };
+    }
+
+    const records = readOtpRecords();
+    const record = records.find(
+      (r) => r.email === normalizedEmail && r.purpose === 'admin_activate'
+    );
+    if (!record || Date.now() > record.expiresAt) {
+      return { ok: false, error: 'Activation code expired. Request a new code.' };
+    }
+    if (record.code !== code) {
+      return { ok: false, error: 'Incorrect activation code. Check and try again.' };
+    }
+
+    if (newPassword.length < 8) {
+      return { ok: false, error: 'Administrator password must be at least 8 characters.' };
+    }
+    if (newPassword !== confirmPassword) {
+      return { ok: false, error: 'Passwords do not match.' };
+    }
+
+    const accounts = readAccounts();
+    const target = accounts.find(
+      (a) => a.email === normalizedEmail && a.role === 'school_admin'
+    );
+    if (!target || target.status !== 'active') {
+      return { ok: false, error: 'School Admin account is unavailable.' };
+    }
+
+    const salt = generateSalt();
+    const passwordHash = await hashPassword(newPassword, salt);
+    const now = new Date().toISOString();
+
+    const updated: StudentAccount = {
+      ...target,
+      passwordHash,
+      passwordSalt: salt,
+      isEmailVerified: true,
+      needsPasswordSetup: false,
+      adminVerified: target.adminVerified ?? true,
+      updatedAt: now,
+    };
+
+    writeAccounts(accounts.map((a) => (a.id === target.id ? updated : a)));
+    writeOtpRecords(
+      records.filter((r) => !(r.email === normalizedEmail && r.purpose === 'admin_activate'))
+    );
+
+    const publicUser = toAuthenticatedUser(updated);
+    archiveRepository.syncManagedAccount({
+      id: publicUser.id,
+      fullName: publicUser.fullName,
+      email: publicUser.email,
+      role: 'school_admin',
+      schoolId: publicUser.assignedSchoolId,
+      schoolCode: publicUser.assignedSchoolCode ?? 'AAUA',
+      status: 'active',
+      adminVerified: true,
+      needsPasswordSetup: false,
+      sessionState: 'logged_in',
+      lastLoginAt: now,
+      lastActiveAt: now,
+      createdAt: publicUser.createdAt,
+      createdBy: publicUser.createdBy,
+    });
+    archiveRepository.appendAuditEvent(
+      publicUser,
+      'admin_updated',
+      'account',
+      publicUser.id,
+      `School Admin ${publicUser.fullName} activated approved email access (${publicUser.email})`,
+      publicUser.assignedSchoolId
+    );
+    archiveRepository.recordUserActivity({
+      userId: publicUser.id,
+      userName: publicUser.fullName,
+      userEmail: publicUser.email,
+      userRole: 'school_admin',
+      type: 'login',
+      detail: 'Activated School Admin email access and signed in',
+    });
+
+    this.saveActiveSession(publicUser);
+    return { ok: true, data: { account: publicUser } };
+  },
+
+  async signinWithIdentifier(
+    rawIdentifier: string,
+    password: string
+  ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
+    return this.signinWithPortal('student', rawIdentifier, password);
   },
 
   async signinWithMatric(
     rawMatric: string,
     password: string
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
-    return this.signinWithIdentifier(rawMatric, password);
+    return this.signinWithPortal('student', rawMatric, password);
   },
 
   saveActiveSession(account: AuthenticatedUser): void {
@@ -694,16 +981,16 @@ export const authService = {
       (a) => a.id === session.userId && a.isEmailVerified
     );
 
-    if (!matched || matched.status !== 'active') {
+    if (!matched || matched.status !== 'active' || matched.adminVerified === false) {
       sessionService.clearSession();
       return null;
     }
 
-    // Re-check repository account status in case account was suspended/revoked
+    // Re-check repository account status in case account was suspended/revoked/unverified
     const repoAcc = archiveRepository
       .getSnapshot()
       .accounts.find((a) => a.id === matched.id || a.email === matched.email);
-    if (repoAcc && repoAcc.status !== 'active') {
+    if (repoAcc && (repoAcc.status !== 'active' || repoAcc.adminVerified === false)) {
       sessionService.clearSession();
       return null;
     }
@@ -711,7 +998,21 @@ export const authService = {
     return toAuthenticatedUser(matched);
   },
 
-  clearActiveSession(): void {
+  clearActiveSession(actor?: AuthenticatedUser | null): void {
+    const active = actor ?? this.getActiveSession();
+    if (active) {
+      archiveRepository.setAccountSessionState(active.id, 'logged_out');
+      archiveRepository.recordUserActivity({
+        userId: active.id,
+        userName: active.fullName,
+        userEmail: active.email,
+        userRole: active.role,
+        matricNumber: active.matricNumber,
+        level: active.level,
+        type: 'logout',
+        detail: 'Signed out of account',
+      });
+    }
     sessionService.clearSession();
   },
 
@@ -757,7 +1058,9 @@ export const authService = {
     if (!school) {
       return { ok: false, error: 'Select one valid university to assign this administrator.' };
     }
-    if (input.password.length < 8) {
+
+    const emailInviteMode = Boolean(input.grantEmailAccessOnly || !input.password?.trim());
+    if (!emailInviteMode && (input.password ?? '').length < 8) {
       return {
         ok: false,
         error: 'Initial School Admin password must be at least 8 characters.',
@@ -774,7 +1077,8 @@ export const authService = {
     }
 
     const salt = generateSalt();
-    const passwordHash = await hashPassword(input.password, salt);
+    const secretSource = emailInviteMode ? generateSalt() + generateSalt() : (input.password ?? '');
+    const passwordHash = await hashPassword(secretSource, salt);
     const now = new Date().toISOString();
 
     const adminRecord: StudentAccount = {
@@ -786,6 +1090,8 @@ export const authService = {
       email,
       role: 'school_admin',
       status: 'active',
+      adminVerified: true,
+      needsPasswordSetup: emailInviteMode,
       assignedSchoolId: school.id,
       assignedSchoolCode: school.code,
       passwordHash,
@@ -806,6 +1112,9 @@ export const authService = {
       schoolId: school.id,
       schoolCode: school.code,
       status: 'active',
+      adminVerified: true,
+      needsPasswordSetup: emailInviteMode,
+      sessionState: 'logged_out',
       lastActiveAt: now,
       createdAt: now,
       createdBy: actor.email,
@@ -813,14 +1122,52 @@ export const authService = {
 
     archiveRepository.appendAuditEvent(
       actor,
-      'admin_created',
+      emailInviteMode ? 'admin_invited' : 'admin_created',
       'account',
       publicUser.id,
-      `Created School Admin ${publicUser.fullName} (${publicUser.email}) assigned to ${school.code}`,
+      emailInviteMode
+        ? `Granted School Admin email access to ${publicUser.fullName} (${publicUser.email}) for ${school.code}`
+        : `Created School Admin ${publicUser.fullName} (${publicUser.email}) assigned to ${school.code}`,
       school.id
     );
 
     return { ok: true, data: { account: publicUser } };
+  },
+
+  setAccountVerification(
+    actor: AuthenticatedUser | null | undefined,
+    accountId: string,
+    verified: boolean
+  ): AuthActionResult {
+    if (!isActiveAccount(actor) || !hasPermission(actor, 'accounts:manage')) {
+      return { ok: false, error: 'Only Super Administrators can verify accounts.' };
+    }
+
+    const dirAccounts = readAccounts();
+    const targetDir = dirAccounts.find((a) => a.id === accountId);
+    if (targetDir?.role === 'super_admin') {
+      return { ok: false, error: 'Super Admin verification is protected.' };
+    }
+
+    if (targetDir) {
+      writeAccounts(
+        dirAccounts.map((a) =>
+          a.id === accountId
+            ? { ...a, adminVerified: verified, updatedAt: new Date().toISOString() }
+            : a
+        )
+      );
+    }
+
+    try {
+      archiveRepository.setAccountAdminVerified(actor, accountId, verified);
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Unable to update verification.',
+      };
+    }
   },
 
   updateSchoolAdminDetails(
@@ -999,14 +1346,29 @@ export const authService = {
   // -------------------------------------------------------------------------
 
   requestPasswordReset(
-    rawMatricOrEmail: string
+    rawMatricOrEmail: string,
+    portal: AuthPortal = 'student'
   ): AuthActionResult<{ email: string; matricNumber: string; verificationCode: string }> {
     const trimmed = sanitizeIdentifier(rawMatricOrEmail, 160);
     if (!trimmed) {
-      return { ok: false, error: 'Enter your matric number or registered email.' };
+      return {
+        ok: false,
+        error:
+          portal === 'student'
+            ? 'Enter your matric number or registered email.'
+            : 'Enter your registered administrator email.',
+      };
     }
 
-    const accounts = readAccounts().filter((a) => a.isEmailVerified);
+    const accounts = readAccounts().filter(
+      (a) =>
+        a.isEmailVerified &&
+        (portal === 'student'
+          ? a.role === 'student'
+          : portal === 'school_admin'
+            ? a.role === 'school_admin'
+            : a.role === 'super_admin')
+    );
     const lower = trimmed.toLowerCase();
     const account = accounts.find(
       (a) => a.matricNumber === trimmed || a.email === lower
@@ -1015,7 +1377,10 @@ export const authService = {
     if (!account) {
       return {
         ok: false,
-        error: 'No verified account matches that matric number or email.',
+        error:
+          portal === 'student'
+            ? 'No verified student account matches that matric number or email.'
+            : 'No verified administrator account matches that email.',
       };
     }
 
