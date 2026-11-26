@@ -315,7 +315,12 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
 
   const launchWithLoader = useCallback(
     (nextSpec: ExamSpec) => {
-      const built = buildExam(docs, nextSpec);
+      const publishedMaterials = store.materials.filter(
+        (m) =>
+          (m.status ?? 'published') === 'published' &&
+          (!m.schoolId || m.schoolId === store.selectedSchoolId)
+      );
+      const built = buildExam(docs, nextSpec, publishedMaterials);
       if (built.questions.length === 0) {
         setPrepState('idle');
         return;

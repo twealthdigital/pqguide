@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, BookOpen, Search } from 'lucide-react';
 import type { StudyMaterial } from '../core/types';
-import { STUDY_MATERIALS } from '../data/materials';
+import { useArchiveStore } from '../hooks/useArchiveStore';
 import {
   CustomSelect,
   DocumentListSkeleton,
@@ -16,23 +16,20 @@ interface MaterialsScreenProps {
   onOpenMaterial: (material: StudyMaterial) => void;
 }
 
-const COURSES = Array.from(
-  new Map(STUDY_MATERIALS.map((m) => [m.courseCode, m.courseTitle])).entries()
-);
-const MATERIAL_LEVELS = Array.from(new Set(STUDY_MATERIALS.map((m) => m.level))).sort();
-
 const searchableText = (m: StudyMaterial): string =>
   [
     m.courseCode,
     m.courseTitle,
     m.title,
     m.summary,
+    m.extractedText ?? '',
     ...m.sections.flatMap((s) => [s.heading, ...(s.paragraphs ?? []), ...(s.points ?? [])]),
   ]
     .join(' ')
     .toLowerCase();
 
 export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial }) => {
+  const store = useArchiveStore();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -49,6 +46,29 @@ export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial
   const [searchPhase, setSearchPhase] = useState<SearchActionPhase>('idle');
   const [isSkeleton, setIsSkeleton] = useState(false);
 
+  const publishedMaterials = useMemo(
+    () =>
+      store.materials.filter(
+        (m) =>
+          (m.status ?? 'published') === 'published' &&
+          (!m.schoolId || m.schoolId === store.selectedSchoolId)
+      ),
+    [store.materials, store.selectedSchoolId]
+  );
+
+  const courses = useMemo(
+    () =>
+      Array.from(
+        new Map(publishedMaterials.map((m) => [m.courseCode, m.courseTitle])).entries()
+      ),
+    [publishedMaterials]
+  );
+
+  const materialLevels = useMemo(
+    () => Array.from(new Set(publishedMaterials.map((m) => m.level))).sort(),
+    [publishedMaterials]
+  );
+
   const clearTimer = () => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
@@ -60,12 +80,12 @@ export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial
 
   const results = useMemo(() => {
     const needle = appliedQuery.trim().toLowerCase();
-    return STUDY_MATERIALS.filter((m) => {
+    return publishedMaterials.filter((m) => {
       if (appliedCourse !== 'All' && m.courseCode !== appliedCourse) return false;
       if (appliedLevel !== 'All' && m.level !== appliedLevel) return false;
       return needle ? searchableText(m).includes(needle) : true;
     });
-  }, [appliedQuery, appliedCourse, appliedLevel]);
+  }, [publishedMaterials, appliedQuery, appliedCourse, appliedLevel]);
 
   const hasActiveCriteria =
     appliedCourse !== 'All' || appliedLevel !== 'All' || Boolean(appliedQuery.trim());
@@ -155,7 +175,7 @@ export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial
           value={draftCourse}
           options={[
             { value: 'All', label: 'All Courses' },
-            ...COURSES.map(([code, title]) => ({ value: code, label: code, hint: title })),
+            ...courses.map(([code, title]) => ({ value: code, label: code, hint: title })),
           ]}
           onChange={setDraftCourse}
         />
@@ -166,7 +186,7 @@ export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial
           value={draftLevel}
           options={[
             { value: 'All', label: 'All Levels' },
-            ...MATERIAL_LEVELS.map((lvl) => ({ value: lvl, label: lvl })),
+            ...materialLevels.map((lvl) => ({ value: lvl, label: lvl })),
           ]}
           onChange={setDraftLevel}
         />

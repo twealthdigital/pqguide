@@ -5,6 +5,7 @@ import type { PaywallContext } from '../core/subscription';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
+import { sanitizeSafeUrl } from '../core/security';
 import { MaterialDownloadButton } from '../components/ui/MaterialDownloadButton';
 
 interface MaterialReaderScreenProps {
@@ -80,6 +81,16 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
 
       <article className="rounded-3xl border border-[#1A1B20]/[0.08] bg-white px-5 py-6 shadow-[0_2px_12px_-6px_rgba(24,25,30,0.1)] sm:px-8 sm:py-8">
         <p className="text-[15px] leading-7 text-[#3A3D47]">{material.summary}</p>
+        {sanitizeSafeUrl(material.attachmentPreviewUrl) && (
+          <div className="mt-4 rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3">
+            <img
+              src={sanitizeSafeUrl(material.attachmentPreviewUrl)}
+              alt={`${material.courseCode} study sheet`}
+              referrerPolicy="no-referrer"
+              className="max-h-80 mx-auto rounded-lg bg-white"
+            />
+          </div>
+        )}
 
         {onOpenPaywall && (
           <button

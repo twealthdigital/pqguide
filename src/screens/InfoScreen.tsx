@@ -164,8 +164,7 @@ const ServicesPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavi
     <FeatureRow
       icon={<ScanLine className="w-5 h-5" />}
       title="Scan-to-PDF uploads for schools"
-      text="School admins can scan or upload past questions and have them indexed automatically."
-      action={{ label: 'School admin', onClick: () => onNavigate('school_admin') }}
+      text="Authorized school administrators verify and upload past questions so students get clean, searchable papers."
     />
   </div>
 );

@@ -23,11 +23,14 @@ import {
 } from 'lucide-react';
 import type {
   AppScreen,
-  StudentAccount,
-  UserRole,
+  AuthenticatedUser,
 } from '../../core/types';
+import {
+  canAccessScreen,
+  getDefaultScreenForRole,
+  ROLE_LABELS,
+} from '../../core/permissions';
 import { FREE_TIER_ENABLED, useSubscription, type PaywallContext } from '../../core/subscription';
-import { CustomSelect } from './CustomSelect';
 import { BrandLockup } from './BrandLockup';
 import { useBackHandler } from '../../core/navGuard';
 import { BrandLogo } from './BrandLogo';
@@ -41,9 +44,7 @@ interface NavigationShellProps {
   onOpenPaywall: (context?: PaywallContext) => void;
   onQuickFind: () => void;
   unreadCount: number;
-  activeRole: UserRole;
-  onRoleChange: (role: UserRole) => void;
-  student: StudentAccount;
+  student: AuthenticatedUser;
   onSignOut: () => void;
   children: React.ReactNode;
 }
@@ -62,8 +63,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   onOpenPaywall,
   onQuickFind,
   unreadCount,
-  activeRole,
-  onRoleChange,
   student,
   onSignOut,
   children,
@@ -302,20 +301,32 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         ? 'materials'
         : activeScreen;
 
-  const navItems: Array<{
+  const defaultScreen = getDefaultScreenForRole(student.role);
+  const roleBadgeLabel =
+    student.role === 'school_admin' && student.assignedSchoolCode
+      ? `${ROLE_LABELS[student.role]} · ${student.assignedSchoolCode}`
+      : ROLE_LABELS[student.role];
+
+  const allNavItems: Array<{
     id: AppScreen;
     label: string;
     icon: React.ReactNode;
     badge?: number;
   }> = [
+    ...(student.role === 'super_admin'
+      ? [{ id: 'super_admin' as AppScreen, label: 'Super Admin', icon: <ShieldCheck className="w-5 h-5" /> }]
+      : []),
+    ...(student.role === 'school_admin'
+      ? [{ id: 'school_admin' as AppScreen, label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> }]
+      : []),
     { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
     { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
     { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
     { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
     { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
-    { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
-    { id: 'super_admin', label: 'Super Admin', icon: <ShieldCheck className="w-5 h-5" /> },
   ];
+
+  const navItems = allNavItems.filter((item) => canAccessScreen(student, item.id));
 
   // Company links: top bar on desktop, side panel on mobile and tablet.
   const infoLinks: Array<{ id: AppScreen; label: string; icon: React.ReactNode }> = [
@@ -393,7 +404,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         <div className="min-h-0 flex-1 overflow-y-auto space-y-5 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <button
             type="button"
-            onClick={() => onNavigate('home')}
+            onClick={() => onNavigate(defaultScreen)}
             aria-label="pqguide home"
             className="block w-full text-left cursor-pointer group"
           >
@@ -499,35 +510,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </button>
         </div>
 
-        {/* Workspace Switcher & Student Sign Out */}
+        {/* Verified Account Card & Sign Out (No public role switcher) */}
         <div className="shrink-0 space-y-3 pt-4 border-t border-[#1A1B20]/[0.07]">
-          <div
-            className={`transition-[max-height,opacity] ${sbEase} ${
-              sidebarCollapsed
-                ? 'max-h-0 opacity-0 overflow-hidden pointer-events-none'
-                : 'max-h-28 opacity-100'
-            }`}
-            aria-hidden={sidebarCollapsed}
-          >
-          <CustomSelect
-            id="desktop-role-select"
-            label="Active Workspace View"
-            size="sm"
-            menuPlacement="top"
-            value={activeRole}
-            options={[
-              { value: 'student', label: 'Student View' },
-              { value: 'school_admin', label: 'School Admin View' },
-              { value: 'super_admin', label: 'Super Admin View' },
-            ]}
-            onChange={(val) => {
-              onRoleChange(val as UserRole);
-            }}
-          />
-          </div>
-
           <div ref={userPanelRef} className="relative">
-            {/* Account card (expanded: name + matric; collapsed: avatar only, opens the pop-out) */}
+            {/* Account card (expanded: name + identifier/role; collapsed: avatar only, opens the pop-out) */}
             <div
               className={`rounded-2xl flex items-center transition-[padding,background-color] ${sbEase} ${
                 sidebarCollapsed ? 'justify-center p-1 bg-transparent' : 'p-3 bg-[#F6F7F9]'
@@ -553,7 +539,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               >
                 <p className="text-xs font-bold text-[#1A1B20] truncate">{student.fullName}</p>
                 <p className="text-[11px] font-mono-tabular text-[#686C78] truncate">
-                  {student.matricNumber}
+                  {student.role === 'student' ? student.matricNumber : roleBadgeLabel}
                 </p>
               </div>
             </div>
@@ -633,7 +619,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         >
           <button
             type="button"
-            onClick={() => onNavigate('home')}
+            onClick={() => onNavigate(defaultScreen)}
             aria-label="pqguide home"
             className="min-h-[40px] min-w-[40px] flex items-center justify-start cursor-pointer transition-transform duration-150 active:scale-95"
           >
@@ -781,7 +767,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   {student.fullName}
                 </p>
                 <p className="text-xs font-mono-tabular text-[#686C78] truncate">
-                  {student.matricNumber}
+                  {student.role === 'student' ? student.matricNumber : roleBadgeLabel}
                 </p>
               </div>
             </div>
@@ -863,7 +849,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onNavigate('home');
+                    onNavigate(defaultScreen);
                     setDrawerOpen(false);
                   }}
                   className="flex flex-col items-start gap-1.5 text-left cursor-pointer min-w-0"
@@ -884,7 +870,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 </button>
               </div>
 
-              {/* Student Account Card */}
+              {/* Account Card */}
               <div className="rounded-2xl bg-[#F6F7F9] p-3.5 space-y-2.5">
                 <div className="flex items-center gap-3">
                   <div className="h-11 w-11 rounded-full tactile-dark text-white text-sm font-bold flex items-center justify-center shrink-0">
@@ -895,7 +881,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                       {student.fullName}
                     </p>
                     <p className="text-xs font-mono-tabular text-[#686C78] truncate">
-                      {student.matricNumber}
+                      {student.role === 'student' ? student.matricNumber : roleBadgeLabel}
                     </p>
                   </div>
                 </div>
@@ -1012,25 +998,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               </div>
             </div>
 
-            {/* Bottom Controls: Workspace Switcher & Sign Out */}
-            <div className="p-5 pt-4 border-t border-[#1A1B20]/[0.07] space-y-3">
-              <CustomSelect
-                id="mobile-role-select"
-                label="Active Workspace View"
-                size="sm"
-                menuPlacement="top"
-                value={activeRole}
-                options={[
-                  { value: 'student', label: 'Student View' },
-                  { value: 'school_admin', label: 'School Admin View' },
-                  { value: 'super_admin', label: 'Super Admin View' },
-                ]}
-                onChange={(val) => {
-                  onRoleChange(val as UserRole);
-                  setDrawerOpen(false);
-                }}
-              />
-
+            {/* Bottom Controls: Sign Out Only (Role switching removed) */}
+            <div className="p-5 pt-4 border-t border-[#1A1B20]/[0.07] pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
               <TactileButton
                 type="button"
                 variant="dark"

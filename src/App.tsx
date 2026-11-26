@@ -1,10 +1,9 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppScreen,
+  AuthenticatedUser,
   PastQuestionDoc,
-  StudentAccount,
   StudyMaterial,
-  UserRole,
 } from './core/types';
 import {
   closeBackLayer,
@@ -12,6 +11,8 @@ import {
   runNavigationGuard,
   subscribeBackHandlers,
 } from './core/navGuard';
+import { getInitialScreenForUser, resolveSafeScreen } from './app/router';
+import { ProtectedRoute } from './app/guards/ProtectedRoute';
 import type { AuthView } from './screens/AuthScreen';
 import type { PerformanceSubView } from './screens/PerformanceScreen';
 import { useArchiveStore } from './hooks/useArchiveStore';
@@ -25,7 +26,6 @@ import { NavigationShell } from './components/ui/NavigationShell';
 import { HomeScreenSkeleton } from './components/ui/Skeleton';
 import { LoadingScreen } from './screens/LoadingScreen';
 import { HomeScreen } from './screens/HomeScreen';
-import { STUDY_MATERIALS } from './data/materials';
 
 // Onboarding and auth are only needed by signed-out users, so they stay out of
 // the main bundle that returning (signed-in) users download.
@@ -129,7 +129,6 @@ interface AppHistoryState {
   nav?: NavState;
   perf?: PerfNavState;
   paywall?: PaywallContext | null;
-  role?: UserRole;
 }
 
 const INITIAL_NAV: NavState = { screen: 'home', docId: null, materialId: null, stack: [] };
@@ -143,7 +142,7 @@ const entryOf = (n: NavState): NavEntry => ({
 
 function AppContent() {
   const store = useArchiveStore();
-  const [authenticatedStudent, setAuthenticatedStudent] = useState<StudentAccount | null>(() =>
+  const [authenticatedStudent, setAuthenticatedStudent] = useState<AuthenticatedUser | null>(() =>
     authService.getActiveSession()
   );
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
@@ -205,8 +204,11 @@ function AppContent() {
   );
 
   const selectedMaterial = useMemo(
-    () => STUDY_MATERIALS.find((m) => m.id === selectedMaterialId) ?? null,
-    [selectedMaterialId]
+    () =>
+      store.materials.find(
+        (m) => m.id === selectedMaterialId && (m.status ?? 'published') === 'published'
+      ) ?? null,
+    [store.materials, selectedMaterialId]
   );
 
   const scrollTop = () => window.scrollTo({ top: 0, behavior: 'instant' });
@@ -228,7 +230,6 @@ function AppContent() {
         nav: navRef.current,
         perf: perfRef.current,
         paywall: paywallRef.current,
-        role: archiveRepository.getSnapshot().activeRole,
         ...layersPatch,
       };
     },
@@ -443,17 +444,20 @@ function AppContent() {
       scroll = true,
       nextPaywall: PaywallContext | null = null
     ) => {
-      navRef.current = nextNav;
+      const safeNav: NavState = {
+        ...nextNav,
+        screen: resolveSafeScreen(authRef.current, nextNav.screen),
+      };
+      navRef.current = safeNav;
       perfRef.current = nextPerf;
       paywallRef.current = nextPaywall;
-      setNav(nextNav);
+      setNav(safeNav);
       setPerf(nextPerf);
       setPaywallContext(nextPaywall);
       pushHistory({
-        nav: nextNav,
+        nav: safeNav,
         perf: nextPerf,
         paywall: nextPaywall,
-        role: archiveRepository.getSnapshot().activeRole,
       });
       if (scroll) scrollTop();
     },
@@ -475,18 +479,23 @@ function AppContent() {
         !(existing.__pqgLayers && existing.__pqgLayers.length > 0) &&
         typeof existing.idx === 'number';
       historyIdxRef.current = hasValidSignedInRoot ? existing.idx : 0;
-      navRef.current = INITIAL_NAV;
+
+      const landingNav: NavState = {
+        ...INITIAL_NAV,
+        screen: getInitialScreenForUser(authenticatedStudent),
+      };
+
+      navRef.current = landingNav;
       perfRef.current = INITIAL_PERF;
       paywallRef.current = null;
-      setNav(INITIAL_NAV);
+      setNav(landingNav);
       setPerf(INITIAL_PERF);
       setPaywallContext(null);
       window.history.replaceState(
         {
-          nav: INITIAL_NAV,
+          nav: landingNav,
           perf: INITIAL_PERF,
           paywall: null,
-          role: archiveRepository.getSnapshot().activeRole,
           idx: historyIdxRef.current,
         } satisfies AppHistoryState,
         ''
@@ -618,20 +627,23 @@ function AppContent() {
       }
 
       if (st?.__pqgOut) {
+        const landingNav: NavState = {
+          ...INITIAL_NAV,
+          screen: getInitialScreenForUser(authRef.current),
+        };
         historyIdxRef.current = 0;
         pushedLayerIdsRef.current = [];
-        navRef.current = INITIAL_NAV;
+        navRef.current = landingNav;
         perfRef.current = INITIAL_PERF;
         paywallRef.current = null;
-        setNav(INITIAL_NAV);
+        setNav(landingNav);
         setPerf(INITIAL_PERF);
         setPaywallContext(null);
         window.history.replaceState(
           {
-            nav: INITIAL_NAV,
+            nav: landingNav,
             perf: INITIAL_PERF,
             paywall: null,
-            role: archiveRepository.getSnapshot().activeRole,
             idx: 0,
           } satisfies AppHistoryState,
           ''
@@ -640,11 +652,11 @@ function AppContent() {
         return;
       }
 
-      if (st?.role && st.role !== archiveRepository.getSnapshot().activeRole) {
-        archiveRepository.setActiveRole(st.role);
-      }
-
-      const nextNav = st?.nav ?? INITIAL_NAV;
+      const rawNav = st?.nav ?? INITIAL_NAV;
+      const nextNav: NavState = {
+        ...rawNav,
+        screen: resolveSafeScreen(authRef.current, rawNav.screen),
+      };
       const nextPerf = st?.perf ?? INITIAL_PERF;
       const nextPaywall = st?.paywall ?? null;
       const navOrPerfChanged =
@@ -712,28 +724,28 @@ function AppContent() {
   // Tabs reset the trail. Alerts (opened from the bell) and Practice Exam remember where you were.
   const navigateDirect = useCallback(
     (screen: AppScreen) => {
-      if (screen === 'subscription') {
+      const safeScreen = resolveSafeScreen(authRef.current, screen);
+      if (safeScreen === 'subscription') {
         openPaywallDirect();
         return;
       }
       if (!ensureStandardAccess()) return;
 
       const prev = navRef.current;
-      if (prev.screen === screen) {
-        if (screen === 'performance' && perfRef.current.view !== 'list') {
+      if (prev.screen === safeScreen) {
+        if (safeScreen === 'performance' && perfRef.current.view !== 'list') {
           go(prev, INITIAL_PERF);
           return;
         }
-        const st = window.history.state as AppHistoryState | null;
-        const currentRole = archiveRepository.getSnapshot().activeRole;
-        if (st && !st.__pqgOut && st.role !== currentRole) {
-          window.history.replaceState({ ...st, role: currentRole } satisfies AppHistoryState, '');
-        }
         return;
       }
-      const remember = screen === 'notifications' || screen === 'mock_exam';
+      const remember = safeScreen === 'notifications' || safeScreen === 'mock_exam';
       go(
-        { ...prev, screen, stack: remember ? [...prev.stack, entryOf(prev)] : [] },
+        {
+          ...prev,
+          screen: safeScreen,
+          stack: remember ? [...prev.stack, entryOf(prev)] : [],
+        },
         INITIAL_PERF
       );
     },
@@ -790,7 +802,6 @@ function AppContent() {
           nav: next,
           perf: INITIAL_PERF,
           paywall: null,
-          role: archiveRepository.getSnapshot().activeRole,
         },
       };
       if (pendingPopTimerRef.current !== null) window.clearTimeout(pendingPopTimerRef.current);
@@ -874,7 +885,6 @@ function AppContent() {
       {
         nav: nextNav,
         perf: INITIAL_PERF,
-        role: archiveRepository.getSnapshot().activeRole,
       },
       true
     );
@@ -1030,30 +1040,16 @@ function AppContent() {
     scrollTop();
   }, [pushHistory]);
 
-  const handleRoleChange = useCallback(
-    (role: UserRole) => {
-      runNavigationGuard(() => {
-        archiveRepository.setActiveRole(role);
-        const target: AppScreen =
-          role === 'school_admin'
-            ? 'school_admin'
-            : role === 'super_admin'
-              ? 'super_admin'
-              : 'home';
-        navigateDirect(target);
-      });
-    },
-    [navigateDirect]
-  );
-
   const handleSignOut = useCallback(() => {
     runNavigationGuard(() => {
       authService.clearActiveSession();
       setAuthenticatedStudent(null);
       navRef.current = INITIAL_NAV;
       perfRef.current = INITIAL_PERF;
+      paywallRef.current = null;
       setNav(INITIAL_NAV);
       setPerf(INITIAL_PERF);
+      setPaywallContext(null);
     });
   }, []);
 
@@ -1107,8 +1103,6 @@ function AppContent() {
       onOpenPaywall={openPaywall}
       onQuickFind={handleQuickFind}
       unreadCount={unreadCount}
-      activeRole={store.activeRole}
-      onRoleChange={handleRoleChange}
       student={authenticatedStudent}
       onSignOut={handleSignOut}
     >
@@ -1179,9 +1173,28 @@ function AppContent() {
           <InfoScreen page={activeScreen} onNavigate={handleNavigate} />
         )}
 
-        {activeScreen === 'school_admin' && <SchoolAdminScreen />}
+        {activeScreen === 'school_admin' && (
+          <ProtectedRoute
+            user={authenticatedStudent}
+            screen="school_admin"
+            onFallbackNavigate={handleNavigate}
+          >
+            <SchoolAdminScreen currentUser={authenticatedStudent} />
+          </ProtectedRoute>
+        )}
 
-        {activeScreen === 'super_admin' && <SuperAdminScreen />}
+        {activeScreen === 'super_admin' && (
+          <ProtectedRoute
+            user={authenticatedStudent}
+            screen="super_admin"
+            onFallbackNavigate={handleNavigate}
+          >
+            <SuperAdminScreen
+              currentUser={authenticatedStudent}
+              onSignedOutReset={handleSignOut}
+            />
+          </ProtectedRoute>
+        )}
       </Suspense>
     </NavigationShell>
   );

@@ -53,8 +53,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     }
   }, [focusSearchSignal, searchInputRef]);
 
-  const heroFeaturedDoc = filteredDocs[0] ?? store.documents[0];
-  const secondaryHighlightDoc = filteredDocs[1] ?? store.documents[1];
+  const publishedForSchool = store.documents.filter(
+    (d) => d.status === 'published' && d.schoolId === activeSchool.id
+  );
+  const heroFeaturedDoc = filteredDocs[0] ?? publishedForSchool[0];
+  const secondaryHighlightDoc = filteredDocs[1] ?? publishedForSchool[1];
 
   return (
     <div className="space-y-6 page-enter">

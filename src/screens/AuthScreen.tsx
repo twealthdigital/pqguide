@@ -7,11 +7,14 @@ import {
   EyeOff,
   Mail,
   RefreshCw,
+  RotateCcw,
+  ShieldCheck,
 } from 'lucide-react';
-import type { StudentAccount } from '../core/types';
+import type { AuthenticatedUser } from '../core/types';
 import {
   AAUA_FACULTIES,
   authService,
+  IS_DEV_BOOTSTRAP_ENV,
   validateMatricNumber,
 } from '../services/authService';
 import { BrandLockup } from '../components/ui/BrandLockup';
@@ -24,7 +27,8 @@ export type AuthView =
   | 'verify_signup'
   | 'forgot_request'
   | 'forgot_verify'
-  | 'forgot_reset';
+  | 'forgot_reset'
+  | 'dev_super_admin_setup';
 
 type ButtonActionKey =
   | 'signin'
@@ -33,13 +37,15 @@ type ButtonActionKey =
   | 'resend_code'
   | 'forgot_request'
   | 'forgot_verify'
-  | 'forgot_save';
+  | 'forgot_save'
+  | 'dev_bootstrap'
+  | 'dev_reset';
 
 interface AuthScreenProps {
   view?: AuthView;
   onViewChange?: (next: AuthView, options?: { replace?: boolean }) => void;
   onAuthBack?: (fallbackView: AuthView) => void;
-  onAuthenticated: (account: StudentAccount) => void;
+  onAuthenticated: (account: AuthenticatedUser) => void;
   onBackToOnboarding?: () => void;
 }
 
@@ -143,7 +149,20 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
-  // Sign In fields
+  // Dev-only Super Admin bootstrap fields
+  const [devBootstrapAvailable, setDevBootstrapAvailable] = useState(() =>
+    authService.isDevBootstrapAvailable()
+  );
+  const [devFullName, setDevFullName] = useState('');
+  const [devEmail, setDevEmail] = useState('');
+  const [devPassword, setDevPassword] = useState('');
+  const [devConfirmPassword, setDevConfirmPassword] = useState('');
+  const [devConfirmPhrase, setDevConfirmPhrase] = useState('');
+  const [showDevPassword, setShowDevPassword] = useState(false);
+  const [showDevResetBox, setShowDevResetBox] = useState(false);
+  const [devResetPhrase, setDevResetPhrase] = useState('');
+
+  // Sign In fields (Matric Number or Email)
   const [signinMatric, setSigninMatric] = useState('');
   const [signinPassword, setSigninPassword] = useState('');
   const [showSigninPassword, setShowSigninPassword] = useState(false);
@@ -346,10 +365,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setInfoMsg(null);
     setActiveAction('signin');
 
-    await scheduleDelay(550);
+    await scheduleDelay(450);
     if (!mountedRef.current) return;
 
-    const result = await authService.signinWithMatric(
+    const result = await authService.signinWithIdentifier(
       signinMatric,
       signinPassword
     );
@@ -363,11 +382,69 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
     setActiveAction(null);
     setSuccessAction('signin');
-    await scheduleDelay(650);
+    await scheduleDelay(500);
     if (!mountedRef.current) return;
 
     setSuccessAction(null);
     onAuthenticated(result.data.account);
+  };
+
+  const handleDevBootstrapSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setInfoMsg(null);
+    setActiveAction('dev_bootstrap');
+
+    await scheduleDelay(450);
+    if (!mountedRef.current) return;
+
+    const result = await authService.bootstrapFirstSuperAdmin({
+      fullName: devFullName,
+      email: devEmail,
+      password: devPassword,
+      confirmPassword: devConfirmPassword,
+      confirmationPhrase: devConfirmPhrase,
+    });
+
+    if (!mountedRef.current) return;
+    if (!result.ok || !result.data) {
+      setActiveAction(null);
+      setErrorMsg(result.error ?? 'Bootstrap failed.');
+      return;
+    }
+
+    setDevBootstrapAvailable(false);
+    setActiveAction(null);
+    setSuccessAction('dev_bootstrap');
+    await scheduleDelay(500);
+    if (!mountedRef.current) return;
+
+    setSuccessAction(null);
+    onAuthenticated(result.data.account);
+  };
+
+  const handleDevResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setInfoMsg(null);
+    setActiveAction('dev_reset');
+
+    await scheduleDelay(300);
+    if (!mountedRef.current) return;
+
+    const result = authService.resetLocalDevData(devResetPhrase, null);
+    setActiveAction(null);
+    if (!result.ok) {
+      setErrorMsg(result.error ?? 'Could not reset local data.');
+      return;
+    }
+
+    setDevBootstrapAvailable(authService.isDevBootstrapAvailable());
+    setDevResetPhrase('');
+    setShowDevResetBox(false);
+    setInfoMsg('Local development data cleared. You can initialize a new Super Admin now.');
   };
 
   const handleSignUpSubmit = async (e: React.FormEvent) => {
@@ -554,12 +631,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     await scheduleDelay(750);
     if (!mountedRef.current) return;
 
-    // Auto-fill both matric number & new password on Login so user only presses Login
+    // Auto-fill identifier & new password on Login so user only presses Login
     setSuccessAction(null);
-    setSigninMatric(result.data.matricNumber);
+    setSigninMatric(result.data.identifier);
     setSigninPassword(result.data.newPassword);
     setShowSigninPassword(false);
-    setInfoMsg('Password updated! Your matric & new password are ready — tap Sign In.');
+    setInfoMsg('Password updated! Your credentials are ready — tap Login.');
     switchView('signin', true, true);
   };
 
@@ -585,11 +662,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       ? 'Forgot Password'
       : view === 'forgot_verify'
       ? 'Enter Reset Code'
+      : view === 'dev_super_admin_setup'
+      ? 'Dev Super Admin Setup'
       : 'Set New Password';
 
   const viewSubheading =
     view === 'signin'
-      ? 'Sign in with your student matric number and password.'
+      ? 'Sign in with your matric number or assigned administrator email.'
       : view === 'signup'
       ? 'Create your verified student account with your matric number.'
       : view === 'verify_signup'
@@ -598,7 +677,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       ? 'Enter your matric number or email to receive a reset code.'
       : view === 'forgot_verify'
       ? `Enter the 6-digit reset code sent to ${pendingEmail}.`
-      : 'Choose a new password for your student account.';
+      : view === 'dev_super_admin_setup'
+      ? 'Local development bootstrap for initializing the first Super Admin account.'
+      : 'Choose a new password for your account.';
 
   return (
     <div className="min-h-[100dvh] w-full bg-[#1D1E23] text-[#1A1B20] flex flex-col lg:grid lg:grid-cols-12 page-enter">
@@ -635,8 +716,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 if (view === 'verify_signup') goBackAuth('signup');
                 else if (view === 'forgot_reset') goBackAuth('forgot_verify');
                 else if (view === 'forgot_verify') goBackAuth('forgot_request');
-                else if (view === 'signup' || view === 'forgot_request') goBackAuth('signin');
-                else onBackToOnboarding?.();
+                else if (
+                  view === 'signup' ||
+                  view === 'forgot_request' ||
+                  view === 'dev_super_admin_setup'
+                ) {
+                  goBackAuth('signin');
+                } else {
+                  onBackToOnboarding?.();
+                }
               }}
               aria-label="Go back"
               className="h-10 w-10 rounded-full bg-[#2B2E38] hover:bg-[#353946] text-white inline-flex items-center justify-center cursor-pointer transition-colors disabled:opacity-45"
@@ -700,104 +788,168 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
           {/* VIEW 1: SIGN IN */}
           {view === 'signin' && (
-            <form onSubmit={handleSignInSubmit} className="space-y-4 page-enter" noValidate>
-              <div>
-                <label
-                  htmlFor="signin-matric"
-                  className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
-                >
-                  Matric Number
-                </label>
-                <input
-                  id="signin-matric"
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={9}
-                  disabled={isBusy}
-                  value={signinMatric}
-                  onChange={(e) =>
-                    setSigninMatric(e.target.value.replace(/\D/g, '').slice(0, 9))
-                  }
-                  placeholder="e.g. 230404001"
-                  className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 font-mono-tabular text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5 px-1">
+            <div className="space-y-4 page-enter">
+              <form onSubmit={handleSignInSubmit} className="space-y-4" noValidate>
+                <div>
                   <label
-                    htmlFor="signin-password"
-                    className="block text-xs font-semibold text-[#1A1B20]"
+                    htmlFor="signin-matric"
+                    className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
                   >
-                    Password
+                    Matric Number or Email
                   </label>
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => {
-                      setForgotIdentifier(signinMatric);
-                      switchView('forgot_request');
-                    }}
-                    className="text-xs font-semibold text-[#1D1E23] hover:underline underline-offset-4 cursor-pointer disabled:opacity-45"
-                  >
-                    Forgot password?
-                  </button>
-                </div>
-
-                <div className="relative">
                   <input
-                    id="signin-password"
-                    type={showSigninPassword ? 'text' : 'password'}
+                    id="signin-matric"
+                    type="text"
+                    inputMode="text"
+                    autoCapitalize="none"
+                    autoCorrect="off"
                     disabled={isBusy}
-                    value={signinPassword}
-                    onChange={(e) => setSigninPassword(e.target.value)}
-                    placeholder="Enter your password"
-                    className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white pl-4 pr-12 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
+                    value={signinMatric}
+                    onChange={(e) => setSigninMatric(e.target.value)}
+                    placeholder="e.g. 230404001 or admin@aaua.edu.ng"
+                    className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                   />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5 px-1">
+                    <label
+                      htmlFor="signin-password"
+                      className="block text-xs font-semibold text-[#1A1B20]"
+                    >
+                      Password
+                    </label>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setForgotIdentifier(signinMatric);
+                        switchView('forgot_request');
+                      }}
+                      className="text-xs font-semibold text-[#1D1E23] hover:underline underline-offset-4 cursor-pointer disabled:opacity-45"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      id="signin-password"
+                      type={showSigninPassword ? 'text' : 'password'}
+                      disabled={isBusy}
+                      value={signinPassword}
+                      onChange={(e) => setSigninPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white pl-4 pr-12 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
+                    />
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => setShowSigninPassword((s) => !s)}
+                      aria-label={showSigninPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full flex items-center justify-center text-[#686C78] hover:text-[#1A1B20] cursor-pointer"
+                    >
+                      {showSigninPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <TactileButton
+                    type="submit"
+                    variant="dark"
+                    size="lg"
+                    fullWidth
+                    className="rounded-full"
+                    loading={activeAction === 'signin'}
+                    success={successAction === 'signin'}
+                    successLabel="Signed in!"
+                    disabled={isBusy}
+                  >
+                    Login
+                  </TactileButton>
+                </div>
+
+                <p className="text-center text-xs text-[#686C78] pt-2">
+                  New student here?{' '}
                   <button
                     type="button"
                     disabled={isBusy}
-                    onClick={() => setShowSigninPassword((s) => !s)}
-                    aria-label={showSigninPassword ? 'Hide password' : 'Show password'}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full flex items-center justify-center text-[#686C78] hover:text-[#1A1B20] cursor-pointer"
+                    onClick={() => switchView('signup')}
+                    className="font-bold text-[#1D1E23] underline underline-offset-4 cursor-pointer disabled:opacity-45"
                   >
-                    {showSigninPassword ? (
-                      <EyeOff className="w-4 h-4" />
-                    ) : (
-                      <Eye className="w-4 h-4" />
-                    )}
+                    Create an account
                   </button>
+                </p>
+              </form>
+
+              {IS_DEV_BOOTSTRAP_ENV && (
+                <div className="mt-5 pt-4 border-t border-[#1A1B20]/[0.08] space-y-2.5">
+                  {devBootstrapAvailable && (
+                    <button
+                      type="button"
+                      onClick={() => switchView('dev_super_admin_setup')}
+                      className="w-full min-h-[44px] rounded-2xl border border-[#1A1B20]/12 bg-[#F6F7F9] hover:bg-[#ECEEF3] px-3.5 py-2.5 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <ShieldCheck className="w-4 h-4 text-[#1D1E23] shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-[#1A1B20] truncate">
+                            Local Dev Setup: Initialize First Super Admin
+                          </p>
+                          <p className="text-[11px] text-[#686C78] truncate">
+                            Development mode only · Locks after initialization
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  )}
+
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => setShowDevResetBox((v) => !v)}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#686C78] hover:text-[#1A1B20] cursor-pointer"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Local Dev Data Reset</span>
+                    </button>
+                  </div>
+
+                  {showDevResetBox && (
+                    <form
+                      onSubmit={handleDevResetSubmit}
+                      className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3.5 space-y-2.5"
+                    >
+                      <p className="text-[11px] text-[#505460] leading-relaxed">
+                        Clears local accounts, sessions, and bootstrap lock in development storage only. Type <span className="font-mono-tabular font-bold text-[#1A1B20]">RESET DEV DATA</span> to confirm.
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={devResetPhrase}
+                          onChange={(e) => setDevResetPhrase(e.target.value)}
+                          placeholder="RESET DEV DATA"
+                          className="flex-1 min-h-[38px] rounded-xl bg-white border border-[#1A1B20]/15 px-3 text-xs font-mono-tabular text-[#1A1B20]"
+                        />
+                        <TactileButton
+                          type="submit"
+                          variant="dark"
+                          size="sm"
+                          loading={activeAction === 'dev_reset'}
+                        >
+                          Reset
+                        </TactileButton>
+                      </div>
+                    </form>
+                  )}
                 </div>
-              </div>
-
-              <div className="pt-2">
-                <TactileButton
-                  type="submit"
-                  variant="dark"
-                  size="lg"
-                  fullWidth
-                  className="rounded-full"
-                  loading={activeAction === 'signin'}
-                  success={successAction === 'signin'}
-                  successLabel="Signed in!"
-                  disabled={isBusy}
-                >
-                  Login
-                </TactileButton>
-              </div>
-
-              <p className="text-center text-xs text-[#686C78] pt-2">
-                New student here?{' '}
-                <button
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => switchView('signup')}
-                  className="font-bold text-[#1D1E23] underline underline-offset-4 cursor-pointer disabled:opacity-45"
-                >
-                  Create an account
-                </button>
-              </p>
-            </form>
+              )}
+            </div>
           )}
 
           {/* VIEW 2: SIGN UP */}
@@ -1196,6 +1348,167 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 </TactileButton>
               </div>
             </form>
+          )}
+
+          {/* VIEW 7: DEV-ONLY FIRST SUPER ADMIN BOOTSTRAP */}
+          {view === 'dev_super_admin_setup' && (
+            <div className="space-y-4 page-enter">
+              <div className="rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] px-4 py-3 text-xs text-[#92400E] leading-relaxed">
+                <p className="font-bold">Local Development Only — Not Production Auth</p>
+                <p className="mt-0.5">
+                  This setup creates your first Super Admin locally in browser storage so you can administer PQGuide during development. Production deployments must provision Super Admins server-side with MFA.
+                </p>
+              </div>
+
+              {!devBootstrapAvailable ? (
+                <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-5 text-center space-y-3">
+                  <p className="text-sm font-bold text-[#1A1B20]">
+                    Bootstrap Interface Disabled
+                  </p>
+                  <p className="text-xs text-[#505460]">
+                    A Super Admin account is already initialized or this build is not running in development mode.
+                  </p>
+                  <TactileButton
+                    type="button"
+                    variant="dark"
+                    size="md"
+                    onClick={() => goBackAuth('signin')}
+                  >
+                    Return to Sign In
+                  </TactileButton>
+                </div>
+              ) : (
+                <form onSubmit={handleDevBootstrapSubmit} className="space-y-3.5" noValidate>
+                  <div>
+                    <label
+                      htmlFor="dev-sa-name"
+                      className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                    >
+                      Super Admin Full Name
+                    </label>
+                    <input
+                      id="dev-sa-name"
+                      type="text"
+                      disabled={isBusy}
+                      value={devFullName}
+                      onChange={(e) => setDevFullName(e.target.value)}
+                      placeholder="e.g. Platform Lead"
+                      className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="dev-sa-email"
+                      className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                    >
+                      Super Admin Email
+                    </label>
+                    <input
+                      id="dev-sa-email"
+                      type="email"
+                      disabled={isBusy}
+                      value={devEmail}
+                      onChange={(e) => setDevEmail(e.target.value)}
+                      placeholder="lead@pqguide.local"
+                      className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="dev-sa-password"
+                      className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                    >
+                      Password (10+ chars, letters &amp; numbers)
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="dev-sa-password"
+                        type={showDevPassword ? 'text' : 'password'}
+                        disabled={isBusy}
+                        value={devPassword}
+                        onChange={(e) => setDevPassword(e.target.value)}
+                        placeholder="Create strong local dev password"
+                        className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white pl-4 pr-12 text-sm text-[#1A1B20]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDevPassword((s) => !s)}
+                        aria-label={showDevPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 h-9 w-9 rounded-full flex items-center justify-center text-[#686C78] hover:text-[#1A1B20] cursor-pointer"
+                      >
+                        {showDevPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="dev-sa-confirm"
+                      className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                    >
+                      Confirm Password
+                    </label>
+                    <input
+                      id="dev-sa-confirm"
+                      type={showDevPassword ? 'text' : 'password'}
+                      disabled={isBusy}
+                      value={devConfirmPassword}
+                      onChange={(e) => setDevConfirmPassword(e.target.value)}
+                      placeholder="Re-enter password"
+                      className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="dev-sa-phrase"
+                      className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                    >
+                      Type <span className="font-mono-tabular">INITIALIZE SUPER ADMIN</span>
+                    </label>
+                    <input
+                      id="dev-sa-phrase"
+                      type="text"
+                      disabled={isBusy}
+                      value={devConfirmPhrase}
+                      onChange={(e) => setDevConfirmPhrase(e.target.value)}
+                      placeholder="INITIALIZE SUPER ADMIN"
+                      className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 font-mono-tabular text-sm text-[#1A1B20]"
+                    />
+                  </div>
+
+                  <div className="pt-1">
+                    <TactileButton
+                      type="submit"
+                      variant="dark"
+                      size="lg"
+                      fullWidth
+                      className="rounded-full"
+                      loading={activeAction === 'dev_bootstrap'}
+                      success={successAction === 'dev_bootstrap'}
+                      successLabel="Super Admin Ready!"
+                      disabled={isBusy}
+                    >
+                      Initialize Dev Super Admin
+                    </TactileButton>
+                  </div>
+                </form>
+              )}
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => goBackAuth('signin')}
+                  className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to Sign in</span>
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

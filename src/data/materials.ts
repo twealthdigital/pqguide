@@ -8,6 +8,10 @@ import type { StudyMaterial } from '../core/types';
 export const STUDY_MATERIALS: StudyMaterial[] = [
   {
     id: 'mat-gns101-english-1',
+    schoolId: 'sch-aaua',
+    schoolCode: 'AAUA',
+    faculty: 'General Studies Unit',
+    department: 'General Studies',
     courseCode: 'GNS 101',
     courseTitle: 'Use of English & Communication Skills',
     level: '100L',
@@ -15,6 +19,10 @@ export const STUDY_MATERIALS: StudyMaterial[] = [
     summary:
       'The grammar, comprehension and writing skills most often tested in first-semester English.',
     readMinutes: 8,
+    sourceType: 'typed_document',
+    status: 'published',
+    uploadedBy: 'AAUA GNS Secretariat',
+    uploadedAt: '2026-11-20T09:00:00.000Z',
     sections: [
       {
         heading: 'What the exam usually tests',
@@ -90,6 +98,10 @@ export const STUDY_MATERIALS: StudyMaterial[] = [
   },
   {
     id: 'mat-gns102-english-2',
+    schoolId: 'sch-aaua',
+    schoolCode: 'AAUA',
+    faculty: 'General Studies Unit',
+    department: 'General Studies',
     courseCode: 'GNS 102',
     courseTitle: 'Use of English & Communication Skills II',
     level: '100L',
@@ -97,6 +109,10 @@ export const STUDY_MATERIALS: StudyMaterial[] = [
     summary:
       'Letters, summaries and essays: how to plan them and how to avoid the mistakes that cost marks.',
     readMinutes: 7,
+    sourceType: 'typed_document',
+    status: 'published',
+    uploadedBy: 'AAUA GNS Secretariat',
+    uploadedAt: '2026-11-22T09:00:00.000Z',
     sections: [
       {
         heading: 'Formal and informal letters',
@@ -156,6 +172,10 @@ export const STUDY_MATERIALS: StudyMaterial[] = [
   },
   {
     id: 'mat-gns103-library-ict',
+    schoolId: 'sch-aaua',
+    schoolCode: 'AAUA',
+    faculty: 'General Studies Unit',
+    department: 'General Studies',
     courseCode: 'GNS 103',
     courseTitle: 'Use of Library, Study Skills & ICT',
     level: '100L',
@@ -163,6 +183,10 @@ export const STUDY_MATERIALS: StudyMaterial[] = [
     summary:
       'How a library is organised, how to study well, and the ICT terms every first-year should know.',
     readMinutes: 7,
+    sourceType: 'typed_document',
+    status: 'published',
+    uploadedBy: 'AAUA GNS Secretariat',
+    uploadedAt: '2026-11-25T09:00:00.000Z',
     sections: [
       {
         heading: 'Using the library',

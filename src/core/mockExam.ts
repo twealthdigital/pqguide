@@ -795,7 +795,11 @@ interface Candidate {
   reasons: string[];
 }
 
-function buildTheoryQuestions(docs: PastQuestionDoc[], spec: ExamSpec): BuiltExam {
+function buildTheoryQuestions(
+  docs: PastQuestionDoc[],
+  spec: ExamSpec,
+  materials: StudyMaterial[] = STUDY_MATERIALS
+): BuiltExam {
   const scoped = docs.filter((d) => spec.courseCode === ALL_COURSES || d.courseCode === spec.courseCode);
 
   const candidates: Candidate[] = [];
@@ -859,8 +863,10 @@ function buildTheoryQuestions(docs: PastQuestionDoc[], spec: ExamSpec): BuiltExa
 
   // If user selected a custom count larger than the archive pool, supplement from reading guides
   if (questions.length < spec.questionCount) {
-    const mats = STUDY_MATERIALS.filter(
-      (m) => spec.courseCode === ALL_COURSES || m.courseCode === spec.courseCode
+    const mats = materials.filter(
+      (m) =>
+        (m.status ?? 'published') === 'published' &&
+        (spec.courseCode === ALL_COURSES || m.courseCode === spec.courseCode)
     );
     const extras: ExamQuestion[] = [];
     for (const mat of mats) {
@@ -946,11 +952,15 @@ function buildMcqOrBooleanFallbackFromDocs(
   return out;
 }
 
-export const buildExam = (docs: PastQuestionDoc[], spec: ExamSpec): BuiltExam => {
+export const buildExam = (
+  docs: PastQuestionDoc[],
+  spec: ExamSpec,
+  materials: StudyMaterial[] = STUDY_MATERIALS
+): BuiltExam => {
   const archivePool = countQuestionsFor(docs, spec.courseCode);
 
   if (spec.examType === 'theory') {
-    return buildTheoryQuestions(docs, spec);
+    return buildTheoryQuestions(docs, spec, materials);
   }
 
   const focusWords = Array.from(tokens(spec.focus));
