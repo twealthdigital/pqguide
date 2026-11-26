@@ -545,8 +545,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       {/* Desktop Left Sidebar */}
       <aside
         data-collapsed={sidebarCollapsed}
-        className={`hidden lg:flex lg:flex-col lg:shrink-0 bg-white border-r border-[#1A1B20]/[0.07] p-5 sticky top-0 z-40 h-screen justify-between transition-[width] ${sbEase} ${
-          sidebarCollapsed ? 'lg:w-[84px]' : 'lg:w-64'
+        className={`hidden lg:flex lg:flex-col lg:shrink-0 bg-white border-r border-[#1A1B20]/[0.07] sticky top-0 z-40 h-screen justify-between transition-[width,padding] ${sbEase} ${
+          sidebarCollapsed ? 'lg:w-[104px] px-3.5 py-5' : 'lg:w-64 p-5'
         }`}
       >
         {/* Edge toggle: collapse / expand the side panel */}
@@ -563,7 +563,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           />
         </button>
 
-        <div className="min-h-0 flex-1 overflow-y-auto space-y-4 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto space-y-3.5 pb-3">
           <button
             type="button"
             onClick={() => onNavigate(defaultScreen)}
@@ -578,8 +578,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               />
               <span
                 aria-hidden="true"
-                className={`absolute left-0 top-1/2 h-11 w-11 -translate-y-1/2 rounded-[14px] bg-[#1D1E23] text-white flex items-center justify-center transition-[opacity,transform] ${sbEase} ${
-                  sidebarCollapsed ? 'opacity-100 scale-100' : 'opacity-0 scale-75 pointer-events-none'
+                className={`absolute top-1/2 h-11 w-11 -translate-y-1/2 rounded-[14px] bg-[#1D1E23] text-white flex items-center justify-center transition-[opacity,transform,left] ${sbEase} ${
+                  sidebarCollapsed
+                    ? 'left-1/2 -translate-x-1/2 opacity-100 scale-100'
+                    : 'left-0 opacity-0 scale-75 pointer-events-none'
                 }`}
               >
                 <BrandLogo className="w-7" />
@@ -616,8 +618,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 aria-expanded={workspaceDropdownOpen}
                 title={sidebarCollapsed ? `Workspace: ${activeWorkspaceOption.label}` : undefined}
                 onClick={() => setWorkspaceDropdownOpen((prev) => !prev)}
-                className={`w-full min-h-[42px] rounded-2xl bg-[#1D1E23] text-white text-xs font-semibold flex items-center cursor-pointer hover:bg-[#2B2D35] transition-colors ${
-                  sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-3 gap-2'
+                className={`w-full min-h-[44px] rounded-2xl bg-[#1D1E23] text-white text-xs font-semibold flex items-center cursor-pointer hover:bg-[#2B2D35] transition-colors ${
+                  sidebarCollapsed ? 'justify-center px-0' : 'justify-between px-3 gap-2'
                 }`}
               >
                 <span className="flex items-center gap-2 min-w-0">
@@ -641,7 +643,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   aria-label="Select workspace"
                   className={`z-50 mt-1.5 rounded-2xl bg-white border border-[#1A1B20]/[0.1] shadow-[0_18px_38px_-12px_rgba(18,19,24,0.34)] p-1.5 space-y-1 page-enter ${
                     sidebarCollapsed
-                      ? 'fixed left-[84px] top-[148px] w-56'
+                      ? 'fixed left-[108px] top-[148px] w-56'
                       : 'absolute left-0 right-0'
                   }`}
                 >
@@ -687,27 +689,38 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   onClick={() => onNavigate(item.id)}
                   title={sidebarCollapsed ? item.label : undefined}
                   aria-label={item.label}
-                  className={`relative w-full min-h-[44px] px-3 py-2.5 rounded-2xl flex items-center text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                  className={`relative w-full min-h-[44px] rounded-2xl flex items-center text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                    sidebarCollapsed ? 'justify-center px-0' : 'px-3 py-2.5'
+                  } ${
                     isActive
                       ? 'tactile-dark text-white'
                       : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
                   }`}
                 >
-                  <span className="shrink-0">{item.icon}</span>
+                  <span className="shrink-0 flex items-center justify-center">{item.icon}</span>
                   <span
                     className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
-                      sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-3'
+                      sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-3'
                     }`}
                   >
                     {item.label}
                   </span>
-                  {item.badge !== undefined && item.badge > 0 && (
+                  {item.badge !== undefined && item.badge > 0 && !sidebarCollapsed && (
                     <span
                       className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
-                        sidebarCollapsed ? 'opacity-0 w-0 px-0 overflow-hidden' : 'opacity-100'
-                      } ${isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'}`}
+                        isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
+                      }`}
                     >
                       {item.badge}
+                    </span>
+                  )}
+                  {item.badge !== undefined && item.badge > 0 && sidebarCollapsed && (
+                    <span
+                      className={`absolute top-1.5 right-3 min-w-[16px] h-[16px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
+                        isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
+                      }`}
+                    >
+                      {item.badge > 9 ? '9+' : item.badge}
                     </span>
                   )}
                 </button>
@@ -715,16 +728,14 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             })}
           </nav>
 
-          {/* Super Admin Pages inside Rounded-Edge Container (per sidebar sketch) */}
+          {/* Super Admin Pages inside Dark Rounded-Edge Container */}
           {isSuperAdminConsole && onSelectAdminSection && (
             <nav
               aria-label="Super Admin pages"
-              className={`rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] space-y-1 ${
-                sidebarCollapsed ? 'p-1' : 'p-1.5'
-              }`}
+              className="rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)] p-2 space-y-1"
             >
               {!sidebarCollapsed && (
-                <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
                   Console Pages
                 </p>
               )}
@@ -738,29 +749,38 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     onClick={() => handlePickSuperAdminSection(pg.id)}
                     title={sidebarCollapsed ? pg.label : undefined}
                     aria-label={pg.label}
-                    className={`relative w-full min-h-[38px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
-                      sidebarCollapsed ? 'justify-center px-1.5' : 'px-2.5 py-2'
+                    className={`relative w-full min-h-[40px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                      sidebarCollapsed ? 'justify-center px-0' : 'px-2.5 py-2'
                     } ${
                       isActive
-                        ? 'bg-[#1D1E23] text-white shadow-xs'
-                        : 'text-[#505460] hover:bg-white hover:text-[#1A1B20]'
+                        ? 'bg-white text-[#1D1E23] shadow-xs'
+                        : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                     }`}
                   >
-                    <span className="shrink-0">{pg.icon}</span>
+                    <span className="shrink-0 flex items-center justify-center">{pg.icon}</span>
                     <span
                       className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
-                        sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
+                        sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
                       }`}
                     >
                       {pg.label}
                     </span>
-                    {pg.badge !== undefined && pg.badge > 0 && (
+                    {pg.badge !== undefined && pg.badge > 0 && !sidebarCollapsed && (
                       <span
                         className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
-                          sidebarCollapsed ? 'opacity-0 w-0 px-0 overflow-hidden' : 'opacity-100'
-                        } ${isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'}`}
+                          isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                        }`}
                       >
                         {pg.badge}
+                      </span>
+                    )}
+                    {pg.badge !== undefined && pg.badge > 0 && sidebarCollapsed && (
+                      <span
+                        className={`absolute top-1 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
+                          isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                        }`}
+                      >
+                        {pg.badge > 9 ? '9+' : pg.badge}
                       </span>
                     )}
                   </button>
@@ -812,16 +832,18 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               onClick={() => handlePickSuperAdminSection('settings')}
               title={sidebarCollapsed ? 'Settings (Live UI Editor)' : undefined}
               aria-label="Settings"
-              className={`w-full min-h-[42px] px-3 rounded-2xl flex items-center text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+              className={`w-full min-h-[44px] rounded-2xl flex items-center text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                sidebarCollapsed ? 'justify-center px-0' : 'px-3'
+              } ${
                 activeScreen === 'super_admin' && activeAdminSection === 'settings'
                   ? 'bg-[#1D1E23] text-white'
                   : 'bg-[#F6F7F9] text-[#1A1B20] hover:bg-[#ECEEF3]'
               }`}
             >
-              <Settings className="w-4 h-4 shrink-0" />
+              <Settings className="w-[18px] h-[18px] shrink-0" />
               <span
                 className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
-                  sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-2.5'
+                  sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-2.5'
                 }`}
               >
                 Settings (Website UIs)
@@ -1315,13 +1337,13 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 })}
               </nav>
 
-              {/* Super Admin Console Pages inside Rounded Container (Mobile Drawer) */}
+              {/* Super Admin Console Pages inside Dark Rounded Container (Mobile Drawer) */}
               {isSuperAdminConsole && onSelectAdminSection && (
                 <nav
                   aria-label="Super Admin mobile console pages"
-                  className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] p-2 space-y-1"
+                  className="rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white p-2 space-y-1 shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)]"
                 >
-                  <p className="px-2 pt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                  <p className="px-2 pt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
                     Console Pages
                   </p>
                   {superAdminPages.map((pg) => {
@@ -1337,8 +1359,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                         }}
                         className={`w-full min-h-[40px] px-3 rounded-xl flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors ${
                           active
-                            ? 'bg-[#1D1E23] text-white'
-                            : 'text-[#505460] hover:bg-white hover:text-[#1A1B20]'
+                            ? 'bg-white text-[#1D1E23] shadow-xs'
+                            : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                         }`}
                       >
                         <span className="flex items-center gap-2.5">
@@ -1348,7 +1370,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                         {pg.badge !== undefined && pg.badge > 0 && (
                           <span
                             className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                              active ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
+                              active ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
                             }`}
                           >
                             {pg.badge}
@@ -1358,21 +1380,23 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     );
                   })}
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handlePickSuperAdminSection('settings');
-                      setDrawerOpen(false);
-                    }}
-                    className={`w-full min-h-[40px] px-3 mt-1 border-t border-[#1A1B20]/[0.07] pt-2 rounded-xl flex items-center gap-2.5 text-xs font-semibold cursor-pointer transition-colors ${
-                      activeScreen === 'super_admin' && activeAdminSection === 'settings'
-                        ? 'bg-[#1D1E23] text-white'
-                        : 'text-[#1A1B20] hover:bg-white'
-                    }`}
-                  >
-                    <Settings className="w-4 h-4" />
-                    <span>Settings (Website UIs)</span>
-                  </button>
+                  <div className="pt-1.5 mt-1.5 border-t border-white/[0.1]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handlePickSuperAdminSection('settings');
+                        setDrawerOpen(false);
+                      }}
+                      className={`w-full min-h-[40px] px-3 rounded-xl flex items-center gap-2.5 text-xs font-semibold cursor-pointer transition-colors ${
+                        activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                          ? 'bg-white text-[#1D1E23] shadow-xs'
+                          : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
+                      }`}
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span>Settings (Website UIs)</span>
+                    </button>
+                  </div>
                 </nav>
               )}
 
