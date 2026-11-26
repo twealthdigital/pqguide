@@ -11,7 +11,12 @@ import type {
   WorkspaceViewMode,
 } from './core/types';
 import { getDefaultScreenForRole } from './core/permissions';
-import { detectAuthPortal, getPortalPath } from './app/portal';
+import {
+  detectAuthPortal,
+  getPortalForRole,
+  getPortalPath,
+  isPortalCompatibleWithRole,
+} from './app/portal';
 import {
   closeBackLayer,
   getBackLayers,
@@ -20,11 +25,12 @@ import {
 } from './core/navGuard';
 import { getInitialScreenForUser, resolveSafeScreen } from './app/router';
 import { ProtectedRoute } from './app/guards/ProtectedRoute';
-import type { AuthView } from './screens/AuthScreen';
+import type { AuthNotice, AuthView } from './screens/AuthScreen';
 import type { PerformanceSubView } from './screens/PerformanceScreen';
 import { useArchiveStore } from './hooks/useArchiveStore';
 import { archiveRepository } from './services/archiveRepository';
 import { authService } from './services/authService';
+import { SESSION_KEY } from './services/auth/sessionService';
 import { localStore } from './services/storage/localStore';
 import {
   subscriptionService,
@@ -177,6 +183,15 @@ function AppContent() {
   const [paywallContext, setPaywallContext] = useState<PaywallContext | null>(null);
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
   const [activeDropIn, setActiveDropIn] = useState<DropInNotificationItem | null>(null);
+  const [authNotice, setAuthNotice] = useState<AuthNotice | null>(() => {
+    if (authService.consumeExpiredSessionNotice()) {
+      return {
+        tone: 'warning',
+        message: 'Your 12-hour session has expired. Please sign in again to continue.',
+      };
+    }
+    return null;
+  });
   const sessionBootMsRef = useRef<number>(Date.now());
   const seenNotifSignaturesRef = useRef<Map<string, Map<string, string>>>(new Map());
 
@@ -624,7 +639,36 @@ function AppContent() {
     [pushHistory]
   );
 
-  // Sync separated sign-in portal on URL hash/path change & record visitor telemetry
+  const resetSessionLocalState = useCallback(
+    (targetPortal: AuthPortal, notice: AuthNotice | null = null) => {
+      subscriptionService.setRoleOverride(null);
+      setAuthenticatedStudent(null);
+      setSuperAdminSection('overview');
+      setSchoolAdminSection('overview');
+      setSettingsTarget('normal_website');
+      setSuperAdminPreviewSchoolId('sch-aaua');
+      workspaceModeRef.current = 'student';
+      setWorkspaceMode('student');
+      navRef.current = INITIAL_NAV;
+      perfRef.current = INITIAL_PERF;
+      paywallRef.current = null;
+      setNav(INITIAL_NAV);
+      setPerf(INITIAL_PERF);
+      setPaywallContext(null);
+      setActiveDropIn(null);
+      seenNotifSignaturesRef.current.clear();
+      setAuthNotice(notice);
+
+      const nextHash = getPortalPath(targetPortal);
+      if (window.location.hash !== nextHash) {
+        window.history.replaceState(null, '', nextHash);
+      }
+      setPortal(targetPortal);
+    },
+    []
+  );
+
+  // Sync separated sign-in portal on URL hash/path change, enforce portal isolation, & record visitor telemetry
   useEffect(() => {
     let visitorId = localStore.getItem('pqguide_visitor_id_v1');
     if (!visitorId) {
@@ -634,8 +678,40 @@ function AppContent() {
     archiveRepository.recordSiteVisit(visitorId);
 
     const syncPortal = () => {
-      setPortal(detectAuthPortal());
+      const nextPortal = detectAuthPortal();
+      const activeUser = authRef.current;
+
+      if (activeUser && !isPortalCompatibleWithRole(nextPortal, activeUser.role)) {
+        const expectedPortal = getPortalForRole(activeUser.role);
+        const expectedHash = getPortalPath(expectedPortal);
+        if (window.location.hash !== expectedHash) {
+          window.history.replaceState(window.history.state, '', expectedHash);
+        }
+        setPortal(expectedPortal);
+        if (nextPortal !== 'student') {
+          setActiveDropIn({
+            id: `portal-block-${Date.now()}`,
+            versionKey: `portal-block-${Date.now()}`,
+            title: 'Portal Access Restricted',
+            message: 'Your active account cannot open a different role sign-in portal.',
+            category: 'access',
+            createdAt: new Date().toISOString(),
+          });
+        }
+        return;
+      }
+
+      setPortal((prev) => {
+        if (prev !== nextPortal && !activeUser) {
+          authViewRef.current = 'signin';
+          setAuthView('signin');
+          setAuthNotice(null);
+        }
+        return nextPortal;
+      });
     };
+
+    syncPortal();
     window.addEventListener('hashchange', syncPortal);
     window.addEventListener('popstate', syncPortal);
     return () => {
@@ -643,6 +719,71 @@ function AppContent() {
       window.removeEventListener('popstate', syncPortal);
     };
   }, []);
+
+  // Watch 12-hour session expiration, cross-tab sign-out, & account status revocation
+  useEffect(() => {
+    if (!authenticatedStudent) return;
+
+    const handleSessionInvalidated = (reason: 'expired' | 'external') => {
+      const current = authRef.current;
+      const targetPortal = current ? getPortalForRole(current.role) : detectAuthPortal();
+      if (reason === 'expired') {
+        authService.clearActiveSession(current, 'expired');
+        authService.consumeExpiredSessionNotice();
+        resetSessionLocalState(targetPortal, {
+          tone: 'warning',
+          message: 'Your 12-hour session has expired. Please sign in again to continue.',
+        });
+      } else {
+        authService.clearActiveSession(null, 'manual');
+        resetSessionLocalState(targetPortal, {
+          tone: 'info',
+          message: 'You were signed out of your session.',
+        });
+      }
+    };
+
+    const verifySession = () => {
+      const current = authService.getActiveSession();
+      if (!current) {
+        const expired = authService.consumeExpiredSessionNotice();
+        handleSessionInvalidated(expired ? 'expired' : 'external');
+      }
+    };
+
+    const remainingMs = authService.getSessionRemainingMs();
+    if (remainingMs === null || remainingMs <= 0) {
+      verifySession();
+      return;
+    }
+
+    // Cap single setTimeout delay safely under 32-bit signed int limit (12h = 43.2M ms, well within 2.14B ms)
+    const expiryTimer = window.setTimeout(verifySession, remainingMs + 250);
+    const intervalId = window.setInterval(verifySession, 60_000);
+
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        verifySession();
+      }
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === SESSION_KEY || event.key === null) {
+        verifySession();
+      }
+    };
+
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      window.clearTimeout(expiryTimer);
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [authenticatedStudent, resetSessionLocalState]);
 
   useEffect(() => {
     getBackLayers().forEach((l) => supersededLayerIdsRef.current.add(l.id));
@@ -1370,36 +1511,12 @@ function AppContent() {
   const handleSignOut = useCallback(() => {
     runNavigationGuard(() => {
       const current = authRef.current;
-      const currentPortal: AuthPortal =
-        current?.role === 'super_admin'
-          ? 'super_admin'
-          : current?.role === 'school_admin'
-            ? 'school_admin'
-            : 'student';
+      const currentPortal: AuthPortal = current ? getPortalForRole(current.role) : 'student';
 
-      authService.clearActiveSession(current);
-      subscriptionService.setRoleOverride(null);
-      setAuthenticatedStudent(null);
-      setSuperAdminSection('overview');
-      setSchoolAdminSection('overview');
-      workspaceModeRef.current = 'student';
-      setWorkspaceMode('student');
-      navRef.current = INITIAL_NAV;
-      perfRef.current = INITIAL_PERF;
-      paywallRef.current = null;
-      setNav(INITIAL_NAV);
-      setPerf(INITIAL_PERF);
-      setPaywallContext(null);
-
-      if (currentPortal !== 'student') {
-        const nextHash = getPortalPath(currentPortal);
-        if (window.location.hash !== nextHash) {
-          window.history.replaceState(null, '', nextHash);
-        }
-        setPortal(currentPortal);
-      }
+      authService.clearActiveSession(current, 'manual');
+      resetSessionLocalState(currentPortal, null);
     });
-  }, []);
+  }, [resetSessionLocalState]);
 
   const handleDismissDropIn = useCallback(() => {
     setActiveDropIn(null);
@@ -1445,10 +1562,13 @@ function AppContent() {
         <AuthScreen
           portal={portal}
           view={authView}
+          sessionNotice={authNotice}
+          onDismissSessionNotice={() => setAuthNotice(null)}
           onViewChange={handleAuthViewChange}
           onAuthBack={handleAuthBack}
-          onAuthenticated={(account) => {
-            authService.saveActiveSession(account);
+          onAuthenticated={(account, rememberMe = true) => {
+            setAuthNotice(null);
+            authService.saveActiveSession(account, rememberMe);
             setAuthenticatedStudent(account);
           }}
           onBackToOnboarding={portal === 'student' ? handleBackToOnboarding : undefined}

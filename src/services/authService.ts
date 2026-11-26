@@ -9,6 +9,15 @@ import type {
   UserRole,
 } from '../core/types';
 import { archiveRepository } from './archiveRepository';
+import {
+  getGoogleOAuthConfigStatus,
+  googleAuthService,
+  type VerifiedGoogleStudentIdentity,
+} from './auth/googleAuthService';
+import {
+  evaluatePasswordStrength,
+  validatePasswordForRole,
+} from './auth/passwordPolicy';
 import { sessionService } from './auth/sessionService';
 import { localStore } from './storage/localStore';
 
@@ -17,11 +26,9 @@ const OTP_KEY = 'pqguide_student_otp_v1';
 const ONBOARDING_KEY = 'pqguide_onboarding_done_v1';
 const BOOTSTRAP_LOCK_KEY = 'pqguide_dev_bootstrap_lock_v1';
 
-export const IS_DEV_BOOTSTRAP_ENV: boolean =
-  typeof import.meta !== 'undefined' &&
-  typeof (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === 'boolean'
-    ? Boolean((import.meta as unknown as { env: { DEV: boolean } }).env.DEV)
-    : true;
+export { evaluatePasswordStrength, getGoogleOAuthConfigStatus, validatePasswordForRole };
+
+export const IS_DEV_BOOTSTRAP_ENV: boolean = import.meta.env.DEV;
 
 export const AAUA_FACULTIES: Record<string, string[]> = {
   'Computing & Information Sciences': [
@@ -280,6 +287,7 @@ export interface SignupInput {
   department: string;
   email: string;
   password: string;
+  confirmPassword?: string;
 }
 
 export interface SuperAdminBootstrapInput {
@@ -288,6 +296,7 @@ export interface SuperAdminBootstrapInput {
   password: string;
   confirmPassword: string;
   confirmationPhrase: string;
+  rememberMe?: boolean;
 }
 
 export interface CreateSchoolAdminInput {
@@ -301,6 +310,7 @@ export interface CreateSchoolAdminInput {
 export interface AuthActionResult<T = void> {
   ok: boolean;
   error?: string;
+  notConfigured?: boolean;
   data?: T;
 }
 
@@ -357,11 +367,9 @@ export const authService = {
     if (!validateEmailAddress(email)) {
       return { ok: false, error: 'Enter a valid Super Admin email address.' };
     }
-    if (input.password.length < 10 || !/[A-Za-z]/.test(input.password) || !/\d/.test(input.password)) {
-      return {
-        ok: false,
-        error: 'Super Admin password must be at least 10 characters and include letters and numbers.',
-      };
+    const pwError = validatePasswordForRole(input.password, 'super_admin');
+    if (pwError) {
+      return { ok: false, error: pwError };
     }
     if (input.password !== input.confirmPassword) {
       return { ok: false, error: 'Passwords do not match.' };
@@ -399,6 +407,7 @@ export const authService = {
       passwordHash,
       passwordSalt: salt,
       isEmailVerified: true,
+      authProvider: 'local',
       createdAt: now,
       createdBy: 'local-dev-bootstrap',
     };
@@ -437,7 +446,7 @@ export const authService = {
       detail: 'Initialized and signed into Super Admin console',
     });
 
-    this.saveActiveSession(publicUser);
+    this.saveActiveSession(publicUser, input.rememberMe ?? true);
     return { ok: true, data: { account: publicUser } };
   },
 
@@ -468,9 +477,40 @@ export const authService = {
   // Public Student Registration (Strictly Role-Locked to 'student')
   // -------------------------------------------------------------------------
 
+  isDuplicateMatricOrEmail(params: {
+    matricNumber?: string;
+    email?: string;
+  }): { duplicateMatric: boolean; duplicateEmail: boolean; isAdminEmail: boolean } {
+    const cleanMatric = params.matricNumber ? params.matricNumber.replace(/\s+/g, '').trim() : '';
+    const cleanEmail = params.email ? params.email.trim().toLowerCase() : '';
+    const accounts = readAccounts();
+    const repoAccounts = archiveRepository.getSnapshot().accounts;
+
+    const duplicateMatric = Boolean(
+      cleanMatric &&
+        (accounts.some((a) => a.matricNumber === cleanMatric && a.isEmailVerified) ||
+          repoAccounts.some((a) => (a.matricNumber ?? '') === cleanMatric))
+    );
+
+    const matchedLocalEmail = cleanEmail
+      ? accounts.find((a) => a.email === cleanEmail && a.isEmailVerified)
+      : undefined;
+    const matchedRepoEmail = cleanEmail
+      ? repoAccounts.find((a) => a.email.toLowerCase() === cleanEmail)
+      : undefined;
+
+    const isAdminEmail = Boolean(
+      (matchedLocalEmail && matchedLocalEmail.role !== 'student') ||
+        (matchedRepoEmail && matchedRepoEmail.role !== 'student')
+    );
+    const duplicateEmail = Boolean(matchedLocalEmail || matchedRepoEmail);
+
+    return { duplicateMatric, duplicateEmail, isAdminEmail };
+  },
+
   async startSignup(
     input: SignupInput
-  ): Promise<AuthActionResult<{ email: string; matricNumber: string; verificationCode: string }>> {
+  ): Promise<AuthActionResult<{ email: string; matricNumber: string; verificationCode?: string }>> {
     const fullName = sanitizeSingleLine(input.fullName, 120);
     const faculty = sanitizeSingleLine(input.faculty, 120);
     const department = sanitizeSingleLine(input.department, 120);
@@ -489,31 +529,39 @@ export const authService = {
     if (!validateEmailAddress(email)) {
       return { ok: false, error: 'Enter a valid email address.' };
     }
-    if (input.password.length < 6) {
-      return { ok: false, error: 'Password must be at least 6 characters.' };
+    const pwError = validatePasswordForRole(input.password, 'student');
+    if (pwError) {
+      return { ok: false, error: pwError };
+    }
+    if (input.confirmPassword !== undefined && input.password !== input.confirmPassword) {
+      return { ok: false, error: 'Passwords do not match.' };
     }
 
-    const accounts = readAccounts();
-    const existingVerifiedMatric = accounts.find(
-      (a) => a.matricNumber === matricCheck.normalized && a.isEmailVerified
-    );
-    if (existingVerifiedMatric) {
+    const dup = this.isDuplicateMatricOrEmail({
+      matricNumber: matricCheck.normalized,
+      email,
+    });
+    if (dup.duplicateMatric) {
       return {
         ok: false,
         error: 'An account with this matric number already exists. Sign in instead.',
       };
     }
-
-    const existingVerifiedEmail = accounts.find(
-      (a) => a.email === email && a.isEmailVerified
-    );
-    if (existingVerifiedEmail) {
+    if (dup.isAdminEmail) {
+      return {
+        ok: false,
+        error:
+          'This email belongs to an administrator account and cannot be registered on the Student portal.',
+      };
+    }
+    if (dup.duplicateEmail) {
       return {
         ok: false,
         error: 'This email is already registered. Sign in or reset your password.',
       };
     }
 
+    const accounts = readAccounts();
     const salt = generateSalt();
     const passwordHash = await hashPassword(input.password, salt);
 
@@ -539,6 +587,7 @@ export const authService = {
       passwordHash,
       passwordSalt: salt,
       isEmailVerified: false,
+      authProvider: 'local',
       createdAt: new Date().toISOString(),
     };
 
@@ -557,7 +606,7 @@ export const authService = {
       data: {
         email,
         matricNumber: matricCheck.normalized,
-        verificationCode,
+        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
       },
     };
   },
@@ -565,20 +614,29 @@ export const authService = {
   resendCode(
     email: string,
     purpose: 'signup' | 'reset' | 'admin_activate'
-  ): AuthActionResult<{ verificationCode: string }> {
+  ): AuthActionResult<{ verificationCode?: string }> {
     const normalizedEmail = email.trim().toLowerCase();
     const accounts = readAccounts();
-    const exists = accounts.some((a) => a.email === normalizedEmail);
-    if (!exists) {
+    const matched = accounts.find((a) => a.email === normalizedEmail);
+    if (!matched) {
       return { ok: false, error: 'Account session expired. Please try again.' };
     }
+    if (purpose === 'admin_activate' && matched.role !== 'school_admin') {
+      return { ok: false, error: 'This email is not approved for School Admin activation.' };
+    }
     const verificationCode = issueOtp(normalizedEmail, purpose);
-    return { ok: true, data: { verificationCode } };
+    return {
+      ok: true,
+      data: {
+        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
+      },
+    };
   },
 
   verifySignupCode(
     email: string,
-    rawCode: string
+    rawCode: string,
+    rememberMe = true
   ): AuthActionResult<{ account: AuthenticatedUser }> {
     const normalizedEmail = email.trim().toLowerCase();
     const code = rawCode.replace(/\s+/g, '').trim();
@@ -650,7 +708,142 @@ export const authService = {
       detail: `Completed student signup (${publicUser.matricNumber} · ${publicUser.level ?? '100L'} · ${publicUser.department})`,
     });
 
-    this.saveActiveSession(publicUser);
+    this.saveActiveSession(publicUser, rememberMe);
+    return { ok: true, data: { account: publicUser } };
+  },
+
+  // -------------------------------------------------------------------------
+  // Student Google OAuth Integration (Strictly Student Portal Only)
+  // -------------------------------------------------------------------------
+
+  async authenticateStudentWithGoogle(
+    rememberMe = true
+  ): Promise<
+    AuthActionResult<{
+      account?: AuthenticatedUser;
+      needsProfileCompletion?: boolean;
+      googleIdentity?: VerifiedGoogleStudentIdentity;
+    }>
+  > {
+    const gisResult = await googleAuthService.authenticateStudent();
+    if (!gisResult.ok || !gisResult.identity) {
+      return {
+        ok: false,
+        notConfigured: gisResult.notConfigured,
+        error: gisResult.error ?? 'Google authentication could not be completed.',
+      };
+    }
+
+    const identity = gisResult.identity;
+    const email = identity.email.trim().toLowerCase();
+    const accounts = readAccounts();
+    const repoAccounts = archiveRepository.getSnapshot().accounts;
+
+    // Never allow Google Auth to grant or log into School Admin or Super Admin accounts
+    const adminConflict =
+      accounts.find((a) => a.email === email && a.role !== 'student') ||
+      repoAccounts.find((a) => a.email.toLowerCase() === email && a.role !== 'student');
+    if (adminConflict) {
+      return {
+        ok: false,
+        error:
+          'This Google email is associated with an administrator account. Google Sign-In is disabled for administrator access; use your designated admin login portal.',
+      };
+    }
+
+    const existingStudent = accounts.find(
+      (a) => a.email === email && a.role === 'student' && a.isEmailVerified
+    );
+    if (!existingStudent) {
+      return {
+        ok: true,
+        data: {
+          needsProfileCompletion: true,
+          googleIdentity: identity,
+        },
+      };
+    }
+
+    const repoAcc = repoAccounts.find(
+      (a) => a.id === existingStudent.id || a.email.toLowerCase() === email
+    );
+    const resolvedStatus: AccountStatus = repoAcc?.status ?? existingStudent.status;
+
+    if (resolvedStatus === 'banned') {
+      return {
+        ok: false,
+        error: 'This account has been banned. Contact a Super Administrator.',
+      };
+    }
+    if (resolvedStatus === 'suspended') {
+      return {
+        ok: false,
+        error: 'This account is suspended. Contact a Super Administrator.',
+      };
+    }
+    if (resolvedStatus === 'revoked') {
+      return {
+        ok: false,
+        error: 'Access for this account has been revoked.',
+      };
+    }
+    if (existingStudent.adminVerified === false || repoAcc?.adminVerified === false) {
+      return {
+        ok: false,
+        error: 'Login is pending Super Admin verification.',
+      };
+    }
+
+    const now = new Date().toISOString();
+    const updatedRecord: StudentAccount = {
+      ...existingStudent,
+      authProvider: 'google',
+      updatedAt: now,
+    };
+    writeAccounts(accounts.map((a) => (a.id === updatedRecord.id ? updatedRecord : a)));
+
+    const publicUser: AuthenticatedUser = {
+      ...toAuthenticatedUser(updatedRecord),
+      status: resolvedStatus,
+      warningsCount: repoAcc?.warningsCount ?? updatedRecord.warningsCount ?? 0,
+      moderationNote: repoAcc?.moderationNote ?? updatedRecord.moderationNote,
+    };
+
+    archiveRepository.syncManagedAccount({
+      id: publicUser.id,
+      fullName: publicUser.fullName,
+      email: publicUser.email,
+      matricNumber: publicUser.matricNumber,
+      level: publicUser.level,
+      faculty: publicUser.faculty,
+      department: publicUser.department,
+      role: 'student',
+      schoolId: publicUser.assignedSchoolId,
+      schoolCode: publicUser.assignedSchoolCode ?? 'AAUA',
+      status: publicUser.status,
+      adminVerified: publicUser.adminVerified ?? true,
+      needsPasswordSetup: false,
+      warningsCount: publicUser.warningsCount,
+      moderationNote: publicUser.moderationNote,
+      sessionState: 'logged_in',
+      lastLoginAt: now,
+      lastActiveAt: now,
+      createdAt: publicUser.createdAt,
+      createdBy: publicUser.createdBy,
+    });
+    archiveRepository.setAccountSessionState(publicUser.id, 'logged_in');
+    archiveRepository.recordUserActivity({
+      userId: publicUser.id,
+      userName: publicUser.fullName,
+      userEmail: publicUser.email,
+      userRole: 'student',
+      matricNumber: publicUser.matricNumber,
+      level: publicUser.level,
+      type: 'login',
+      detail: 'Signed in on student portal via Google',
+    });
+
+    this.saveActiveSession(publicUser, rememberMe);
     return { ok: true, data: { account: publicUser } };
   },
 
@@ -661,7 +854,8 @@ export const authService = {
   async signinWithPortal(
     portal: AuthPortal,
     rawIdentifier: string,
-    password: string
+    password: string,
+    rememberMe = true
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
     const trimmed = rawIdentifier.trim();
     if (!trimmed) {
@@ -820,13 +1014,13 @@ export const authService = {
       detail: `Signed in on ${portal.replace('_', ' ')} portal`,
     });
 
-    this.saveActiveSession(publicUser);
+    this.saveActiveSession(publicUser, rememberMe);
     return { ok: true, data: { account: publicUser } };
   },
 
   startSchoolAdminActivation(
     rawEmail: string
-  ): AuthActionResult<{ email: string; fullName: string; schoolCode: string; verificationCode: string }> {
+  ): AuthActionResult<{ email: string; fullName: string; schoolCode: string; verificationCode?: string }> {
     const email = sanitizeSingleLine(rawEmail, 160).toLowerCase();
     if (!validateEmailAddress(email)) {
       return { ok: false, error: 'Enter a valid email address.' };
@@ -862,7 +1056,7 @@ export const authService = {
         email,
         fullName: target.fullName,
         schoolCode: target.assignedSchoolCode ?? 'AAUA',
-        verificationCode,
+        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
       },
     };
   },
@@ -871,7 +1065,8 @@ export const authService = {
     rawEmail: string,
     rawCode: string,
     newPassword: string,
-    confirmPassword: string
+    confirmPassword: string,
+    rememberMe = true
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
     const normalizedEmail = sanitizeSingleLine(rawEmail, 160).toLowerCase();
     const code = rawCode.replace(/\s+/g, '').trim();
@@ -890,8 +1085,9 @@ export const authService = {
       return { ok: false, error: 'Incorrect activation code. Check and try again.' };
     }
 
-    if (newPassword.length < 8) {
-      return { ok: false, error: 'Administrator password must be at least 8 characters.' };
+    const pwError = validatePasswordForRole(newPassword, 'school_admin');
+    if (pwError) {
+      return { ok: false, error: pwError };
     }
     if (newPassword !== confirmPassword) {
       return { ok: false, error: 'Passwords do not match.' };
@@ -958,27 +1154,37 @@ export const authService = {
       detail: 'Activated School Admin email access and signed in',
     });
 
-    this.saveActiveSession(publicUser);
+    this.saveActiveSession(publicUser, rememberMe);
     return { ok: true, data: { account: publicUser } };
   },
 
   async signinWithIdentifier(
     rawIdentifier: string,
-    password: string
+    password: string,
+    rememberMe = true
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
-    return this.signinWithPortal('student', rawIdentifier, password);
+    return this.signinWithPortal('student', rawIdentifier, password, rememberMe);
   },
 
   async signinWithMatric(
     rawMatric: string,
-    password: string
+    password: string,
+    rememberMe = true
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
-    return this.signinWithPortal('student', rawMatric, password);
+    return this.signinWithPortal('student', rawMatric, password, rememberMe);
   },
 
-  saveActiveSession(account: AuthenticatedUser): void {
-    sessionService.createSession(account.id);
+  saveActiveSession(account: AuthenticatedUser, rememberMe = true): void {
+    sessionService.createSession(account.id, rememberMe);
     localStore.setItem(ONBOARDING_KEY, 'true');
+  },
+
+  getSessionRemainingMs(): number | null {
+    return sessionService.getSessionRemainingMs();
+  },
+
+  consumeExpiredSessionNotice(): boolean {
+    return sessionService.consumeExpiredNotice();
   },
 
   getActiveSession(): AuthenticatedUser | null {
@@ -993,7 +1199,7 @@ export const authService = {
     const isPermittedStatus = (s: AccountStatus) => s === 'active' || s === 'restricted';
 
     if (!matched || !isPermittedStatus(matched.status) || matched.adminVerified === false) {
-      sessionService.clearSession();
+      sessionService.clearSession('revoked');
       return null;
     }
 
@@ -1002,7 +1208,7 @@ export const authService = {
       .getSnapshot()
       .accounts.find((a) => a.id === matched.id || a.email === matched.email);
     if (repoAcc && (!isPermittedStatus(repoAcc.status) || repoAcc.adminVerified === false)) {
-      sessionService.clearSession();
+      sessionService.clearSession('revoked');
       return null;
     }
 
@@ -1015,7 +1221,10 @@ export const authService = {
     };
   },
 
-  clearActiveSession(actor?: AuthenticatedUser | null): void {
+  clearActiveSession(
+    actor?: AuthenticatedUser | null,
+    reason: 'manual' | 'expired' | 'revoked' = 'manual'
+  ): void {
     const active = actor ?? this.getActiveSession();
     if (active) {
       archiveRepository.setAccountSessionState(active.id, 'logged_out');
@@ -1027,10 +1236,13 @@ export const authService = {
         matricNumber: active.matricNumber,
         level: active.level,
         type: 'logout',
-        detail: 'Signed out of account',
+        detail:
+          reason === 'expired'
+            ? 'Session expired automatically after 12 hours'
+            : 'Signed out of account',
       });
     }
-    sessionService.clearSession();
+    sessionService.clearSession(reason);
   },
 
   hasCompletedOnboarding(): boolean {
@@ -1487,13 +1699,81 @@ export const authService = {
   },
 
   // -------------------------------------------------------------------------
-  // Password Reset Flow
+  // Password Change (Authenticated Account) & Password Reset Flow
   // -------------------------------------------------------------------------
+
+  async changePassword(
+    actor: AuthenticatedUser | null | undefined,
+    currentPassword: string,
+    newPassword: string,
+    confirmPassword: string
+  ): Promise<AuthActionResult> {
+    if (!isActiveAccount(actor)) {
+      return { ok: false, error: 'You must be signed in to change your password.' };
+    }
+    if (!currentPassword) {
+      return { ok: false, error: 'Enter your current password.' };
+    }
+
+    const accounts = readAccounts();
+    const target = accounts.find((a) => a.id === actor.id && a.isEmailVerified);
+    if (!target) {
+      return { ok: false, error: 'Account record could not be located.' };
+    }
+
+    const currentValid = await verifyPassword(
+      currentPassword,
+      target.passwordSalt,
+      target.passwordHash
+    );
+    if (!currentValid) {
+      return { ok: false, error: 'Current password is incorrect.' };
+    }
+
+    const pwError = validatePasswordForRole(newPassword, target.role);
+    if (pwError) {
+      return { ok: false, error: pwError };
+    }
+    if (newPassword === currentPassword) {
+      return {
+        ok: false,
+        error: 'New password must be different from your current password.',
+      };
+    }
+    if (newPassword !== confirmPassword) {
+      return { ok: false, error: 'New passwords do not match.' };
+    }
+
+    const salt = generateSalt();
+    const passwordHash = await hashPassword(newPassword, salt);
+    const now = new Date().toISOString();
+
+    writeAccounts(
+      accounts.map((a) =>
+        a.id === target.id
+          ? {
+              ...a,
+              passwordHash,
+              passwordSalt: salt,
+              needsPasswordSetup: false,
+              updatedAt: now,
+            }
+          : a
+      )
+    );
+    writeOtpRecords(
+      readOtpRecords().filter(
+        (r) => !(r.email === target.email && (r.purpose === 'reset' || r.purpose === 'admin_activate'))
+      )
+    );
+
+    return { ok: true };
+  },
 
   requestPasswordReset(
     rawMatricOrEmail: string,
     portal: AuthPortal = 'student'
-  ): AuthActionResult<{ email: string; matricNumber: string; verificationCode: string }> {
+  ): AuthActionResult<{ email: string; matricNumber: string; verificationCode?: string }> {
     const trimmed = sanitizeIdentifier(rawMatricOrEmail, 160);
     if (!trimmed) {
       return {
@@ -1535,7 +1815,7 @@ export const authService = {
       data: {
         email: account.email,
         matricNumber: account.matricNumber,
-        verificationCode,
+        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
       },
     };
   },
@@ -1565,14 +1845,7 @@ export const authService = {
     email: string,
     newPassword: string,
     confirmPassword: string
-  ): Promise<AuthActionResult<{ identifier: string; matricNumber: string; newPassword: string }>> {
-    if (newPassword.length < 6) {
-      return { ok: false, error: 'New password must be at least 6 characters.' };
-    }
-    if (newPassword !== confirmPassword) {
-      return { ok: false, error: 'Passwords do not match.' };
-    }
-
+  ): Promise<AuthActionResult<{ identifier: string; matricNumber: string }>> {
     const normalizedEmail = email.trim().toLowerCase();
     const accounts = readAccounts();
     const target = accounts.find(
@@ -1583,13 +1856,28 @@ export const authService = {
       return { ok: false, error: 'Account could not be found.' };
     }
 
+    const pwError = validatePasswordForRole(newPassword, target.role);
+    if (pwError) {
+      return { ok: false, error: pwError };
+    }
+    if (newPassword !== confirmPassword) {
+      return { ok: false, error: 'Passwords do not match.' };
+    }
+
     const salt = generateSalt();
     const passwordHash = await hashPassword(newPassword, salt);
+    const now = new Date().toISOString();
 
     writeAccounts(
       accounts.map((a) =>
         a.email === normalizedEmail
-          ? { ...a, passwordHash, passwordSalt: salt }
+          ? {
+              ...a,
+              passwordHash,
+              passwordSalt: salt,
+              needsPasswordSetup: false,
+              updatedAt: now,
+            }
           : a
       )
     );
@@ -1606,7 +1894,6 @@ export const authService = {
       data: {
         identifier,
         matricNumber: target.matricNumber,
-        newPassword,
       },
     };
   },

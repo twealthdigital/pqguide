@@ -1736,7 +1736,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
           }
         />
 
-        {IS_DEV_BOOTSTRAP_ENV && (
+        {import.meta.env.DEV && IS_DEV_BOOTSTRAP_ENV && (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-bold text-[#1A1B20]">

@@ -1,4 +1,4 @@
-import type { AuthPortal } from '../core/types';
+import type { AuthPortal, UserRole } from '../core/types';
 
 /**
  * Detects which separated sign-in portal the browser URL/hash is pointing to.
@@ -27,3 +27,17 @@ export function getPortalPath(portal: AuthPortal): string {
   if (portal === 'school_admin') return '#/admin-login';
   return '#/';
 }
+
+export function getPortalForRole(role: UserRole): AuthPortal {
+  if (role === 'super_admin') return 'super_admin';
+  if (role === 'school_admin') return 'school_admin';
+  return 'student';
+}
+
+export function isPortalCompatibleWithRole(
+  portal: AuthPortal,
+  role: UserRole
+): boolean {
+  return getPortalForRole(role) === portal;
+}
+

@@ -22,6 +22,7 @@ import {
   Home,
   Inbox,
   Info,
+  KeyRound,
   Layers,
   LayoutDashboard,
   Lock,
@@ -59,6 +60,8 @@ import { BrandLogo } from './BrandLogo';
 import { CustomSelect } from './CustomSelect';
 import { TactileButton } from './TactileButton';
 import { TooltipBubble } from './TooltipBubble';
+import { ChangePasswordDialog } from '../auth/ChangePasswordDialog';
+import { LogoutConfirmDialog } from '../auth/LogoutConfirmDialog';
 
 interface NavigationShellProps {
   activeScreen: AppScreen;
@@ -116,6 +119,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [userPopoverOpen, setUserPopoverOpen] = useState(false);
@@ -350,13 +355,27 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const handleSignOutClick = () => {
     if (isSigningOut) return;
+    setAccountMenuOpen(false);
+    setUserPopoverOpen(false);
+    setDrawerOpen(false);
+    setLogoutConfirmOpen(true);
+  };
+
+  const handleConfirmSignOut = () => {
+    if (isSigningOut) return;
     setIsSigningOut(true);
     signOutTimerRef.current = window.setTimeout(() => {
       setIsSigningOut(false);
-      setAccountMenuOpen(false);
-      setDrawerOpen(false);
+      setLogoutConfirmOpen(false);
       onSignOut();
-    }, 450);
+    }, 260);
+  };
+
+  const handleOpenChangePassword = () => {
+    setAccountMenuOpen(false);
+    setUserPopoverOpen(false);
+    setDrawerOpen(false);
+    setChangePasswordOpen(true);
   };
 
   const hasBanner =
@@ -1122,10 +1141,20 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               className={`transition-[max-height,opacity,margin] ${sbEase} ${
                 sidebarCollapsed
                   ? 'max-h-0 opacity-0 mt-0 overflow-hidden pointer-events-none'
-                  : 'max-h-14 opacity-100 mt-2'
+                  : 'max-h-28 opacity-100 mt-2 space-y-1.5'
               }`}
               aria-hidden={sidebarCollapsed}
             >
+              <button
+                type="button"
+                onClick={handleOpenChangePassword}
+                tabIndex={sidebarCollapsed ? -1 : 0}
+                className="w-full min-h-[38px] rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/[0.07] text-xs font-semibold text-[#1A1B20] flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Change password</span>
+              </button>
+
               <button
                 type="button"
                 disabled={isSigningOut}
@@ -1162,13 +1191,19 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               </div>
               <button
                 type="button"
+                tabIndex={userPopoverVisible ? 0 : -1}
+                onClick={handleOpenChangePassword}
+                className="mt-2 w-full min-h-[40px] rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/[0.07] text-xs font-semibold text-[#1A1B20] flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Change password</span>
+              </button>
+              <button
+                type="button"
                 disabled={isSigningOut}
                 tabIndex={userPopoverVisible ? 0 : -1}
-                onClick={() => {
-                  setUserPopoverOpen(false);
-                  handleSignOutClick();
-                }}
-                className="mt-2 w-full min-h-[44px] rounded-xl bg-white border border-[#1A1B20]/[0.08] text-sm font-semibold text-[#1A1B20] hover:bg-[#1D1E23] hover:text-white flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                onClick={handleSignOutClick}
+                className="mt-1.5 w-full min-h-[44px] rounded-xl bg-white border border-[#1A1B20]/[0.08] text-sm font-semibold text-[#1A1B20] hover:bg-[#1D1E23] hover:text-white flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
               >
                 <LogOut className="w-4 h-4" />
                 <span>{isSigningOut ? 'Signing out…' : 'Sign out'}</span>
@@ -1410,19 +1445,30 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               <p className="text-[#686C78] truncate">{student.email}</p>
             </div>
 
-            <TactileButton
-              type="button"
-              variant="dark"
-              size="md"
-              fullWidth
-              className="rounded-full"
-              icon={<LogOut className="w-4 h-4" />}
-              loading={isSigningOut}
-              disabled={isSigningOut}
-              onClick={handleSignOutClick}
-            >
-              Sign out
-            </TactileButton>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleOpenChangePassword}
+                className="w-full min-h-[42px] rounded-full bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/[0.08] text-xs font-semibold text-[#1A1B20] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Change Password</span>
+              </button>
+
+              <TactileButton
+                type="button"
+                variant="dark"
+                size="md"
+                fullWidth
+                className="rounded-full"
+                icon={<LogOut className="w-4 h-4" />}
+                loading={isSigningOut}
+                disabled={isSigningOut}
+                onClick={handleSignOutClick}
+              >
+                Sign out
+              </TactileButton>
+            </div>
           </div>
         )}
 
@@ -1768,7 +1814,16 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               )}
             </div>
 
-            <div className="p-5 pt-4 border-t border-[#1A1B20]/[0.07] pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+            <div className="p-5 pt-4 border-t border-[#1A1B20]/[0.07] pb-[calc(1.25rem+env(safe-area-inset-bottom))] space-y-2">
+              <button
+                type="button"
+                onClick={handleOpenChangePassword}
+                className="w-full min-h-[42px] rounded-full bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/[0.08] text-xs font-semibold text-[#1A1B20] flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>Change Password</span>
+              </button>
+
               <TactileButton
                 type="button"
                 variant="dark"
@@ -1933,6 +1988,19 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </div>
         </nav>
       )}
+      <ChangePasswordDialog
+        open={changePasswordOpen}
+        user={student}
+        onClose={() => setChangePasswordOpen(false)}
+      />
+
+      <LogoutConfirmDialog
+        open={logoutConfirmOpen}
+        user={student}
+        loading={isSigningOut}
+        onCancel={() => setLogoutConfirmOpen(false)}
+        onConfirm={handleConfirmSignOut}
+      />
     </div>
   );
 };

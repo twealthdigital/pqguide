@@ -410,6 +410,7 @@ export interface StudentAccount {
   passwordHash: string;
   passwordSalt: string;
   isEmailVerified: boolean;
+  authProvider?: 'local' | 'google';
   createdAt: string;
   createdBy?: string;
   updatedAt?: string;
@@ -426,7 +427,10 @@ export interface ActiveSessionRecord {
   userId: string;
   issuedAt: number;
   expiresAt: number;
+  rememberMe?: boolean;
 }
+
+export type SessionClearReason = 'manual' | 'expired' | 'revoked';
 
 export type AuditActionType =
   | 'super_admin_bootstrapped'
