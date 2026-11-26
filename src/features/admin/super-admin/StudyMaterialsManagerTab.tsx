@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
   BookOpen,
+  ChevronRight,
   Edit3,
   Eye,
   Plus,
   Trash2,
   UploadCloud,
-  X,
 } from 'lucide-react';
 import { sanitizeSafeUrl } from '../../../core/security';
 import type {
@@ -19,7 +19,13 @@ import {
   processUploadedStudyMaterial,
   type ProcessedStudyMaterialResult,
 } from '../../../services/documentProcessor';
-import { CustomSelect, SurfaceCard, TactileButton } from '../../../components/ui';
+import {
+  CustomSelect,
+  DetailDialog,
+  SectionHeadingBar,
+  SurfaceCard,
+  TactileButton,
+} from '../../../components/ui';
 
 interface StudyMaterialsManagerTabProps {
   currentUser: AuthenticatedUser;
@@ -37,7 +43,7 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
   const [schoolId, setSchoolId] = useState(store.schools[0]?.id ?? 'sch-aaua');
   const [courseCode, setCourseCode] = useState('');
   const [courseTitle, setCourseTitle] = useState('');
-  const [faculty, setFaculty] = useState('General Studies Unit');
+  const [faculty] = useState('General Studies Unit');
   const [department, setDepartment] = useState('General Studies');
   const [level, setLevel] = useState('100L');
   const [title, setTitle] = useState('');
@@ -55,8 +61,8 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
   const [filterStatus, setFilterStatus] = useState<'all' | 'published' | 'draft'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [previewMaterial, setPreviewMaterial] = useState<StudyMaterial | null>(null);
-  const [editingMaterial, setEditingMaterial] = useState<StudyMaterial | null>(null);
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
+  const [editingInDialog, setEditingInDialog] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editCourseCode, setEditCourseCode] = useState('');
   const [editCourseTitle, setEditCourseTitle] = useState('');
@@ -83,6 +89,29 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
       );
     });
   }, [store.materials, filterSchoolId, filterStatus, searchQuery]);
+
+  const selectedMaterial = useMemo(
+    () => store.materials.find((m) => m.id === selectedMaterialId) ?? null,
+    [store.materials, selectedMaterialId]
+  );
+
+  const openMaterialDialog = (mat: StudyMaterial, startInEdit = false) => {
+    setSelectedMaterialId(mat.id);
+    setEditingInDialog(startInEdit);
+    setEditSchoolId(mat.schoolId ?? 'sch-aaua');
+    setEditTitle(mat.title);
+    setEditCourseCode(mat.courseCode);
+    setEditCourseTitle(mat.courseTitle);
+    setEditLevel(mat.level);
+    setEditSummary(mat.summary);
+    setEditReadMinutes(String(mat.readMinutes));
+    setEditFirstSectionBody((mat.sections[0]?.paragraphs ?? []).join('\n\n'));
+  };
+
+  const closeMaterialDialog = () => {
+    setSelectedMaterialId(null);
+    setEditingInDialog(false);
+  };
 
   const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -163,8 +192,8 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
 
       onNotice(
         targetStatus === 'published'
-          ? `Published study material "${created.title}" (${created.courseCode}).`
-          : `Saved study material draft "${created.title}".`
+          ? `Published "${created.title}" (${created.courseCode}).`
+          : `Saved draft "${created.title}".`
       );
       setUploadedFileMeta(null);
       setTitle('');
@@ -178,21 +207,9 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
     }
   };
 
-  const beginEdit = (mat: StudyMaterial) => {
-    setEditingMaterial(mat);
-    setEditSchoolId(mat.schoolId ?? 'sch-aaua');
-    setEditTitle(mat.title);
-    setEditCourseCode(mat.courseCode);
-    setEditCourseTitle(mat.courseTitle);
-    setEditLevel(mat.level);
-    setEditSummary(mat.summary);
-    setEditReadMinutes(String(mat.readMinutes));
-    setEditFirstSectionBody((mat.sections[0]?.paragraphs ?? []).join('\n\n'));
-  };
-
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingMaterial) return;
+    if (!selectedMaterial) return;
     try {
       const paragraphs = editFirstSectionBody
         .split(/\n{2,}/)
@@ -200,8 +217,8 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
         .filter(Boolean);
 
       const updatedSections =
-        editingMaterial.sections.length > 0
-          ? editingMaterial.sections.map((s, idx) =>
+        selectedMaterial.sections.length > 0
+          ? selectedMaterial.sections.map((s, idx) =>
               idx === 0
                 ? {
                     ...s,
@@ -216,7 +233,7 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
               },
             ];
 
-      archiveRepository.updateMaterial(currentUser, editingMaterial.id, {
+      archiveRepository.updateMaterial(currentUser, selectedMaterial.id, {
         schoolId: editSchoolId,
         title: editTitle,
         courseCode: editCourseCode,
@@ -227,7 +244,7 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
         sections: updatedSections,
       });
 
-      setEditingMaterial(null);
+      setEditingInDialog(false);
       onNotice(`Updated study material "${editTitle}".`);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Could not update study material.');
@@ -239,9 +256,7 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
       const current = mat.status ?? 'published';
       const next = current === 'published' ? 'draft' : 'published';
       archiveRepository.setMaterialStatus(currentUser, mat.id, next);
-      onNotice(
-        `"${mat.title}" is now ${next === 'published' ? 'published' : 'unpublished (draft)'}.`
-      );
+      onNotice(`"${mat.title}" is now ${next === 'published' ? 'published' : 'draft'}.`);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Action denied.');
     }
@@ -250,8 +265,7 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
   const handleDelete = (mat: StudyMaterial) => {
     try {
       archiveRepository.deleteMaterial(currentUser, mat.id);
-      if (previewMaterial?.id === mat.id) setPreviewMaterial(null);
-      if (editingMaterial?.id === mat.id) setEditingMaterial(null);
+      if (selectedMaterialId === mat.id) closeMaterialDialog();
       onNotice(`Deleted study material "${mat.title}".`);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Could not delete study material.');
@@ -259,462 +273,452 @@ export const StudyMaterialsManagerTab: React.FC<StudyMaterialsManagerTabProps> =
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      {/* Create / Upload Study Material */}
-      <SurfaceCard tone="white" className="lg:col-span-5 p-5 sm:p-6 space-y-4">
-        <div>
-          <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-            Add Study Material
-          </h2>
-          <p className="text-xs text-[#686C78]">
-            Dedicated Study Material model (separate from Past Questions). Upload PDF, DOCX, TXT, or image, or write sections directly.
-          </p>
-        </div>
+    <>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <SurfaceCard tone="white" className="lg:col-span-5 p-5 sm:p-6 space-y-4">
+          <SectionHeadingBar icon={<BookOpen className="w-4 h-4" />} title="Add Study Material" />
 
-        <label className="block rounded-2xl border-2 border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] hover:bg-[#EFF1F5] transition-colors p-4 text-center cursor-pointer">
-          <input
-            type="file"
-            accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.txt,.md,.csv"
-            onChange={handleFilePicked}
-            className="sr-only"
-          />
-          <div className="flex items-center justify-center gap-2 text-xs font-bold text-[#1A1B20]">
-            <UploadCloud className="w-4 h-4" />
-            <span>
-              {processing
-                ? 'Validating & extracting guide...'
-                : uploadedFileMeta
-                  ? `Loaded: ${uploadedFileMeta.originalFileName} (tap to replace)`
-                  : 'Optional: Upload PDF, DOCX, TXT, or Sheet Image'}
-            </span>
-          </div>
-        </label>
-
-        {sanitizeSafeUrl(uploadedFileMeta?.attachmentPreviewUrl) && (
-          <img
-            src={sanitizeSafeUrl(uploadedFileMeta?.attachmentPreviewUrl)}
-            alt="Study sheet preview"
-            referrerPolicy="no-referrer"
-            className="max-h-40 mx-auto rounded-lg border border-[#1A1B20]/10 bg-white"
-          />
-        )}
-
-        <div className="space-y-3">
-          <CustomSelect
-            label="University"
-            value={schoolId}
-            options={store.schools.map((s) => ({
-              value: s.id,
-              label: `${s.code} — ${s.shortName}`,
-            }))}
-            onChange={setSchoolId}
-          />
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className="block text-xs font-medium text-[#686C78] mb-1">
-                Course Code
-              </label>
-              <input
-                type="text"
-                value={courseCode}
-                onChange={(e) => setCourseCode(e.target.value)}
-                placeholder="GNS 101"
-                className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold uppercase"
-              />
+          <label className="block rounded-2xl border-2 border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] hover:bg-[#EFF1F5] transition-colors p-4 text-center cursor-pointer">
+            <input
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.txt,.md,.csv"
+              onChange={handleFilePicked}
+              className="sr-only"
+            />
+            <div className="flex items-center justify-center gap-2 text-xs font-bold text-[#1A1B20]">
+              <UploadCloud className="w-4 h-4" />
+              <span>
+                {processing
+                  ? 'Extracting...'
+                  : uploadedFileMeta
+                    ? `Loaded: ${uploadedFileMeta.originalFileName}`
+                    : 'Upload PDF, DOCX, TXT, or Image (Optional)'}
+              </span>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-[#686C78] mb-1">
-                Course Title
-              </label>
-              <input
-                type="text"
-                value={courseTitle}
-                onChange={(e) => setCourseTitle(e.target.value)}
-                placeholder="Use of English"
-                className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
-              />
-            </div>
-          </div>
+          </label>
 
-          <div className="grid grid-cols-3 gap-2">
+          {sanitizeSafeUrl(uploadedFileMeta?.attachmentPreviewUrl) && (
+            <img
+              src={sanitizeSafeUrl(uploadedFileMeta?.attachmentPreviewUrl)}
+              alt="Study sheet preview"
+              referrerPolicy="no-referrer"
+              className="max-h-40 mx-auto rounded-lg border border-[#1A1B20]/10 bg-white"
+            />
+          )}
+
+          <div className="space-y-3">
             <CustomSelect
-              size="sm"
-              label="Level"
-              mono
-              value={level}
-              options={[
-                { value: '100L', label: '100L' },
-                { value: '200L', label: '200L' },
-                { value: '300L', label: '300L' },
-                { value: '400L', label: '400L' },
-                { value: '500L', label: '500L' },
-              ]}
-              onChange={setLevel}
+              label="University"
+              value={schoolId}
+              options={store.schools.map((s) => ({
+                value: s.id,
+                label: `${s.code} — ${s.shortName}`,
+              }))}
+              onChange={setSchoolId}
             />
-            <div>
-              <label className="block text-xs font-medium text-[#686C78] mb-1">
-                Department
-              </label>
-              <input
-                type="text"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                className="w-full min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-2.5 text-xs font-semibold"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[#686C78] mb-1">
-                Read Mins
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={90}
-                value={readMinutes}
-                onChange={(e) => setReadMinutes(e.target.value)}
-                className="w-full min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-2.5 text-xs font-mono-tabular font-semibold"
-              />
-            </div>
-          </div>
 
-          <div>
-            <label className="block text-xs font-medium text-[#686C78] mb-1">
-              Material Title
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Essay Structure, Summary Writing & Concord"
-              className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-[#686C78] mb-1">
-              Summary
-            </label>
-            <textarea
-              rows={2}
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-              placeholder="Short description shown on Study Materials cards"
-              className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-[#686C78] mb-1">
-              Section Heading &amp; Notes
-            </label>
-            <input
-              type="text"
-              value={sectionHeading}
-              onChange={(e) => setSectionHeading(e.target.value)}
-              placeholder="Section Heading"
-              className="w-full min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold mb-2"
-            />
-            <textarea
-              rows={3}
-              value={sectionBody}
-              onChange={(e) => setSectionBody(e.target.value)}
-              placeholder="Main study guide paragraphs..."
-              className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20] mb-2"
-            />
-            <textarea
-              rows={2}
-              value={sectionPoints}
-              onChange={(e) => setSectionPoints(e.target.value)}
-              placeholder="Key bullet takeaways (one per line)"
-              className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <TactileButton
-              type="button"
-              variant="light"
-              size="md"
-              fullWidth
-              onClick={() => handleSaveMaterial('draft')}
-            >
-              Save Draft
-            </TactileButton>
-            <TactileButton
-              type="button"
-              variant="dark"
-              size="md"
-              fullWidth
-              icon={<Plus className="w-4 h-4" />}
-              onClick={() => handleSaveMaterial('published')}
-            >
-              Publish Guide
-            </TactileButton>
-          </div>
-        </div>
-      </SurfaceCard>
-
-      {/* Study Materials Catalog & Upload History */}
-      <SurfaceCard tone="white" className="lg:col-span-7 p-5 sm:p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              Study Materials Library
-            </h2>
-            <p className="text-xs text-[#686C78]">
-              Preview, edit, publish, unpublish, or delete study guides
-            </p>
-          </div>
-          <span className="font-mono-tabular text-xs font-semibold text-[#686C78]">
-            {filteredMaterials.length} / {store.materials.length}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search material or course..."
-            className="min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-medium"
-          />
-          <CustomSelect
-            size="sm"
-            ariaLabel="Filter materials by university"
-            value={filterSchoolId}
-            options={[
-              { value: 'all', label: 'All Universities' },
-              ...store.schools.map((s) => ({ value: s.id, label: s.code })),
-            ]}
-            onChange={setFilterSchoolId}
-          />
-          <CustomSelect
-            size="sm"
-            ariaLabel="Filter materials by status"
-            value={filterStatus}
-            options={[
-              { value: 'all', label: 'All Statuses' },
-              { value: 'published', label: 'Published' },
-              { value: 'draft', label: 'Draft' },
-            ]}
-            onChange={(v) => setFilterStatus(v as 'all' | 'published' | 'draft')}
-          />
-        </div>
-
-        {editingMaterial && (
-          <form
-            onSubmit={handleSaveEdit}
-            className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/12 p-4 space-y-3"
-          >
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-[#1A1B20]">
-                Editing Material: {editingMaterial.title}
-              </p>
-              <button
-                type="button"
-                onClick={() => setEditingMaterial(null)}
-                aria-label="Close material editor"
-                className="h-8 w-8 rounded-lg hover:bg-white flex items-center justify-center text-[#686C78] cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <CustomSelect
-                size="sm"
-                label="University"
-                value={editSchoolId}
-                options={store.schools.map((s) => ({
-                  value: s.id,
-                  label: `${s.code} — ${s.shortName}`,
-                }))}
-                onChange={setEditSchoolId}
-              />
-              <input
-                type="text"
-                value={editCourseCode}
-                onChange={(e) => setEditCourseCode(e.target.value)}
-                placeholder="Course Code"
-                className="min-h-[38px] self-end rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-semibold"
-              />
-              <input
-                type="text"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                placeholder="Material Title"
-                className="sm:col-span-2 min-h-[38px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-semibold"
-              />
-              <input
-                type="text"
-                value={editCourseTitle}
-                onChange={(e) => setEditCourseTitle(e.target.value)}
-                placeholder="Course Title"
-                className="min-h-[38px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-semibold"
-              />
-              <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-xs font-medium text-[#686C78] mb-1">
+                  Course Code
+                </label>
                 <input
                   type="text"
-                  value={editLevel}
-                  onChange={(e) => setEditLevel(e.target.value)}
-                  placeholder="100L"
-                  className="min-h-[38px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-mono-tabular font-semibold"
+                  value={courseCode}
+                  onChange={(e) => setCourseCode(e.target.value)}
+                  placeholder="GNS 101"
+                  className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold uppercase"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#686C78] mb-1">
+                  Course Title
+                </label>
                 <input
-                  type="number"
-                  min={1}
-                  value={editReadMinutes}
-                  onChange={(e) => setEditReadMinutes(e.target.value)}
-                  placeholder="6"
-                  className="min-h-[38px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-mono-tabular font-semibold"
+                  type="text"
+                  value={courseTitle}
+                  onChange={(e) => setCourseTitle(e.target.value)}
+                  placeholder="Course title"
+                  className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
                 />
               </div>
             </div>
-            <textarea
-              rows={2}
-              value={editSummary}
-              onChange={(e) => setEditSummary(e.target.value)}
-              placeholder="Summary"
-              className="w-full rounded-xl bg-white border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
-            />
-            <textarea
-              rows={3}
-              value={editFirstSectionBody}
-              onChange={(e) => setEditFirstSectionBody(e.target.value)}
-              placeholder="First section paragraphs"
-              className="w-full rounded-xl bg-white border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
-            />
-            <div className="flex justify-end gap-2">
+
+            <div className="grid grid-cols-3 gap-2">
+              <CustomSelect
+                size="sm"
+                label="Level"
+                mono
+                value={level}
+                options={[
+                  { value: '100L', label: '100L' },
+                  { value: '200L', label: '200L' },
+                  { value: '300L', label: '300L' },
+                  { value: '400L', label: '400L' },
+                  { value: '500L', label: '500L' },
+                ]}
+                onChange={setLevel}
+              />
+              <div>
+                <label className="block text-xs font-medium text-[#686C78] mb-1">
+                  Department
+                </label>
+                <input
+                  type="text"
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                  className="w-full min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-2.5 text-xs font-semibold"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#686C78] mb-1">
+                  Read Mins
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={90}
+                  value={readMinutes}
+                  onChange={(e) => setReadMinutes(e.target.value)}
+                  className="w-full min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-2.5 text-xs font-mono-tabular font-semibold"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#686C78] mb-1">
+                Material Title
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Guide title"
+                className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#686C78] mb-1">Summary</label>
+              <textarea
+                rows={2}
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                placeholder="Short summary"
+                className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-[#686C78] mb-1">
+                Section &amp; Notes
+              </label>
+              <input
+                type="text"
+                value={sectionHeading}
+                onChange={(e) => setSectionHeading(e.target.value)}
+                placeholder="Section title"
+                className="w-full min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold mb-2"
+              />
+              <textarea
+                rows={3}
+                value={sectionBody}
+                onChange={(e) => setSectionBody(e.target.value)}
+                placeholder="Study notes..."
+                className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20] mb-2"
+              />
+              <textarea
+                rows={2}
+                value={sectionPoints}
+                onChange={(e) => setSectionPoints(e.target.value)}
+                placeholder="Key points (one per line)"
+                className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
               <TactileButton
                 type="button"
                 variant="light"
-                size="sm"
-                onClick={() => setEditingMaterial(null)}
+                size="md"
+                fullWidth
+                onClick={() => handleSaveMaterial('draft')}
               >
-                Cancel
+                Save Draft
               </TactileButton>
-              <TactileButton type="submit" variant="dark" size="sm">
-                Save Material
-              </TactileButton>
-            </div>
-          </form>
-        )}
-
-        {previewMaterial && (
-          <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/12 p-4 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-bold text-[#1A1B20]">
-                Preview: {previewMaterial.courseCode} · {previewMaterial.title}
-              </p>
-              <button
+              <TactileButton
                 type="button"
-                onClick={() => setPreviewMaterial(null)}
-                aria-label="Close material preview"
-                className="h-8 w-8 rounded-lg hover:bg-white flex items-center justify-center text-[#686C78] cursor-pointer"
+                variant="dark"
+                size="md"
+                fullWidth
+                icon={<Plus className="w-4 h-4" />}
+                onClick={() => handleSaveMaterial('published')}
               >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-xs text-[#505460]">{previewMaterial.summary}</p>
-            {sanitizeSafeUrl(previewMaterial.attachmentPreviewUrl) && (
-              <img
-                src={sanitizeSafeUrl(previewMaterial.attachmentPreviewUrl)}
-                alt={previewMaterial.title}
-                referrerPolicy="no-referrer"
-                className="max-h-44 mx-auto rounded-lg bg-white"
-              />
-            )}
-            <div className="space-y-2 pt-1">
-              {previewMaterial.sections.map((sec, i) => (
-                <div key={i} className="space-y-1">
-                  <p className="text-xs font-bold text-[#1A1B20]">{sec.heading}</p>
-                  {sec.paragraphs?.map((p, j) => (
-                    <p key={j} className="text-xs text-[#3A3D47]">
-                      {p}
-                    </p>
-                  ))}
-                  {sec.points && sec.points.length > 0 && (
-                    <ul className="list-disc pl-4 text-xs text-[#3A3D47] space-y-0.5">
-                      {sec.points.map((pt, k) => (
-                        <li key={k}>{pt}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
+                Publish Guide
+              </TactileButton>
             </div>
           </div>
-        )}
+        </SurfaceCard>
 
-        <div className="divide-y divide-[#1A1B20]/[0.06]">
-          {filteredMaterials.length === 0 ? (
-            <p className="py-10 text-center text-xs text-[#686C78]">
-              No study materials match the current filters.
-            </p>
-          ) : (
-            filteredMaterials.map((mat) => {
-              const status = mat.status ?? 'published';
-              return (
-                <div key={mat.id} className="py-3.5 first:pt-1 last:pb-1 space-y-2">
-                  <div className="flex items-start gap-3">
-                    <div className="h-9 w-9 rounded-xl bg-[#F2F4F7] text-[#1D1E23] flex items-center justify-center shrink-0">
-                      <BookOpen className="w-4 h-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-[#1A1B20] truncate">
-                        {mat.schoolCode ?? 'AAUA'} · {mat.courseCode} — {mat.title}
-                      </p>
-                      <p className="text-xs text-[#686C78] font-mono-tabular truncate">
-                        {mat.level} · {mat.readMinutes} min · {status === 'published' ? 'Published' : 'Draft'}
-                        {mat.uploadedBy ? ` · ${mat.uploadedBy}` : ''}
-                      </p>
-                    </div>
-                  </div>
+        <SurfaceCard tone="white" className="lg:col-span-7 p-5 sm:p-6 space-y-4">
+          <SectionHeadingBar
+            icon={<BookOpen className="w-4 h-4" />}
+            title="Study Materials Library"
+            right={
+              <span className="font-mono-tabular text-xs font-semibold text-[#C3C7D2]">
+                {filteredMaterials.length} / {store.materials.length}
+              </span>
+            }
+          />
 
-                  <div className="flex flex-wrap items-center gap-1.5 pl-12">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewMaterial(mat)}
-                      className="min-h-[38px] px-3 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
-                    >
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search guide or course..."
+              className="min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-medium"
+            />
+            <CustomSelect
+              size="sm"
+              ariaLabel="Filter materials by university"
+              value={filterSchoolId}
+              options={[
+                { value: 'all', label: 'All Universities' },
+                ...store.schools.map((s) => ({ value: s.id, label: s.code })),
+              ]}
+              onChange={setFilterSchoolId}
+            />
+            <CustomSelect
+              size="sm"
+              ariaLabel="Filter materials by status"
+              value={filterStatus}
+              options={[
+                { value: 'all', label: 'All Statuses' },
+                { value: 'published', label: 'Published' },
+                { value: 'draft', label: 'Draft' },
+              ]}
+              onChange={(v) => setFilterStatus(v as 'all' | 'published' | 'draft')}
+            />
+          </div>
+
+          <div className="divide-y divide-[#1A1B20]/[0.06]">
+            {filteredMaterials.length === 0 ? (
+              <p className="py-10 text-center text-xs text-[#686C78]">
+                No study materials match these filters.
+              </p>
+            ) : (
+              filteredMaterials.map((mat) => {
+                const status = mat.status ?? 'published';
+                return (
+                  <button
+                    key={mat.id}
+                    type="button"
+                    onClick={() => openMaterialDialog(mat)}
+                    className="w-full py-3.5 first:pt-1 last:pb-1 flex items-center justify-between gap-3 text-left hover:bg-[#F6F7F9] rounded-xl px-2 -mx-2 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="h-9 w-9 rounded-xl bg-[#F2F4F7] text-[#1D1E23] flex items-center justify-center shrink-0">
+                        <BookOpen className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-[#1A1B20] truncate">
+                          {mat.schoolCode ?? 'AAUA'} · {mat.courseCode} — {mat.title}
+                        </p>
+                        <p className="text-xs text-[#686C78] font-mono-tabular truncate">
+                          {mat.level} · {mat.readMinutes} min ·{' '}
+                          {status === 'published' ? 'Published' : 'Draft'}
+                          {mat.uploadedBy ? ` · ${mat.uploadedBy}` : ''}
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="min-h-[34px] px-2.5 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1 shrink-0">
                       <Eye className="w-3.5 h-3.5" />
-                      <span>Preview</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => beginEdit(mat)}
-                      className="min-h-[38px] px-3 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>Edit</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleStatus(mat)}
-                      className={`min-h-[38px] px-3 rounded-xl text-xs font-semibold cursor-pointer ${
-                        status === 'published'
-                          ? 'bg-[#EEF0F4] text-[#1A1B20]'
-                          : 'bg-[#1D1E23] text-white'
-                      }`}
-                    >
-                      {status === 'published' ? 'Unpublish' : 'Publish'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(mat)}
-                      aria-label={`Delete ${mat.title}`}
-                      className="min-h-[38px] px-3 rounded-xl bg-[#FEF2F2] hover:bg-[#FEE2E2] text-xs font-semibold text-[#B91C1C] inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete</span>
-                    </button>
+                      <span className="hidden sm:inline">Open</span>
+                      <ChevronRight className="w-3.5 h-3.5 text-[#686C78]" />
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </SurfaceCard>
+      </div>
+
+      <DetailDialog
+        open={Boolean(selectedMaterial)}
+        onClose={closeMaterialDialog}
+        title={
+          selectedMaterial
+            ? `${selectedMaterial.courseCode} · ${selectedMaterial.title}`
+            : 'Study Material'
+        }
+        subtitle={
+          selectedMaterial
+            ? `${selectedMaterial.schoolCode ?? 'AAUA'} · ${selectedMaterial.level} · ${selectedMaterial.readMinutes} min read`
+            : undefined
+        }
+        icon={<BookOpen className="w-4 h-4" />}
+        maxWidthClass="max-w-2xl"
+      >
+        {selectedMaterial && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingInDialog((v) => !v)}
+                className="min-h-[38px] px-3 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>{editingInDialog ? 'Preview Guide' : 'Edit'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleStatus(selectedMaterial)}
+                className={`min-h-[38px] px-3 rounded-xl text-xs font-semibold cursor-pointer ${
+                  (selectedMaterial.status ?? 'published') === 'published'
+                    ? 'bg-[#EEF0F4] text-[#1A1B20]'
+                    : 'bg-[#1D1E23] text-white'
+                }`}
+              >
+                {(selectedMaterial.status ?? 'published') === 'published'
+                  ? 'Unpublish'
+                  : 'Publish'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(selectedMaterial)}
+                className="min-h-[38px] px-3 rounded-xl bg-[#FEF2F2] hover:bg-[#FEE2E2] text-xs font-semibold text-[#B91C1C] inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
+            </div>
+
+            {editingInDialog ? (
+              <form onSubmit={handleSaveEdit} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <CustomSelect
+                    size="sm"
+                    label="University"
+                    value={editSchoolId}
+                    options={store.schools.map((s) => ({
+                      value: s.id,
+                      label: `${s.code} — ${s.shortName}`,
+                    }))}
+                    onChange={setEditSchoolId}
+                  />
+                  <input
+                    type="text"
+                    value={editCourseCode}
+                    onChange={(e) => setEditCourseCode(e.target.value)}
+                    placeholder="Course code"
+                    className="min-h-[38px] self-end rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
+                  />
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Guide title"
+                    className="sm:col-span-2 min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
+                  />
+                  <input
+                    type="text"
+                    value={editCourseTitle}
+                    onChange={(e) => setEditCourseTitle(e.target.value)}
+                    placeholder="Course title"
+                    className="min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <CustomSelect
+                      size="sm"
+                      mono
+                      value={editLevel}
+                      options={[
+                        { value: '100L', label: '100L' },
+                        { value: '200L', label: '200L' },
+                        { value: '300L', label: '300L' },
+                        { value: '400L', label: '400L' },
+                        { value: '500L', label: '500L' },
+                      ]}
+                      onChange={setEditLevel}
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={editReadMinutes}
+                      onChange={(e) => setEditReadMinutes(e.target.value)}
+                      placeholder="6"
+                      className="min-h-[38px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-mono-tabular font-semibold"
+                    />
                   </div>
                 </div>
-              );
-            })
-          )}
-        </div>
-      </SurfaceCard>
-    </div>
+                <textarea
+                  rows={2}
+                  value={editSummary}
+                  onChange={(e) => setEditSummary(e.target.value)}
+                  placeholder="Summary"
+                  className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
+                />
+                <textarea
+                  rows={4}
+                  value={editFirstSectionBody}
+                  onChange={(e) => setEditFirstSectionBody(e.target.value)}
+                  placeholder="Section notes"
+                  className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
+                />
+                <div className="flex justify-end gap-2">
+                  <TactileButton
+                    type="button"
+                    variant="light"
+                    size="sm"
+                    onClick={() => setEditingInDialog(false)}
+                  >
+                    Cancel
+                  </TactileButton>
+                  <TactileButton type="submit" variant="dark" size="sm">
+                    Save Changes
+                  </TactileButton>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs sm:text-sm text-[#505460]">
+                  {selectedMaterial.summary}
+                </p>
+                {sanitizeSafeUrl(selectedMaterial.attachmentPreviewUrl) && (
+                  <img
+                    src={sanitizeSafeUrl(selectedMaterial.attachmentPreviewUrl)}
+                    alt={selectedMaterial.title}
+                    referrerPolicy="no-referrer"
+                    className="max-h-48 mx-auto rounded-xl border border-[#1A1B20]/10 bg-[#F6F7F9]"
+                  />
+                )}
+                <div className="space-y-3 pt-1">
+                  {selectedMaterial.sections.map((sec, i) => (
+                    <div key={i} className="space-y-1.5">
+                      <p className="text-xs font-bold text-[#1A1B20]">{sec.heading}</p>
+                      {sec.paragraphs?.map((p, j) => (
+                        <p key={j} className="text-xs sm:text-sm text-[#3A3D47]">
+                          {p}
+                        </p>
+                      ))}
+                      {sec.points && sec.points.length > 0 && (
+                        <ul className="list-disc pl-4 text-xs sm:text-sm text-[#3A3D47] space-y-0.5">
+                          {sec.points.map((pt, k) => (
+                            <li key={k}>{pt}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </DetailDialog>
+    </>
   );
 };

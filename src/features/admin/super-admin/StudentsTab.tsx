@@ -1,9 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { Eye, Users, X } from 'lucide-react';
+import { ChevronRight, Users } from 'lucide-react';
 import type { AuthenticatedUser, StudentLevel } from '../../../core/types';
 import type { AppStoreState } from '../../../services/archiveRepository';
 import { authService } from '../../../services/authService';
-import { SurfaceCard } from '../../../components/ui';
+import {
+  CustomSelect,
+  DetailDialog,
+  SectionHeadingBar,
+  SurfaceCard,
+} from '../../../components/ui';
 
 interface StudentsTabProps {
   currentUser: AuthenticatedUser;
@@ -65,7 +70,11 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
     );
   }, [store.payments, inspectedStudent]);
 
-  const handleToggleVerification = (accountId: string, fullName: string, currentlyVerified: boolean) => {
+  const handleToggleVerification = (
+    accountId: string,
+    fullName: string,
+    currentlyVerified: boolean
+  ) => {
     const res = authService.setAccountVerification(currentUser, accountId, !currentlyVerified);
     if (!res.ok) {
       onError(res.error ?? 'Could not update verification status.');
@@ -74,32 +83,25 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
     onNotice(
       !currentlyVerified
         ? `Verified login access for ${fullName}.`
-        : `Marked ${fullName} as pending verification (sign-in paused).`
+        : `Sign-in paused for ${fullName} until re-verified.`
     );
   };
 
   return (
-    <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <Users className="w-5 h-5 text-[#1D1E23]" />
-          <div>
-            <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              Students Directory ({studentAccounts.length})
-            </h2>
-            <p className="text-xs text-[#686C78]">
-              Search by name, matric number, level, faculty, or department, verify logins, and inspect activity
-            </p>
-          </div>
-        </div>
+    <>
+      <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
+        <SectionHeadingBar
+          icon={<Users className="w-4 h-4" />}
+          title={`Students (${studentAccounts.length})`}
+        />
 
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             type="text"
             value={studentQuery}
             onChange={(e) => setStudentQuery(e.target.value)}
-            placeholder="Search name, matric, email, dept..."
-            className="flex-1 sm:w-64 min-h-[40px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-medium"
+            placeholder="Search name, matric, dept..."
+            className="flex-1 min-w-[200px] min-h-[40px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-medium"
           />
           <div className="flex gap-1">
             {(['all', 'logged_in', 'logged_out'] as const).map((s) => (
@@ -113,185 +115,175 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
                     : 'bg-[#F6F7F9] text-[#505460]'
                 }`}
               >
-                {s === 'all' ? 'All' : s === 'logged_in' ? 'Logged In' : 'Logged Out'}
+                {s === 'all' ? 'All' : s === 'logged_in' ? 'Signed In' : 'Signed Out'}
               </button>
             ))}
           </div>
-          <select
-            value={levelFilter}
-            onChange={(e) => setLevelFilter(e.target.value as 'all' | StudentLevel)}
-            aria-label="Filter by student level"
-            className="min-h-[40px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-2.5 text-xs font-semibold text-[#1A1B20]"
-          >
-            <option value="all">All Levels</option>
-            <option value="100L">100L</option>
-            <option value="200L">200L</option>
-            <option value="300L">300L</option>
-            <option value="400L">400L</option>
-            <option value="500L">500L</option>
-          </select>
-        </div>
-      </div>
-
-      {inspectedStudent && (
-        <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/12 p-4 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <p className="text-sm font-bold text-[#1A1B20]">
-                {inspectedStudent.fullName} · {inspectedStudent.matricNumber || 'No Matric'} ·{' '}
-                {inspectedStudent.level || '100L'}
-              </p>
-              <p className="text-xs text-[#505460]">
-                {inspectedStudent.faculty || 'Faculty N/A'} · {inspectedStudent.department || 'Department N/A'} ·{' '}
-                {inspectedStudent.email}
-              </p>
-              <p className="text-[11px] font-mono-tabular text-[#686C78] mt-0.5">
-                Status: <span className="capitalize font-semibold">{inspectedStudent.status}</span> ·{' '}
-                Session: {inspectedStudent.sessionState === 'logged_in' ? 'Logged In' : 'Logged Out'}
-                {inspectedStudent.lastLoginAt
-                  ? ` · Last login ${new Date(inspectedStudent.lastLoginAt).toLocaleString([], {
-                      dateStyle: 'short',
-                      timeStyle: 'short',
-                    })}`
-                  : ''}
-                {inspectedStudent.lastLogoutAt
-                  ? ` · Last logout ${new Date(inspectedStudent.lastLogoutAt).toLocaleString([], {
-                      dateStyle: 'short',
-                      timeStyle: 'short',
-                    })}`
-                  : ''}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setInspectedStudentId(null)}
-              className="h-8 w-8 rounded-lg hover:bg-white flex items-center justify-center text-[#686C78] cursor-pointer"
-              aria-label="Close student history"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="rounded-xl bg-white border border-[#1A1B20]/[0.08] p-3 space-y-2 max-h-56 overflow-y-auto">
-              <p className="text-[11px] font-bold text-[#1A1B20] uppercase tracking-wider">
-                User Activity History ({inspectedStudentActivities.length})
-              </p>
-              {inspectedStudentActivities.length === 0 ? (
-                <p className="text-xs text-[#686C78]">No activity events recorded for this user yet.</p>
-              ) : (
-                inspectedStudentActivities.map((ev) => (
-                  <div key={ev.id} className="text-xs border-b border-[#1A1B20]/[0.05] pb-1.5 last:border-0">
-                    <p className="font-semibold text-[#1A1B20]">{ev.detail}</p>
-                    <p className="text-[11px] font-mono-tabular text-[#686C78]">
-                      {ev.type.replace(/_/g, ' ')} ·{' '}
-                      {new Date(ev.timestamp).toLocaleString([], {
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      })}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="rounded-xl bg-white border border-[#1A1B20]/[0.08] p-3 space-y-2 max-h-56 overflow-y-auto">
-              <p className="text-[11px] font-bold text-[#1A1B20] uppercase tracking-wider">
-                Payment Receipts ({inspectedStudentPayments.length})
-              </p>
-              {inspectedStudentPayments.length === 0 ? (
-                <p className="text-xs text-[#686C78]">No automatic payment confirmations recorded.</p>
-              ) : (
-                inspectedStudentPayments.map((pay) => (
-                  <div key={pay.id} className="text-xs border-b border-[#1A1B20]/[0.05] pb-1.5 last:border-0">
-                    <p className="font-bold text-[#1A1B20]">
-                      ₦{pay.amountNaira.toLocaleString()} · {pay.tierName} ({pay.provider})
-                    </p>
-                    <p className="text-[11px] font-mono-tabular text-[#686C78]">
-                      Ref: {pay.reference} · Auto-Verified
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
+          <div className="w-36">
+            <CustomSelect
+              size="sm"
+              mono
+              ariaLabel="Filter by student level"
+              value={levelFilter}
+              options={[
+                { value: 'all', label: 'All Levels' },
+                { value: '100L', label: '100L' },
+                { value: '200L', label: '200L' },
+                { value: '300L', label: '300L' },
+                { value: '400L', label: '400L' },
+                { value: '500L', label: '500L' },
+              ]}
+              onChange={(val) => setLevelFilter(val as 'all' | StudentLevel)}
+            />
           </div>
         </div>
-      )}
 
-      <div className="divide-y divide-[#1A1B20]/[0.06]">
-        {studentAccounts.length === 0 ? (
-          <p className="py-8 text-center text-xs text-[#686C78]">
-            No matching student accounts.
-          </p>
-        ) : (
-          studentAccounts.map((acc) => {
-            const isVerified = acc.adminVerified !== false;
-            const isLoggedIn = acc.sessionState === 'logged_in';
+        <div className="divide-y divide-[#1A1B20]/[0.06]">
+          {studentAccounts.length === 0 ? (
+            <p className="py-8 text-center text-xs text-[#686C78]">
+              No matching student accounts.
+            </p>
+          ) : (
+            studentAccounts.map((acc) => {
+              const isVerified = acc.adminVerified !== false;
+              const isLoggedIn = acc.sessionState === 'logged_in';
 
-            return (
-              <div
-                key={acc.id}
-                className="py-3.5 flex flex-wrap items-center justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-[#1A1B20] truncate">
-                    {acc.fullName}
-                    {acc.level ? ` · ${acc.level}` : ''}
-                  </p>
-                  <p className="text-xs text-[#505460] truncate">
-                    <span className="font-mono-tabular font-semibold text-[#1A1B20]">
-                      {acc.matricNumber || 'NO MATRIC'}
-                    </span>
-                    {' · '}
-                    {acc.department || acc.faculty || 'Department N/A'}
-                    {' · '}
-                    {acc.email}
-                  </p>
-                  <p className="text-[11px] text-[#686C78] mt-0.5">
-                    <span className={isLoggedIn ? 'text-[#15803D] font-semibold' : 'text-[#686C78]'}>
-                      {isLoggedIn ? 'Logged In' : 'Logged Out'}
-                    </span>
-                    {' · '}
-                    <span>Plan: {acc.subscriptionTier ?? 'free'}</span>
-                    {' · '}
-                    <span className="capitalize">Status: {acc.status}</span>
-                    {acc.warningsCount ? ` · ${acc.warningsCount} warning(s)` : ''}
-                    {' · '}
-                    <span className={isVerified ? 'text-[#15803D]' : 'text-[#B91C1C] font-semibold'}>
-                      {isVerified ? 'Login Verified' : 'Pending Verification'}
-                    </span>
-                  </p>
-                </div>
+              return (
+                <button
+                  key={acc.id}
+                  type="button"
+                  onClick={() => setInspectedStudentId(acc.id)}
+                  className="w-full py-3.5 first:pt-1 last:pb-1 flex items-center justify-between gap-3 text-left hover:bg-[#F6F7F9] rounded-xl px-2 -mx-2 transition-colors cursor-pointer"
+                >
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="text-sm font-bold text-[#1A1B20] truncate">
+                      {acc.fullName}
+                      {acc.level ? ` · ${acc.level}` : ''}
+                    </p>
+                    <p className="text-xs text-[#505460] truncate">
+                      <span className="font-mono-tabular font-semibold text-[#1A1B20]">
+                        {acc.matricNumber || 'No Matric'}
+                      </span>
+                      {' · '}
+                      {acc.department || acc.faculty || 'Department N/A'}
+                    </p>
+                    <p className="text-xs text-[#686C78]">
+                      <span className={isLoggedIn ? 'text-[#15803D] font-semibold' : ''}>
+                        {isLoggedIn ? 'Signed In' : 'Signed Out'}
+                      </span>
+                      {' · '}
+                      <span className={isVerified ? 'text-[#15803D]' : 'text-[#B91C1C] font-semibold'}>
+                        {isVerified ? 'Verified' : 'Unverified'}
+                      </span>
+                      {' · '}
+                      <span className="capitalize">{acc.status}</span>
+                    </p>
+                  </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setInspectedStudentId((prev) => (prev === acc.id ? null : acc.id))
-                    }
-                    className={`min-h-[38px] px-3 rounded-xl text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ${
-                      inspectedStudentId === acc.id
-                        ? 'bg-[#1D1E23] text-white'
-                        : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1A1B20]'
-                    }`}
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Inspect History</span>
-                  </button>
+                  <span className="min-h-[36px] px-3 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1 shrink-0">
+                    <span>Inspect</span>
+                    <ChevronRight className="w-3.5 h-3.5 text-[#686C78]" />
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </SurfaceCard>
 
-                  <button
-                    type="button"
-                    onClick={() => handleToggleVerification(acc.id, acc.fullName, isVerified)}
-                    className="min-h-[38px] px-3 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-xs font-semibold text-[#1A1B20] cursor-pointer"
-                  >
-                    {isVerified ? 'Unverify Login' : 'Verify Login'}
-                  </button>
-                </div>
+      <DetailDialog
+        open={Boolean(inspectedStudent)}
+        onClose={() => setInspectedStudentId(null)}
+        title={inspectedStudent ? inspectedStudent.fullName : 'Student Details'}
+        subtitle={
+          inspectedStudent
+            ? `${inspectedStudent.matricNumber || 'No Matric'} · ${inspectedStudent.level || '100L'}`
+            : undefined
+        }
+        icon={<Users className="w-4 h-4" />}
+        maxWidthClass="max-w-2xl"
+      >
+        {inspectedStudent && (
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] p-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5 text-xs">
+                <p className="font-semibold text-[#1A1B20]">
+                  {inspectedStudent.faculty || 'Faculty N/A'} ·{' '}
+                  {inspectedStudent.department || 'Department N/A'}
+                </p>
+                <p className="text-[#505460]">{inspectedStudent.email}</p>
+                <p className="text-[#686C78] font-mono-tabular">
+                  Plan: {inspectedStudent.subscriptionTier ?? 'free'} · Status:{' '}
+                  <span className="capitalize font-semibold">{inspectedStudent.status}</span>
+                </p>
               </div>
-            );
-          })
+
+              <button
+                type="button"
+                onClick={() =>
+                  handleToggleVerification(
+                    inspectedStudent.id,
+                    inspectedStudent.fullName,
+                    inspectedStudent.adminVerified !== false
+                  )
+                }
+                className="min-h-[38px] px-3.5 rounded-xl bg-[#1D1E23] text-white text-xs font-semibold cursor-pointer"
+              >
+                {inspectedStudent.adminVerified !== false ? 'Unverify Login' : 'Verify Login'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.06] p-3.5 space-y-2 max-h-56 overflow-y-auto">
+                <p className="text-xs font-bold text-[#1A1B20]">
+                  Activity History ({inspectedStudentActivities.length})
+                </p>
+                {inspectedStudentActivities.length === 0 ? (
+                  <p className="text-xs text-[#686C78]">No activity recorded yet.</p>
+                ) : (
+                  inspectedStudentActivities.map((ev) => (
+                    <div
+                      key={ev.id}
+                      className="text-xs border-b border-[#1A1B20]/[0.06] pb-1.5 last:border-0"
+                    >
+                      <p className="font-semibold text-[#1A1B20]">{ev.detail}</p>
+                      <p className="text-[11px] font-mono-tabular text-[#686C78]">
+                        {new Date(ev.timestamp).toLocaleString([], {
+                          dateStyle: 'short',
+                          timeStyle: 'short',
+                        })}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.06] p-3.5 space-y-2 max-h-56 overflow-y-auto">
+                <p className="text-xs font-bold text-[#1A1B20]">
+                  Payment Receipts ({inspectedStudentPayments.length})
+                </p>
+                {inspectedStudentPayments.length === 0 ? (
+                  <p className="text-xs text-[#686C78]">No payment receipts recorded.</p>
+                ) : (
+                  inspectedStudentPayments.map((pay) => (
+                    <div
+                      key={pay.id}
+                      className="text-xs border-b border-[#1A1B20]/[0.06] pb-1.5 last:border-0"
+                    >
+                      <p className="font-bold text-[#1A1B20]">
+                        ₦{pay.amountNaira.toLocaleString()} · {pay.tierName} ({pay.provider})
+                      </p>
+                      <p className="text-[11px] font-mono-tabular text-[#686C78]">
+                        Ref: {pay.reference}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         )}
-      </div>
-    </SurfaceCard>
+      </DetailDialog>
+    </>
   );
 };

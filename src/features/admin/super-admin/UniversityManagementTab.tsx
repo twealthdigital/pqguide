@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Building2, Edit3, Plus, Users, X } from 'lucide-react';
 import type { AuthenticatedUser, School } from '../../../core/types';
 import { archiveRepository, type AppStoreState } from '../../../services/archiveRepository';
-import { SurfaceCard, TactileButton } from '../../../components/ui';
+import { SectionHeadingBar, SurfaceCard, TactileButton } from '../../../components/ui';
 
 interface UniversityManagementTabProps {
   currentUser: AuthenticatedUser;
@@ -78,9 +78,7 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
   const handleToggle = (school: School) => {
     try {
       archiveRepository.toggleSchoolStatus(currentUser, school.id);
-      onNotice(
-        `${school.code} is now ${school.isActive ? 'deactivated' : 'active'}.`
-      );
+      onNotice(`${school.code} is now ${school.isActive ? 'deactivated' : 'active'}.`);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Failed to change status.');
     }
@@ -88,19 +86,11 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      {/* University List & Assigned Admins */}
       <SurfaceCard tone="white" className="lg:col-span-7 p-5 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              Registered Universities
-            </h2>
-            <p className="text-xs text-[#686C78]">
-              Edit university metadata, activate or lock access, and inspect assigned admins
-            </p>
-          </div>
-          <Building2 className="w-5 h-5 text-[#1D1E23]" />
-        </div>
+        <SectionHeadingBar
+          icon={<Building2 className="w-4 h-4" />}
+          title={`Registered Universities (${store.schools.length})`}
+        />
 
         <div className="space-y-3">
           {store.schools.map((school) => {
@@ -119,9 +109,7 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
                 {isEditing ? (
                   <form onSubmit={handleSaveEdit} className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <p className="text-xs font-bold text-[#1A1B20]">
-                        Edit {school.code}
-                      </p>
+                      <p className="text-xs font-bold text-[#1A1B20]">Edit {school.code}</p>
                       <button
                         type="button"
                         onClick={() => setEditingSchoolId(null)}
@@ -135,28 +123,28 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
                         type="text"
                         value={editCode}
                         onChange={(e) => setEditCode(e.target.value)}
-                        placeholder="Code (e.g. AAUA)"
+                        placeholder="AAUA"
                         className="min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-semibold"
                       />
                       <input
                         type="text"
                         value={editShortName}
                         onChange={(e) => setEditShortName(e.target.value)}
-                        placeholder="Short Name"
+                        placeholder="Short name"
                         className="min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-semibold"
                       />
                       <input
                         type="text"
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
-                        placeholder="Full University Name"
+                        placeholder="Full university name"
                         className="sm:col-span-2 min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-semibold"
                       />
                       <input
                         type="text"
                         value={editLocation}
                         onChange={(e) => setEditLocation(e.target.value)}
-                        placeholder="State / City"
+                        placeholder="State or city"
                         className="sm:col-span-2 min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-xs font-semibold"
                       />
                     </div>
@@ -182,9 +170,7 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
                           {school.code} — {school.shortName}
                         </p>
                         <p className="text-xs text-[#505460]">{school.name}</p>
-                        <p className="text-[11px] text-[#686C78] mt-0.5">
-                          {school.location}
-                        </p>
+                        <p className="text-xs text-[#686C78] mt-0.5">{school.location}</p>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
@@ -214,12 +200,10 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
                       <Users className="w-3.5 h-3.5 mt-0.5 shrink-0 text-[#686C78]" />
                       <div className="min-w-0">
                         {assignedAdmins.length === 0 ? (
-                          <span className="text-[#686C78]">
-                            No School Admins assigned yet
-                          </span>
+                          <span className="text-[#686C78]">No School Admins assigned</span>
                         ) : (
                           <span>
-                            Assigned Admins:{' '}
+                            Admins:{' '}
                             <strong className="text-[#1A1B20]">
                               {assignedAdmins
                                 .map((a) => `${a.fullName} (${a.status})`)
@@ -237,16 +221,8 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
         </div>
       </SurfaceCard>
 
-      {/* Add University Form */}
       <SurfaceCard tone="white" className="lg:col-span-5 p-5 sm:p-6 space-y-4">
-        <div>
-          <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-            Add University
-          </h2>
-          <p className="text-xs text-[#686C78]">
-            Register a new university before assigning School Administrators
-          </p>
-        </div>
+        <SectionHeadingBar icon={<Plus className="w-4 h-4" />} title="Add University" />
 
         <form onSubmit={handleAddSchool} className="space-y-3">
           <div className="grid grid-cols-2 gap-2.5">
@@ -271,7 +247,7 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
                 type="text"
                 value={newShortName}
                 onChange={(e) => setNewShortName(e.target.value)}
-                placeholder="UNILAG Akoka"
+                placeholder="Short name"
                 className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
               />
             </div>
@@ -279,7 +255,7 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
 
           <div>
             <label className="block text-xs font-medium text-[#686C78] mb-1">
-              Full University Name
+              University Name
             </label>
             <input
               type="text"
@@ -293,13 +269,13 @@ export const UniversityManagementTab: React.FC<UniversityManagementTabProps> = (
 
           <div>
             <label className="block text-xs font-medium text-[#686C78] mb-1">
-              Location (State / City)
+              Location
             </label>
             <input
               type="text"
               value={newLocation}
               onChange={(e) => setNewLocation(e.target.value)}
-              placeholder="Lagos State, Nigeria"
+              placeholder="Lagos State"
               className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
             />
           </div>

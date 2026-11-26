@@ -284,7 +284,7 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
                 aria-label={`${tier.name} plan`}
                 className={`relative flex flex-col justify-between rounded-3xl p-5 transition-all duration-200 sm:p-6 ${
                   useDarkCard
-                    ? 'border-2 border-[#1D1E23] bg-[#1D1E23] text-white shadow-[0_18px_36px_-14px_rgba(18,19,24,0.45)]'
+                    ? 'border-2 border-[#141519] bg-[#16171C] bg-gradient-to-b from-[#23252C] to-[#141519] text-white shadow-[0_22px_44px_-14px_rgba(14,15,20,0.68)]'
                     : isHighlightedOutline
                       ? 'border-2 border-[#1D1E23] bg-white text-[#1A1B20] shadow-[0_10px_26px_-12px_rgba(24,25,30,0.2)]'
                       : 'border border-[#1A1B20]/[0.08] bg-white text-[#1A1B20] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)]'

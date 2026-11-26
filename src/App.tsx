@@ -222,10 +222,23 @@ function AppContent() {
 
   const unreadCount = useMemo(
     () =>
-      archiveRepository
-        .getNotificationsForWorkspace(effectiveWorkspace, authenticatedStudent?.id)
-        .filter((n) => !n.isRead).length,
-    [store.notifications, effectiveWorkspace, authenticatedStudent?.id]
+      effectiveWorkspace === 'super_admin'
+        ? archiveRepository
+            .getSuperAdminGovernanceNotifications()
+            .filter((n) => !n.isRead).length
+        : archiveRepository
+            .getNotificationsForWorkspace(effectiveWorkspace, authenticatedStudent?.id)
+            .filter((n) => !n.isRead).length,
+    [
+      store.notifications,
+      store.auditLogs,
+      store.userActivities,
+      store.supportTickets,
+      store.documents,
+      store.readSuperAdminNotifIds,
+      effectiveWorkspace,
+      authenticatedStudent?.id,
+    ]
   );
 
   const openSupportCount = useMemo(

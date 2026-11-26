@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { CheckCircle2, CreditCard, Search } from 'lucide-react';
 import type { PaymentProvider } from '../../../core/types';
 import type { AppStoreState } from '../../../services/archiveRepository';
-import { SurfaceCard } from '../../../components/ui';
+import { SectionHeadingBar, SurfaceCard } from '../../../components/ui';
 
 interface PaymentsTabProps {
   store: AppStoreState;
@@ -50,89 +50,83 @@ export const PaymentsTab: React.FC<PaymentsTabProps> = ({ store }) => {
       >
         <SurfaceCard tone="white" className="p-5">
           <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Auto-Verified Revenue</span>
+            <span className="text-xs font-medium">Verified Revenue</span>
             <CreditCard className="w-4 h-4" />
           </div>
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
             ₦{summary.totalNaira.toLocaleString()}
           </p>
           <p className="text-xs text-[#686C78] mt-1 font-mono-tabular">
-            {summary.totalCount} verified transactions
+            {summary.totalCount} payments
           </p>
         </SurfaceCard>
 
         <SurfaceCard tone="white" className="p-5">
           <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Paystack Auto-Verify</span>
+            <span className="text-xs font-medium">Paystack</span>
             <CheckCircle2 className="w-4 h-4 text-[#15803D]" />
           </div>
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
             ₦{summary.paystackNaira.toLocaleString()}
           </p>
           <p className="text-xs text-[#686C78] mt-1 font-mono-tabular">
-            {summary.paystackCount} Paystack payments
+            {summary.paystackCount} verified
           </p>
         </SurfaceCard>
 
         <SurfaceCard tone="white" className="p-5">
           <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Flutterwave Auto-Verify</span>
+            <span className="text-xs font-medium">Flutterwave</span>
             <CheckCircle2 className="w-4 h-4 text-[#15803D]" />
           </div>
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
             ₦{summary.flutterwaveNaira.toLocaleString()}
           </p>
           <p className="text-xs text-[#686C78] mt-1 font-mono-tabular">
-            {summary.flutterwaveCount} Flutterwave payments
+            {summary.flutterwaveCount} verified
           </p>
         </SurfaceCard>
       </section>
 
       <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              Automatic Payment Confirmations
-            </h2>
-            <p className="text-xs text-[#686C78]">
-              Paystack and Flutterwave payments are automatically verified and activate student access immediately.
-            </p>
+        <SectionHeadingBar
+          icon={<CreditCard className="w-4 h-4" />}
+          title={`Payment Confirmations (${filteredPayments.length})`}
+        />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="w-3.5 h-3.5 text-[#686C78] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search ref, matric, email..."
+              className="w-full min-h-[40px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 pl-8 pr-3 text-xs font-medium"
+            />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <div className="relative flex-1 sm:w-64">
-              <Search className="w-3.5 h-3.5 text-[#686C78] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search reference, matric, email..."
-                className="w-full min-h-[40px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 pl-8 pr-3 text-xs font-medium"
-              />
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              {(['all', 'paystack', 'flutterwave'] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setProviderFilter(item)}
-                  className={`min-h-[40px] px-3 rounded-xl text-xs font-semibold capitalize cursor-pointer transition-colors ${
-                    providerFilter === item
-                      ? 'bg-[#1D1E23] text-white'
-                      : 'bg-[#F6F7F9] text-[#505460] hover:bg-[#ECEEF3]'
-                  }`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center gap-1.5">
+            {(['all', 'paystack', 'flutterwave'] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setProviderFilter(item)}
+                className={`min-h-[40px] px-3 rounded-xl text-xs font-semibold capitalize cursor-pointer transition-colors ${
+                  providerFilter === item
+                    ? 'bg-[#1D1E23] text-white'
+                    : 'bg-[#F6F7F9] text-[#505460] hover:bg-[#ECEEF3]'
+                }`}
+              >
+                {item}
+              </button>
+            ))}
           </div>
         </div>
 
         {filteredPayments.length === 0 ? (
           <p className="py-10 text-center text-xs text-[#686C78]">
-            No automatic payment confirmations recorded yet for this filter.
+            No payment confirmations match this filter.
           </p>
         ) : (
           <div className="divide-y divide-[#1A1B20]/[0.06]">
@@ -147,7 +141,7 @@ export const PaymentsTab: React.FC<PaymentsTabProps> = ({ store }) => {
                       {tx.userName}
                     </p>
                     <span className="font-mono-tabular text-xs font-semibold text-[#15803D]">
-                      Auto-Verified · {tx.provider === 'paystack' ? 'Paystack' : 'Flutterwave'}
+                      Verified · {tx.provider === 'paystack' ? 'Paystack' : 'Flutterwave'}
                     </span>
                   </div>
                   <p className="text-xs text-[#505460]">
@@ -155,7 +149,7 @@ export const PaymentsTab: React.FC<PaymentsTabProps> = ({ store }) => {
                     {tx.level ? `${tx.level} · ` : ''}
                     {tx.userEmail}
                   </p>
-                  <p className="text-[11px] font-mono-tabular text-[#686C78]">
+                  <p className="text-xs font-mono-tabular text-[#686C78]">
                     Ref: {tx.reference} · {tx.tierName} ({tx.billingPeriod})
                   </p>
                 </div>

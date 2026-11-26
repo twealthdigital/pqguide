@@ -7,7 +7,12 @@ import type {
   HeaderMarqueeConfig,
 } from '../../../core/types';
 import { archiveRepository, type AppStoreState } from '../../../services/archiveRepository';
-import { CustomSelect, SurfaceCard, TactileButton } from '../../../components/ui';
+import {
+  CustomSelect,
+  SectionHeadingBar,
+  SurfaceCard,
+  TactileButton,
+} from '../../../components/ui';
 
 interface BroadcastsTabProps {
   currentUser: AuthenticatedUser;
@@ -52,7 +57,7 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
       });
       onNotice(
         updated.enabled
-          ? `Live header marquee published to ${updated.audience}.`
+          ? `Header marquee published to ${updated.audience}.`
           : 'Header marquee disabled.'
       );
     } catch (err) {
@@ -86,7 +91,7 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
       });
       setNotifTitle('');
       setNotifMessage('');
-      onNotice(`Notification "${created.title}" pushed to ${created.audience}.`);
+      onNotice(`Notification "${created.title}" sent.`);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Unable to send notification.');
     }
@@ -95,28 +100,12 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Header Marquee Configurator */}
         <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-                Header Marquee Ticker
-              </h2>
-              <p className="text-xs text-[#686C78]">
-                Drop a live scrolling header announcement across student website, admin desk, or both.
-              </p>
-            </div>
-            <Megaphone className="w-5 h-5 text-[#1D1E23] shrink-0" />
-          </div>
+          <SectionHeadingBar icon={<Megaphone className="w-4 h-4" />} title="Header Marquee" />
 
           <form onSubmit={handleSaveMarquee} className="space-y-3.5">
             <label className="flex items-center justify-between gap-3 rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-4 py-3 cursor-pointer">
-              <div>
-                <p className="text-xs font-bold text-[#1A1B20]">Enable Top Header Marquee</p>
-                <p className="text-[11px] text-[#686C78]">
-                  Displays at the top of matching interfaces immediately
-                </p>
-              </div>
+              <span className="text-xs font-bold text-[#1A1B20]">Enable Top Header Marquee</span>
               <input
                 type="checkbox"
                 checked={marqueeEnabled}
@@ -127,36 +116,36 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
 
             <div>
               <label className="block text-xs font-medium text-[#686C78] mb-1">
-                Marquee Announcement Text
+                Announcement Text
               </label>
               <textarea
                 rows={3}
                 value={marqueeMessage}
                 onChange={(e) => setMarqueeMessage(e.target.value)}
-                placeholder="e.g. Second Semester 2024/2025 past questions uploaded across Science and Arts. Check Notifications for updates."
+                placeholder="Write top banner message..."
                 className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3 text-xs sm:text-sm text-[#1A1B20]"
               />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <CustomSelect
-                label="Target Interface"
+                label="Audience"
                 value={marqueeAudience}
                 options={[
                   { value: 'all', label: 'Both Student & Admin' },
-                  { value: 'students', label: 'Normal Student Website Only' },
-                  { value: 'admins', label: 'Admin Interfaces Only' },
+                  { value: 'students', label: 'Students Only' },
+                  { value: 'admins', label: 'Admins Only' },
                 ]}
                 onChange={(v) => setMarqueeAudience(v as BroadcastAudience)}
               />
 
               <CustomSelect
-                label="Banner Tone"
+                label="Style"
                 value={marqueeTone}
                 options={[
-                  { value: 'neutral', label: 'Standard Dark Ash' },
-                  { value: 'important', label: 'Elevated Slate' },
-                  { value: 'urgent', label: 'Urgent Red Alert' },
+                  { value: 'neutral', label: 'Dark Ash' },
+                  { value: 'important', label: 'Slate' },
+                  { value: 'urgent', label: 'Urgent Red' },
                 ]}
                 onChange={(v) => setMarqueeTone(v as HeaderMarqueeConfig['tone'])}
               />
@@ -172,16 +161,13 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
                       : 'bg-[#1D1E23]'
                 }`}
               >
-                <p className="text-[10px] uppercase tracking-wider text-white/70 mb-0.5">
-                  Live Preview ({marqueeAudience})
-                </p>
                 <p className="truncate">{marqueeMessage.trim()}</p>
               </div>
             )}
 
             <div className="flex flex-wrap gap-2">
               <TactileButton type="submit" variant="dark" size="md">
-                Save Marquee Banner
+                Save Marquee
               </TactileButton>
               {store.marquee.enabled && (
                 <TactileButton
@@ -198,45 +184,30 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
           </form>
         </SurfaceCard>
 
-        {/* Normal Notification Broadcaster */}
         <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-                Send Notification Broadcast
-              </h2>
-              <p className="text-xs text-[#686C78]">
-                Publish notices directly into the Notifications feed on student or admin views.
-              </p>
-            </div>
-            <Bell className="w-5 h-5 text-[#1D1E23] shrink-0" />
-          </div>
+          <SectionHeadingBar icon={<Bell className="w-4 h-4" />} title="Send Notification" />
 
           <form onSubmit={handleSendNotification} className="space-y-3.5">
             <div>
-              <label className="block text-xs font-medium text-[#686C78] mb-1">
-                Notification Title
-              </label>
+              <label className="block text-xs font-medium text-[#686C78] mb-1">Title</label>
               <input
                 type="text"
                 required
                 value={notifTitle}
                 onChange={(e) => setNotifTitle(e.target.value)}
-                placeholder="e.g. Exam Timetable & PQ Update"
+                placeholder="Notification title"
                 className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs sm:text-sm font-semibold"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-[#686C78] mb-1">
-                Notification Body
-              </label>
+              <label className="block text-xs font-medium text-[#686C78] mb-1">Message</label>
               <textarea
                 rows={3}
                 required
                 value={notifMessage}
                 onChange={(e) => setNotifMessage(e.target.value)}
-                placeholder="Write the message students or admins will read in Notifications..."
+                placeholder="Write notification message..."
                 className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3 text-xs sm:text-sm text-[#1A1B20]"
               />
             </div>
@@ -272,22 +243,17 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
               fullWidth
               icon={<Send className="w-4 h-4" />}
             >
-              Publish Notification
+              Send Notification
             </TactileButton>
           </form>
         </SurfaceCard>
       </div>
 
-      {/* Recent Broadcast Feed */}
       <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
-        <div>
-          <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-            Notification Ledger ({store.notifications.length})
-          </h2>
-          <p className="text-xs text-[#686C78]">
-            Most recent alerts delivered across student and admin notification feeds
-          </p>
-        </div>
+        <SectionHeadingBar
+          icon={<Bell className="w-4 h-4" />}
+          title={`Sent Notifications (${store.notifications.length})`}
+        />
 
         <div className="divide-y divide-[#1A1B20]/[0.06]">
           {recentBroadcasts.map((item) => (
@@ -296,14 +262,12 @@ export const BroadcastsTab: React.FC<BroadcastsTabProps> = ({
               className="py-3 first:pt-1 last:pb-1 flex flex-wrap items-start justify-between gap-3"
             >
               <div className="min-w-0 flex-1 space-y-0.5">
-                <p className="text-sm font-bold text-[#1A1B20] truncate">
-                  {item.title}
-                </p>
+                <p className="text-sm font-bold text-[#1A1B20] truncate">{item.title}</p>
                 <p className="text-xs text-[#505460]">{item.message}</p>
                 <p className="text-[11px] text-[#686C78]">
-                  Audience: <span className="capitalize font-semibold">{item.audience ?? 'all'}</span> · Category:{' '}
+                  <span className="capitalize font-semibold">{item.audience ?? 'all'}</span> ·{' '}
                   <span className="capitalize">{item.category}</span>
-                  {item.createdBy ? ` · By ${item.createdBy}` : ''}
+                  {item.createdBy ? ` · ${item.createdBy}` : ''}
                 </p>
               </div>
               <span className="text-[11px] font-mono-tabular text-[#686C78] shrink-0">

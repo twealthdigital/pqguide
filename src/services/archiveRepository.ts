@@ -10,6 +10,12 @@ import {
   sanitizeSingleLine,
 } from '../core/security';
 import { courseHeading } from '../core/docTitle';
+import {
+  AUDIT_ACTION_META,
+  formatAuditHeadline,
+  formatRoleLabel,
+  resolveSchoolCode,
+} from '../core/auditMeta';
 import type {
   AccountStatus,
   AppNotification,
@@ -26,6 +32,7 @@ import type {
   School,
   SiteCmsConfig,
   StudyMaterial,
+  SuperAdminNotification,
   SupportTicket,
   UserActivityEvent,
   UserRole,
@@ -62,6 +69,7 @@ export interface AppStoreState {
   selectedSchoolId: string;
   /** Most recently opened past question ids, newest first. */
   recentDocIds: string[];
+  readSuperAdminNotifIds: string[];
 }
 
 function getDefaultMarquee(): HeaderMarqueeConfig {
@@ -95,6 +103,7 @@ function getDefaultState(): AppStoreState {
     marquee: getDefaultMarquee(),
     selectedSchoolId: 'sch-aaua',
     recentDocIds: [],
+    readSuperAdminNotifIds: [],
   };
 }
 
@@ -263,6 +272,9 @@ function loadState(): AppStoreState {
       recentDocIds: Array.isArray(parsed.recentDocIds)
         ? parsed.recentDocIds.filter((id): id is string => typeof id === 'string')
         : [],
+      readSuperAdminNotifIds: Array.isArray(parsed.readSuperAdminNotifIds)
+        ? parsed.readSuperAdminNotifIds.filter((id): id is string => typeof id === 'string')
+        : [],
     };
   } catch {
     return getDefaultState();
@@ -426,6 +438,145 @@ class ArchiveRepository {
         return matches ? { ...n, isRead: true } : n;
       }),
     }));
+  }
+
+  getSuperAdminGovernanceNotifications(): SuperAdminNotification[] {
+    const readSet = new Set(this.state.readSuperAdminNotifIds ?? []);
+    const items: SuperAdminNotification[] = [];
+
+    for (const entry of this.state.auditLogs) {
+      const schoolCode = resolveSchoolCode(this.state.schools, entry.schoolId);
+      const meta = AUDIT_ACTION_META[entry.action];
+      const id = `sa-audit-${entry.id}`;
+      items.push({
+        id,
+        title: formatAuditHeadline(entry, schoolCode),
+        message: entry.summary,
+        actorName: entry.actorName,
+        actorRoleLabel: formatRoleLabel(entry.actorRole),
+        schoolCode,
+        categoryLabel: meta?.label ?? entry.action.replace(/_/g, ' '),
+        detail: meta?.whatItDoes ?? entry.summary,
+        createdAt: entry.timestamp,
+        isRead: readSet.has(id),
+      });
+    }
+
+    for (const act of this.state.userActivities) {
+      if (
+        act.type !== 'signup' &&
+        act.type !== 'payment_verified' &&
+        act.type !== 'exam_completed'
+      ) {
+        continue;
+      }
+      const id = `sa-act-${act.id}`;
+      const roleLabel = formatRoleLabel(act.userRole);
+      const title =
+        act.type === 'signup'
+          ? `New account signup: ${act.userName}`
+          : act.type === 'payment_verified'
+            ? `Payment verified for ${act.userName}`
+            : `${act.userName} finished a practice exam`;
+      const categoryLabel =
+        act.type === 'signup'
+          ? 'Student Signup'
+          : act.type === 'payment_verified'
+            ? 'Payment Verified'
+            : 'Practice Exam';
+
+      items.push({
+        id,
+        title,
+        message: act.detail,
+        actorName: act.userName,
+        actorRoleLabel: roleLabel,
+        categoryLabel,
+        detail: `${act.userName}${act.matricNumber ? ` (${act.matricNumber})` : ''}: ${act.detail}`,
+        createdAt: act.timestamp,
+        isRead: readSet.has(id),
+      });
+    }
+
+    for (const ticket of this.state.supportTickets) {
+      const id = `sa-sup-${ticket.id}`;
+      items.push({
+        id,
+        title: `${ticket.senderName} sent a ${ticket.kind} message`,
+        message: ticket.message,
+        actorName: ticket.senderName,
+        actorRoleLabel: formatRoleLabel(ticket.senderRole),
+        categoryLabel: 'Support Inbox',
+        detail: `From ${ticket.senderName} (${ticket.senderEmail}): "${ticket.message}"`,
+        createdAt: ticket.createdAt,
+        isRead: readSet.has(id),
+      });
+    }
+
+    // Include baseline catalog provenance for initial documents not yet in auditLogs
+    const auditedDocIds = new Set(
+      this.state.auditLogs
+        .filter((a) => a.targetType === 'past_question')
+        .map((a) => a.targetId)
+    );
+    for (const doc of this.state.documents.slice(0, 4)) {
+      if (auditedDocIds.has(doc.id)) continue;
+      const uploaderAccount = this.state.accounts.find(
+        (acc) =>
+          (doc.uploadedById && acc.id === doc.uploadedById) ||
+          acc.fullName.toLowerCase() === doc.uploadedBy.toLowerCase()
+      );
+      const roleLabel = uploaderAccount
+        ? formatRoleLabel(uploaderAccount.role)
+        : 'School Admin';
+      const id = `sa-doc-${doc.id}`;
+      items.push({
+        id,
+        title:
+          uploaderAccount?.role === 'super_admin'
+            ? `Uploaded by Super Admin ${doc.uploadedBy}`
+            : `Uploaded by ${doc.uploadedBy} (${doc.schoolCode} ${roleLabel})`,
+        message: `${courseHeading(doc)} (${doc.session} · ${doc.level}) is ${
+          doc.status === 'published' ? 'live on student Home' : doc.status
+        }.`,
+        actorName: doc.uploadedBy,
+        actorRoleLabel: roleLabel,
+        schoolCode: doc.schoolCode,
+        categoryLabel: 'Archive Upload',
+        detail: `${doc.courseCode} — ${doc.courseTitle} (${doc.semester}, ${doc.session}) for ${doc.schoolCode}.`,
+        createdAt: doc.uploadedAt,
+        isRead: readSet.has(id),
+      });
+    }
+
+    return items.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }
+
+  markSuperAdminNotificationRead(notifId: string): void {
+    this.update((prev) => {
+      const existing = prev.readSuperAdminNotifIds ?? [];
+      if (existing.includes(notifId)) return prev;
+      return {
+        ...prev,
+        readSuperAdminNotifIds: [notifId, ...existing].slice(0, 600),
+      };
+    });
+  }
+
+  markAllSuperAdminNotificationsRead(): void {
+    const allIds = this.getSuperAdminGovernanceNotifications().map((item) => item.id);
+    this.update((prev) => {
+      const merged = Array.from(new Set([...allIds, ...(prev.readSuperAdminNotifIds ?? [])])).slice(
+        0,
+        600
+      );
+      return {
+        ...prev,
+        readSuperAdminNotifIds: merged,
+      };
+    });
   }
 
   // -------------------------------------------------------------------------

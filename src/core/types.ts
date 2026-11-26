@@ -144,6 +144,19 @@ export interface AppNotification {
   createdBy?: string;
 }
 
+export interface SuperAdminNotification {
+  id: string;
+  title: string;
+  message: string;
+  actorName: string;
+  actorRoleLabel: string;
+  schoolCode?: string;
+  categoryLabel: string;
+  detail: string;
+  createdAt: string;
+  isRead: boolean;
+}
+
 export interface HeaderMarqueeConfig {
   enabled: boolean;
   message: string;

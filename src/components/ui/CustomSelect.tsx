@@ -23,6 +23,10 @@ interface CustomSelectProps {
   emptyValueFallback?: string;
   size?: 'sm' | 'md';
   mono?: boolean;
+  tone?: 'light' | 'dark';
+  shape?: 'rounded' | 'pill';
+  disabled?: boolean;
+  labelClassName?: string;
   menuPlacement?: 'bottom' | 'top';
   className?: string;
 }
@@ -50,6 +54,10 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
     emptyValueFallback = 'All',
     size = 'md',
     mono = false,
+    tone = 'light',
+    shape = 'rounded',
+    disabled = false,
+    labelClassName,
     menuPlacement = 'bottom',
     className = '',
   }) => {
@@ -188,8 +196,12 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
       setIsOpen(false);
     };
 
-    const triggerSizeClass =
-      size === 'sm'
+    const isPill = shape === 'pill';
+    const isDark = tone === 'dark';
+
+    const triggerSizeClass = isPill
+      ? 'h-12 px-4 text-sm rounded-full'
+      : size === 'sm'
         ? 'min-h-[38px] px-3 py-1.5 text-xs rounded-xl'
         : 'min-h-[44px] px-3.5 py-2 text-sm rounded-xl';
 
@@ -198,7 +210,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
         {label && (
           <label
             htmlFor={controlId}
-            className="block text-xs font-medium text-[#686C78] mb-1.5"
+            className={
+              labelClassName ?? 'block text-xs font-medium text-[#686C78] mb-1.5'
+            }
           >
             {label}
           </label>
@@ -268,23 +282,32 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
             ref={triggerRef}
             id={controlId}
             type="button"
+            disabled={disabled}
             aria-haspopup="listbox"
             aria-expanded={isOpen}
             aria-label={ariaLabel ?? label ?? placeholder}
-            onClick={() => setIsOpen((prev) => !prev)}
-            className={`w-full flex items-center justify-between gap-2 bg-[#F6F7F9] hover:bg-[#EFF1F5] border text-left font-semibold text-[#1A1B20] transition-colors duration-150 cursor-pointer select-none ${triggerSizeClass} ${
-              isOpen
-                ? 'border-[#1D1E23] bg-white shadow-[0_6px_16px_-4px_rgba(24,25,30,0.14)]'
-                : 'border-[#1A1B20]/10'
+            onClick={() => {
+              if (!disabled) setIsOpen((prev) => !prev);
+            }}
+            className={`w-full flex items-center justify-between gap-2 border text-left font-semibold transition-colors duration-150 select-none ${triggerSizeClass} ${
+              disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+            } ${
+              isDark
+                ? 'bg-[#1D1E23] hover:bg-[#272930] border-[#1D1E23] text-white'
+                : isOpen
+                  ? 'border-[#1D1E23] bg-white text-[#1A1B20] shadow-[0_6px_16px_-4px_rgba(24,25,30,0.14)]'
+                  : isPill
+                    ? 'border-[#1A1B20]/15 bg-white hover:bg-[#F9FAFB] text-[#1A1B20]'
+                    : 'border-[#1A1B20]/10 bg-[#F6F7F9] hover:bg-[#EFF1F5] text-[#1A1B20]'
             } ${mono ? 'font-mono-tabular' : ''}`}
           >
             <span className="truncate">
               {selectedOption ? selectedOption.label : placeholder}
             </span>
             <ChevronDown
-              className={`w-4 h-4 text-[#686C78] shrink-0 transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                isOpen ? 'rotate-180 text-[#1A1B20]' : ''
-              }`}
+              className={`w-4 h-4 shrink-0 transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                isDark ? 'text-[#C3C7D2]' : 'text-[#686C78]'
+              } ${isOpen ? (isDark ? 'rotate-180 text-white' : 'rotate-180 text-[#1A1B20]') : ''}`}
               aria-hidden="true"
             />
           </button>

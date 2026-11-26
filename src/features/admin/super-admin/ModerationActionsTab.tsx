@@ -11,7 +11,7 @@ import {
 import type { AuthenticatedUser, ManagedAccount } from '../../../core/types';
 import type { AppStoreState } from '../../../services/archiveRepository';
 import { authService } from '../../../services/authService';
-import { SurfaceCard, TactileButton } from '../../../components/ui';
+import { SectionHeadingBar, SurfaceCard, TactileButton } from '../../../components/ui';
 
 interface ModerationActionsTabProps {
   currentUser: AuthenticatedUser;
@@ -74,39 +74,39 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
     {
       id: 'warn',
       label: 'Send Warning',
-      description: 'Increments warning count and sends a personal warning alert.',
+      description: 'Adds a warning and notifies the user.',
       icon: <AlertTriangle className="w-4 h-4" />,
     },
     {
       id: 'notify',
-      label: 'Direct Notification',
-      description: 'Sends a private notification straight to this user only.',
+      label: 'Direct Message',
+      description: 'Sends a private notification to this user.',
       icon: <Bell className="w-4 h-4" />,
     },
     {
       id: 'restrict',
       label: 'Restrict Account',
-      description: 'Allows read-only browsing while blocking interactive actions/uploads.',
+      description: 'Blocks uploads while keeping reading open.',
       icon: <ShieldOff className="w-4 h-4" />,
     },
     {
       id: 'suspend',
       label: 'Suspend',
-      description: 'Signs user out immediately and blocks login until restored.',
+      description: 'Signs the user out and pauses login.',
       icon: <UserX className="w-4 h-4" />,
       danger: true,
     },
     {
       id: 'ban',
       label: 'Ban',
-      description: 'Permanently blocks account access across the platform.',
+      description: 'Permanently blocks login.',
       icon: <Ban className="w-4 h-4" />,
       danger: true,
     },
     {
       id: 'activate',
       label: 'Restore Active',
-      description: 'Clears restrictions/suspensions/bans and restores full access.',
+      description: 'Restores full account access.',
       icon: <CheckCircle2 className="w-4 h-4" />,
     },
   ];
@@ -116,7 +116,7 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
   const handleApplyAction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAccount) {
-      onError('Select a student or school administrator account first.');
+      onError('Select an account first.');
       return;
     }
 
@@ -135,39 +135,26 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
 
     setReason('');
     setCustomTitle('');
-    onNotice(
-      `Applied "${activeModeSpec.label}" to ${selectedAccount.fullName} (${selectedAccount.email}).`
-    );
+    onNotice(`Applied "${activeModeSpec.label}" to ${selectedAccount.fullName}.`);
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-      {/* Left: Uniform Account Selector */}
       <SurfaceCard tone="white" className="lg:col-span-5 p-5 sm:p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              1. Pick Student or Admin
-            </h2>
-            <p className="text-xs text-[#686C78]">
-              Search any account across universities to take action
-            </p>
-          </div>
-          <ShieldAlert className="w-5 h-5 text-[#1D1E23]" />
-        </div>
+        <SectionHeadingBar icon={<ShieldAlert className="w-4 h-4" />} title="Pick Account" />
 
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search name, matric, email, or school..."
+          placeholder="Search name, matric, email..."
           className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-medium"
         />
 
         <div className="flex gap-1">
           {(
             [
-              { id: 'all', label: 'All Accounts' },
+              { id: 'all', label: 'All' },
               { id: 'student', label: 'Students' },
               { id: 'school_admin', label: 'School Admins' },
             ] as const
@@ -189,9 +176,7 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
 
         <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
           {candidateAccounts.length === 0 ? (
-            <p className="py-8 text-center text-xs text-[#686C78]">
-              No matching student or administrator accounts.
-            </p>
+            <p className="py-8 text-center text-xs text-[#686C78]">No matching accounts.</p>
           ) : (
             candidateAccounts.map((acc) => {
               const selected = selectedAccount?.id === acc.id;
@@ -225,7 +210,6 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
                     }`}
                   >
                     {acc.email} · {STATUS_LABELS[acc.status]}
-                    {acc.warningsCount ? ` · ${acc.warningsCount} warning(s)` : ''}
                   </p>
                 </button>
               );
@@ -234,11 +218,12 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
         </div>
       </SurfaceCard>
 
-      {/* Right: Uniform Moderation Control Form */}
       <SurfaceCard tone="white" className="lg:col-span-7 p-5 sm:p-6 space-y-5">
+        <SectionHeadingBar icon={<ShieldAlert className="w-4 h-4" />} title="Account Action" />
+
         {!selectedAccount ? (
-          <div className="py-12 text-center text-xs text-[#686C78]">
-            Select an account from the list on the left to warn, notify, restrict, suspend, or ban.
+          <div className="py-10 text-center text-xs text-[#686C78]">
+            Select an account from the list to take action.
           </div>
         ) : (
           <form onSubmit={handleApplyAction} className="space-y-5">
@@ -256,20 +241,10 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
                 {selectedAccount.role.replace('_', ' ')} · {selectedAccount.email} ·{' '}
                 {selectedAccount.matricNumber || selectedAccount.schoolCode}
               </p>
-              {(selectedAccount.warningsCount ?? 0) > 0 || selectedAccount.moderationNote ? (
-                <p className="text-[11px] text-[#B91C1C] font-medium pt-1">
-                  Warnings: {selectedAccount.warningsCount ?? 0}
-                  {selectedAccount.moderationNote
-                    ? ` · Latest note: "${selectedAccount.moderationNote}"`
-                    : ''}
-                </p>
-              ) : null}
             </div>
 
             <div>
-              <p className="text-xs font-bold text-[#1A1B20] mb-2">
-                2. Choose Action
-              </p>
+              <p className="text-xs font-bold text-[#1A1B20] mb-2">Choose Action</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {actionMeta.map((mode) => {
                   const active = actionMode === mode.id;
@@ -294,21 +269,19 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
                   );
                 })}
               </div>
-              <p className="text-[11px] text-[#686C78] mt-2">
-                {activeModeSpec.description}
-              </p>
+              <p className="text-xs text-[#686C78] mt-2">{activeModeSpec.description}</p>
             </div>
 
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-[#686C78] mb-1">
-                  Alert Title (Optional)
+                  Title (Optional)
                 </label>
                 <input
                   type="text"
                   value={customTitle}
                   onChange={(e) => setCustomTitle(e.target.value)}
-                  placeholder="Default title will be used if left blank"
+                  placeholder="Optional notice title"
                   className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-semibold"
                 />
               </div>
@@ -316,10 +289,10 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
               <div>
                 <label className="block text-xs font-medium text-[#686C78] mb-1">
                   {actionMode === 'notify'
-                    ? 'Notification Message'
+                    ? 'Message'
                     : actionMode === 'activate'
-                      ? 'Restoration Note (Optional)'
-                      : 'Reason / Notice Sent to User'}
+                      ? 'Note (Optional)'
+                      : 'Reason'}
                 </label>
                 <textarea
                   rows={3}
@@ -327,9 +300,7 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder={
-                    actionMode === 'notify'
-                      ? 'Write the message this user will receive in Notifications...'
-                      : 'Explain clearly why this action is being taken...'
+                    actionMode === 'notify' ? 'Write your message...' : 'Write your reason...'
                   }
                   className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3 text-xs resize-none"
                 />
@@ -337,7 +308,7 @@ export const ModerationActionsTab: React.FC<ModerationActionsTabProps> = ({
             </div>
 
             <TactileButton type="submit" variant="dark" size="md" fullWidth>
-              Apply {activeModeSpec.label} to {selectedAccount.fullName}
+              Apply {activeModeSpec.label}
             </TactileButton>
           </form>
         )}

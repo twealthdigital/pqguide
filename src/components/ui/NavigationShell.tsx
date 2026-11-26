@@ -53,6 +53,7 @@ import { FREE_TIER_ENABLED, useSubscription, type PaywallContext } from '../../c
 import { BrandLockup } from './BrandLockup';
 import { useBackHandler } from '../../core/navGuard';
 import { BrandLogo } from './BrandLogo';
+import { CustomSelect } from './CustomSelect';
 import { TactileButton } from './TactileButton';
 
 interface NavigationShellProps {
@@ -1274,29 +1275,21 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
               {/* Active Workspace Dropdown (Mobile Drawer) */}
               {isSuperAdmin && onWorkspaceModeChange && (
-                <div className="space-y-1">
-                  <label
-                    htmlFor="mobile-workspace-select"
-                    className="block px-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]"
-                  >
-                    Active Workspace
-                  </label>
-                  <select
-                    id="mobile-workspace-select"
-                    value={effectiveWorkspace}
-                    onChange={(e) => {
-                      onWorkspaceModeChange(e.target.value as WorkspaceViewMode);
-                      setDrawerOpen(false);
-                    }}
-                    className="w-full min-h-[44px] rounded-2xl bg-[#1D1E23] text-white px-3.5 text-xs font-semibold cursor-pointer"
-                  >
-                    {workspaceModes.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <CustomSelect
+                  id="mobile-workspace-select"
+                  label="Active Workspace"
+                  labelClassName="block px-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78] mb-1"
+                  tone="dark"
+                  value={effectiveWorkspace}
+                  options={workspaceModes.map((m) => ({
+                    value: m.id,
+                    label: m.label,
+                  }))}
+                  onChange={(val) => {
+                    onWorkspaceModeChange(val as WorkspaceViewMode);
+                    setDrawerOpen(false);
+                  }}
+                />
               )}
 
               {/* Primary Navigation Links */}

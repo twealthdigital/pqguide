@@ -23,6 +23,7 @@ import {
 } from '../services/authService';
 import { BrandLockup } from '../components/ui/BrandLockup';
 import { CreatableSelectInput } from '../components/ui/CreatableSelectInput';
+import { CustomSelect } from '../components/ui/CustomSelect';
 import { TactileButton } from '../components/ui/TactileButton';
 
 export type AuthView =
@@ -923,10 +924,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     onChange={(e) => setSigninMatric(e.target.value)}
                     placeholder={
                       portal === 'student'
-                        ? 'e.g. 230404001 or student@aaua.edu.ng'
+                        ? 'Matric number or email'
                         : portal === 'school_admin'
-                          ? 'coordinator@university.edu.ng'
-                          : 'superadmin@pqguide.local'
+                          ? 'Admin email'
+                          : 'Super admin email'
                     }
                     className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                   />
@@ -960,7 +961,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                       disabled={isBusy}
                       value={signinPassword}
                       onChange={(e) => setSigninPassword(e.target.value)}
-                      placeholder="Enter your password"
+                      placeholder="Your password"
                       className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white pl-4 pr-12 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                     />
                     <button
@@ -1109,7 +1110,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   disabled={isBusy}
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="e.g. Adeola Adetola"
+                  placeholder="Your full name"
                   className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                 />
               </div>
@@ -1132,32 +1133,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     onChange={(e) =>
                       setSignupMatric(e.target.value.replace(/\D/g, '').slice(0, 9))
                     }
-                    placeholder="e.g. 230404001"
+                    placeholder="230404001"
                     className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 font-mono-tabular text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                   />
                 </div>
 
-                <div>
-                  <label
-                    htmlFor="signup-level"
-                    className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
-                  >
-                    Level
-                  </label>
-                  <select
-                    id="signup-level"
-                    disabled={isBusy}
-                    value={signupLevel}
-                    onChange={(e) => setSignupLevel(e.target.value as StudentLevel)}
-                    className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-3.5 text-sm font-mono-tabular text-[#1A1B20] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
-                  >
-                    {STUDENT_LEVELS.map((lvl) => (
-                      <option key={lvl} value={lvl}>
-                        {lvl}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <CustomSelect
+                  id="signup-level"
+                  label="Level"
+                  labelClassName="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+                  shape="pill"
+                  mono
+                  disabled={isBusy}
+                  value={signupLevel}
+                  options={STUDENT_LEVELS.map((lvl) => ({
+                    value: lvl,
+                    label: lvl,
+                  }))}
+                  onChange={(val) => setSignupLevel(val as StudentLevel)}
+                />
               </div>
               {liveMatricFeedback && (
                 <p
@@ -1177,7 +1171,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   options={facultyOptions}
                   onChange={handleFacultyChange}
                   onAddOption={handleAddFacultyOption}
-                  placeholder="Type or select faculty"
+                  placeholder="Pick faculty"
                   disabled={isBusy}
                 />
                 <CreatableSelectInput
@@ -1187,7 +1181,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   options={departmentOptions}
                   onChange={setDepartment}
                   onAddOption={handleAddDepartmentOption}
-                  placeholder="Type or select department"
+                  placeholder="Pick department"
                   disabled={isBusy}
                 />
               </div>
@@ -1205,7 +1199,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   disabled={isBusy}
                   value={signupEmail}
                   onChange={(e) => setSignupEmail(e.target.value)}
-                  placeholder="student@aaua.edu.ng"
+                  placeholder="you@school.edu.ng"
                   className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                 />
               </div>
@@ -1224,7 +1218,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     disabled={isBusy}
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
+                    placeholder="At least 6 characters"
                     className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white pl-4 pr-12 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                   />
                   <button
@@ -1412,8 +1406,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   onChange={(e) => setForgotIdentifier(e.target.value)}
                   placeholder={
                     portal === 'student'
-                      ? 'e.g. 230404001 or student@aaua.edu.ng'
-                      : 'coordinator@university.edu.ng'
+                      ? 'Matric number or email'
+                      : 'Admin email'
                   }
                   className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                 />
@@ -1537,7 +1531,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   disabled={isBusy}
                   value={activateEmail}
                   onChange={(e) => setActivateEmail(e.target.value)}
-                  placeholder="coordinator@university.edu.ng"
+                  placeholder="Approved admin email"
                   className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
                 />
               </div>

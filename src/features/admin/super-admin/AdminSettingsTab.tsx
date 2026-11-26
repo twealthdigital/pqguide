@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Globe, Layers, RotateCcw, Save, Settings, UploadCloud } from 'lucide-react';
 import type { AuthenticatedUser, SiteCmsConfig } from '../../../core/types';
 import { archiveRepository, type AppStoreState } from '../../../services/archiveRepository';
-import { SurfaceCard, TactileButton } from '../../../components/ui';
+import { SectionHeadingBar, SurfaceCard, TactileButton } from '../../../components/ui';
 
 interface AdminSettingsTabProps {
   currentUser: AuthenticatedUser;
@@ -56,39 +56,31 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
   return (
     <form onSubmit={handleSave} className="space-y-5">
       <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Settings className="w-5 h-5 text-[#1D1E23]" />
-            <div>
-              <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-                Live Website UI &amp; Constant Pages Editor
-              </h2>
-              <p className="text-xs text-[#686C78]">
-                Manage the 2 separate UIs (Student Website &amp; School Admin Website) plus About, Services, Help &amp; Customer Support
-              </p>
+        <SectionHeadingBar
+          icon={<Settings className="w-4 h-4" />}
+          title="Live Website UI & Constant Pages"
+          right={
+            <div className="flex flex-wrap gap-2">
+              <TactileButton
+                type="button"
+                variant="light"
+                size="sm"
+                icon={<RotateCcw className="w-3.5 h-3.5" />}
+                onClick={handleReset}
+              >
+                Reset
+              </TactileButton>
+              <TactileButton
+                type="submit"
+                variant="light"
+                size="sm"
+                icon={<Save className="w-3.5 h-3.5" />}
+              >
+                Save Live
+              </TactileButton>
             </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <TactileButton
-              type="button"
-              variant="light"
-              size="sm"
-              icon={<RotateCcw className="w-3.5 h-3.5" />}
-              onClick={handleReset}
-            >
-              Reset Defaults
-            </TactileButton>
-            <TactileButton
-              type="submit"
-              variant="dark"
-              size="sm"
-              icon={<Save className="w-3.5 h-3.5" />}
-            >
-              Save Live Changes
-            </TactileButton>
-          </div>
-        </div>
+          }
+        />
 
         {/* Switch between the 2 Separate Website UIs & Shared Constant Pages */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
@@ -155,12 +147,12 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
         )}
       </SurfaceCard>
 
-      {/* Area 1: Student Website UI */}
       {area === 'student_ui' && (
         <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
-          <h3 className="font-display text-base font-bold text-[#1A1B20]">
-            Student Website Copy &amp; Headings
-          </h3>
+          <SectionHeadingBar
+            icon={<Globe className="w-4 h-4" />}
+            title="Student Website Copy & Headings"
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
               <label className="block text-xs font-medium text-[#686C78] mb-1">
@@ -373,12 +365,12 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
         </SurfaceCard>
       )}
 
-      {/* Area 2: School Admin Website UI */}
       {area === 'school_admin_ui' && (
         <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
-          <h3 className="font-display text-base font-bold text-[#1A1B20]">
-            School Admin Interface Copy &amp; Ingestion Desk
-          </h3>
+          <SectionHeadingBar
+            icon={<UploadCloud className="w-4 h-4" />}
+            title="School Admin Website Copy"
+          />
           <div className="space-y-3.5">
             <div>
               <label className="block text-xs font-medium text-[#686C78] mb-1">

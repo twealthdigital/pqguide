@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { CheckCircle2, Inbox, Send } from 'lucide-react';
 import type { AuthenticatedUser, SupportTicket } from '../../../core/types';
 import { archiveRepository, type AppStoreState } from '../../../services/archiveRepository';
-import { SurfaceCard, TactileButton } from '../../../components/ui';
+import { SectionHeadingBar, SurfaceCard, TactileButton } from '../../../components/ui';
 
 interface SupportInboxTabProps {
   currentUser: AuthenticatedUser;
@@ -48,11 +48,7 @@ export const SupportInboxTab: React.FC<SupportInboxTabProps> = ({
       archiveRepository.replyToSupportTicket(currentUser, ticket.id, text, 'resolved');
       setReplyDrafts((prev) => ({ ...prev, [ticket.id]: '' }));
       setReplyingTicketId(null);
-      onNotice(
-        ticket.senderUserId
-          ? `Sent response to ${ticket.senderName} and marked ticket resolved.`
-          : `Saved response for ${ticket.senderName} and marked ticket resolved.`
-      );
+      onNotice(`Sent response to ${ticket.senderName}.`);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Unable to send support reply.');
     }
@@ -69,52 +65,38 @@ export const SupportInboxTab: React.FC<SupportInboxTabProps> = ({
 
   return (
     <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <Inbox className="w-5 h-5 text-[#1D1E23]" />
-          <div>
-            <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              Customer Support Inbox ({store.supportTickets.length})
-            </h2>
-            <p className="text-xs text-[#686C78]">
-              Messages sent from Customer Support arrive here with sender details and direct notification reply
-            </p>
-          </div>
-        </div>
+      <SectionHeadingBar
+        icon={<Inbox className="w-4 h-4" />}
+        title={`Customer Support Inbox (${store.supportTickets.length})`}
+      />
 
-        <div className="flex flex-wrap gap-1.5">
-          {(
-            [
-              { id: 'all', label: `All (${store.supportTickets.length})` },
-              { id: 'new', label: `New (${counts.new})` },
-              { id: 'reviewed', label: `Reviewed (${counts.reviewed})` },
-              { id: 'resolved', label: `Resolved (${counts.resolved})` },
-            ] as const
-          ).map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setStatusFilter(tab.id)}
-              className={`min-h-[36px] px-3 rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
-                statusFilter === tab.id
-                  ? 'bg-[#1D1E23] text-white'
-                  : 'bg-[#F6F7F9] text-[#505460] hover:bg-[#ECEEF3]'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-wrap gap-1.5">
+        {(
+          [
+            { id: 'all', label: `All (${store.supportTickets.length})` },
+            { id: 'new', label: `New (${counts.new})` },
+            { id: 'reviewed', label: `Reviewed (${counts.reviewed})` },
+            { id: 'resolved', label: `Resolved (${counts.resolved})` },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setStatusFilter(tab.id)}
+            className={`min-h-[36px] px-3 rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
+              statusFilter === tab.id
+                ? 'bg-[#1D1E23] text-white'
+                : 'bg-[#F6F7F9] text-[#505460] hover:bg-[#ECEEF3]'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {filteredTickets.length === 0 ? (
-        <div className="py-12 text-center space-y-1">
-          <p className="text-sm font-semibold text-[#1A1B20]">
-            No customer support messages in this view
-          </p>
-          <p className="text-xs text-[#686C78]">
-            Any feedback, missing paper request, or issue sent on the Customer Support page appears here immediately.
-          </p>
+        <div className="py-10 text-center">
+          <p className="text-sm font-semibold text-[#1A1B20]">No support messages here</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -132,7 +114,7 @@ export const SupportInboxTab: React.FC<SupportInboxTabProps> = ({
                       {ticket.senderMatric ? ` · ${ticket.senderMatric}` : ''}
                       {ticket.senderLevel ? ` (${ticket.senderLevel})` : ''}
                     </p>
-                    <p className="text-[11px] text-[#686C78]">
+                    <p className="text-xs text-[#686C78]">
                       {ticket.kind} · {ticket.senderRole.replace('_', ' ')} · {ticket.senderEmail}
                     </p>
                   </div>
@@ -166,45 +148,43 @@ export const SupportInboxTab: React.FC<SupportInboxTabProps> = ({
                   <div className="rounded-xl bg-[#F0FDF4] border border-[#BBF7D0] px-3.5 py-2.5 text-xs text-[#14532D] space-y-1">
                     <p className="font-bold flex items-center gap-1.5">
                       <CheckCircle2 className="w-3.5 h-3.5 text-[#15803D]" />
-                      <span>Response by {ticket.repliedBy ?? 'Super Admin'}</span>
+                      <span>Reply by {ticket.repliedBy ?? 'Super Admin'}</span>
                     </p>
                     <p>{ticket.adminReply}</p>
                   </div>
                 )}
 
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReplyingTicketId((prev) => (prev === ticket.id ? null : ticket.id))
+                    }
+                    className="min-h-[36px] px-3 rounded-xl bg-[#1D1E23] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{ticket.adminReply ? 'Update Reply' : 'Reply & Resolve'}</span>
+                  </button>
+
+                  {ticket.status === 'new' && (
                     <button
                       type="button"
-                      onClick={() =>
-                        setReplyingTicketId((prev) => (prev === ticket.id ? null : ticket.id))
-                      }
-                      className="min-h-[36px] px-3 rounded-xl bg-[#1D1E23] text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => handleStatusChange(ticket.id, 'reviewed')}
+                      className="min-h-[36px] px-3 rounded-xl bg-white border border-[#1A1B20]/10 text-xs font-semibold text-[#1A1B20] cursor-pointer"
                     >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>{ticket.adminReply ? 'Update Reply' : 'Reply & Resolve'}</span>
+                      Mark Reviewed
                     </button>
+                  )}
 
-                    {ticket.status === 'new' && (
-                      <button
-                        type="button"
-                        onClick={() => handleStatusChange(ticket.id, 'reviewed')}
-                        className="min-h-[36px] px-3 rounded-xl bg-white border border-[#1A1B20]/10 text-xs font-semibold text-[#1A1B20] cursor-pointer"
-                      >
-                        Mark Reviewed
-                      </button>
-                    )}
-
-                    {ticket.status !== 'resolved' && (
-                      <button
-                        type="button"
-                        onClick={() => handleStatusChange(ticket.id, 'resolved')}
-                        className="min-h-[36px] px-3 rounded-xl bg-white border border-[#1A1B20]/10 text-xs font-semibold text-[#15803D] cursor-pointer"
-                      >
-                        Mark Resolved
-                      </button>
-                    )}
-                  </div>
+                  {ticket.status !== 'resolved' && (
+                    <button
+                      type="button"
+                      onClick={() => handleStatusChange(ticket.id, 'resolved')}
+                      className="min-h-[36px] px-3 rounded-xl bg-white border border-[#1A1B20]/10 text-xs font-semibold text-[#15803D] cursor-pointer"
+                    >
+                      Mark Resolved
+                    </button>
+                  )}
                 </div>
 
                 {isReplying && (
@@ -219,11 +199,7 @@ export const SupportInboxTab: React.FC<SupportInboxTabProps> = ({
                       onChange={(e) =>
                         setReplyDrafts((prev) => ({ ...prev, [ticket.id]: e.target.value }))
                       }
-                      placeholder={
-                        ticket.senderUserId
-                          ? 'Write your reply (automatically sent to this user Notifications screen)...'
-                          : 'Write your reply note for this guest ticket...'
-                      }
+                      placeholder="Write your reply..."
                       className="w-full rounded-xl bg-white border border-[#1A1B20]/12 p-3 text-xs resize-none"
                     />
                     <div className="flex justify-end gap-2">
@@ -236,7 +212,7 @@ export const SupportInboxTab: React.FC<SupportInboxTabProps> = ({
                         Cancel
                       </TactileButton>
                       <TactileButton type="submit" variant="dark" size="sm">
-                        Send Response
+                        Send Reply
                       </TactileButton>
                     </div>
                   </form>

@@ -380,7 +380,7 @@ const FeedbackForm: React.FC<{
           disabled={busy}
           rows={4}
           maxLength={1000}
-          placeholder="Write your message for Super Admin support here..."
+          placeholder="Write your support message here..."
           className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 py-2.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20 resize-none disabled:opacity-60"
         />
       </div>
