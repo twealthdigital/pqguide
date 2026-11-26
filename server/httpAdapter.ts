@@ -139,7 +139,7 @@ export function createOtpHttpHandlers(engine = defaultOtpEngine) {
       sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
       return;
     }
-    const result = await engine.consumeResetGrant({ body });
+    const result = await engine.consumeResetGrant({ body, clientIp: getClientIp(req) });
     sendJson(res, result.status, result.body);
   }
 

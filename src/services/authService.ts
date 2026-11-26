@@ -745,8 +745,31 @@ export const authService = {
     if (!matched) {
       return { ok: false, error: 'Account session expired. Please try again.' };
     }
-    if (purpose === 'admin_activate' && matched.role !== 'school_admin') {
-      return { ok: false, error: 'This email is not approved for School Admin activation.' };
+    if (purpose === 'admin_activate') {
+      if (matched.role !== 'school_admin') {
+        return { ok: false, error: 'This email is not approved for School Admin activation.' };
+      }
+      if (matched.status !== 'active') {
+        return { ok: false, error: 'This School Admin account is suspended or revoked.' };
+      }
+      if (matched.adminVerified === false) {
+        return { ok: false, error: 'Your School Admin access is awaiting Super Admin verification.' };
+      }
+    }
+    if (purpose === 'reset') {
+      if (!matched.isEmailVerified) {
+        return { ok: false, error: 'Account email is not verified yet.' };
+      }
+      if (matched.status === 'suspended' || matched.status === 'banned' || matched.status === 'revoked') {
+        return { ok: false, error: 'This account is suspended or banned. Password reset is unavailable.' };
+      }
+      if (matched.role === 'school_admin' && matched.needsPasswordSetup) {
+        return {
+          ok: false,
+          error:
+            'Complete "Activate approved email" first to verify your email and create your password.',
+        };
+      }
     }
 
     const otpSend = await dispatchServerEmailOtp(
@@ -1815,6 +1838,17 @@ export const authService = {
       };
     }
 
+    const repoResetAcc = archiveRepository
+      .getSnapshot()
+      .accounts.find((a) => a.id === account.id || a.email.toLowerCase() === account.email);
+    const resetStatus = repoResetAcc?.status ?? account.status;
+    if (resetStatus === 'suspended' || resetStatus === 'banned' || resetStatus === 'revoked') {
+      return {
+        ok: false,
+        error: 'This account is suspended or banned. Contact a Super Administrator.',
+      };
+    }
+
     if (portal === 'school_admin' && account.needsPasswordSetup) {
       return {
         ok: false,
@@ -1882,6 +1916,16 @@ export const authService = {
     if (!target) {
       return { ok: false, error: 'Account could not be found.' };
     }
+    const repoAcc = archiveRepository
+      .getSnapshot()
+      .accounts.find((a) => a.id === target.id || a.email.toLowerCase() === target.email);
+    const resolvedStatus = repoAcc?.status ?? target.status;
+    if (resolvedStatus === 'suspended' || resolvedStatus === 'banned' || resolvedStatus === 'revoked') {
+      return {
+        ok: false,
+        error: 'This account is suspended or banned. Password reset is unavailable.',
+      };
+    }
 
     const pwError = validatePasswordForRole(newPassword, target.role);
     if (pwError) {
@@ -1902,7 +1946,7 @@ export const authService = {
 
     writeAccounts(
       accounts.map((a) =>
-        a.email === normalizedEmail
+        a.id === target.id
           ? {
               ...a,
               passwordHash,

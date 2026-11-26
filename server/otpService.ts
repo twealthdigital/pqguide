@@ -46,6 +46,7 @@ export interface ConsumeResetGrantResult {
   body: {
     ok: boolean;
     error?: string;
+    retryAfterSeconds?: number;
   };
 }
 
@@ -170,6 +171,10 @@ if current == 1 then
 end
 if current > tonumber(ARGV[2]) then
   local ttlMs = redis.call('PTTL', KEYS[1])
+  if ttlMs < 0 then
+    redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[1]))
+    ttlMs = tonumber(ARGV[1])
+  end
   return {'LIMIT', tostring(math.max(1, math.ceil(ttlMs / 1000)))}
 end
 return {'OK', tostring(current)}
@@ -1134,6 +1139,7 @@ export function createOtpEngine(deps: OtpEngineDeps = {}) {
 
   async function consumeResetGrant(params: {
     body: unknown;
+    clientIp?: string;
   }): Promise<ConsumeResetGrantResult> {
     const cfg = resolveRuntimeConfig(getEnv());
     if (cfg.configError) {
@@ -1141,6 +1147,36 @@ export function createOtpEngine(deps: OtpEngineDeps = {}) {
         status: 503,
         body: { ok: false, error: cfg.configError },
       };
+    }
+
+    const store = resolveStore(cfg);
+    if (params.clientIp) {
+      const ipHash = sha256Hex(params.clientIp);
+      try {
+        const rl = await store.checkRateLimit(
+          `pqguide:rl:otp_verify:${ipHash}`,
+          IP_WINDOW_MS,
+          IP_MAX_VERIFY_REQUESTS
+        );
+        if (!rl.allowed) {
+          return {
+            status: 429,
+            body: {
+              ok: false,
+              error: `Too many verification attempts. Please wait ${rl.retryAfterSeconds}s and try again.`,
+              retryAfterSeconds: rl.retryAfterSeconds,
+            },
+          };
+        }
+      } catch {
+        return {
+          status: 503,
+          body: {
+            ok: false,
+            error: 'Verification service is temporarily unavailable. Please try again.',
+          },
+        };
+      }
     }
 
     const bodyObj =
@@ -1161,7 +1197,6 @@ export function createOtpEngine(deps: OtpEngineDeps = {}) {
       };
     }
 
-    const store = resolveStore(cfg);
     const emailHash = sha256Hex(email);
     const resetGrantKey = `pqguide:reset_grant:${emailHash}`;
     const grantDigestHex = hashResetGrant(cfg.hmacSecret, email, resetToken);
