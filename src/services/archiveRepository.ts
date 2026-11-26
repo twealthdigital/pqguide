@@ -48,6 +48,13 @@ import {
   SEED_SCHOOLS,
   SEED_SESSIONS,
 } from '../data/seedCatalog';
+import {
+  buildDemoPreviewDataset,
+  hasAppliedDemoPreview,
+  isDemoPreviewId,
+  markDemoPreviewApplied,
+  resetDemoPreviewFlag,
+} from '../data/demoPreviewData';
 import { localStore } from './storage/localStore';
 
 const STORAGE_KEY = 'pqguide_aaua_store_v1';
@@ -81,6 +88,47 @@ function getDefaultMarquee(): HeaderMarqueeConfig {
     updatedAt: '',
     updatedBy: '',
   };
+}
+
+function mergeUniqueById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  const seen = new Set(existing.map((item) => item.id));
+  return [...existing, ...incoming.filter((item) => !seen.has(item.id))];
+}
+
+function hydrateDemoPreviewOnce(base: AppStoreState): AppStoreState {
+  if (hasAppliedDemoPreview()) return base;
+  const demo = buildDemoPreviewDataset();
+  markDemoPreviewApplied('1');
+
+  const existingVisitors = new Set(base.telemetry.uniqueVisitorIds);
+  const nextVisitorIds = [
+    ...base.telemetry.uniqueVisitorIds,
+    ...demo.visitorIds.filter((id) => !existingVisitors.has(id)),
+  ];
+
+  const hydrated: AppStoreState = {
+    ...base,
+    accounts: mergeUniqueById(base.accounts, demo.accounts),
+    payments: mergeUniqueById(base.payments, demo.payments)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 300),
+    userActivities: mergeUniqueById(base.userActivities, demo.userActivities)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, 500),
+    supportTickets: mergeUniqueById(base.supportTickets, demo.supportTickets)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 300),
+    auditLogs: mergeUniqueById(base.auditLogs, demo.auditLogs)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, 300),
+    telemetry: {
+      totalVisits: base.telemetry.totalVisits + demo.extraVisitsCount,
+      uniqueVisitorIds: nextVisitorIds,
+      lastVisitAt: base.telemetry.lastVisitAt ?? new Date().toISOString(),
+    },
+  };
+  saveState(hydrated);
+  return hydrated;
 }
 
 function getDefaultState(): AppStoreState {
@@ -164,7 +212,7 @@ function mergeSiteCms(raw?: Partial<SiteCmsConfig> | null): SiteCmsConfig {
 function loadState(): AppStoreState {
   try {
     const parsed = localStore.getJson<Partial<AppStoreState>>(STORAGE_KEY);
-    if (!parsed) return getDefaultState();
+    if (!parsed) return hydrateDemoPreviewOnce(getDefaultState());
 
     const defaults = getDefaultState();
     const storedDocs = Array.isArray(parsed.documents) ? parsed.documents : null;
@@ -250,7 +298,7 @@ function loadState(): AppStoreState {
           }
         : defaults.telemetry;
 
-    return {
+    return hydrateDemoPreviewOnce({
       schools,
       sessions:
         Array.isArray(parsed.sessions) && parsed.sessions.length > 0
@@ -278,9 +326,9 @@ function loadState(): AppStoreState {
       readSuperAdminNotifIds: Array.isArray(parsed.readSuperAdminNotifIds)
         ? parsed.readSuperAdminNotifIds.filter((id): id is string => typeof id === 'string')
         : [],
-    };
+    });
   } catch {
-    return getDefaultState();
+    return hydrateDemoPreviewOnce(getDefaultState());
   }
 }
 
@@ -1866,31 +1914,47 @@ class ArchiveRepository {
       'pq:manage_all',
       'Only Super Administrators can clear starter catalog samples.'
     );
-    this.update((prev) => ({
-      ...prev,
-      documents: prev.documents.filter((doc) => !doc.id.startsWith('pq-aaua-')),
-      notifications: [
-        {
-          id: `notif-${Date.now()}`,
-          title: 'Starter Samples Cleared',
-          message:
-            'Demo seed past questions were removed. Upload official past questions from Super Admin or School Admin.',
-          category: 'system',
-          createdAt: new Date().toISOString(),
-          isRead: false,
+    markDemoPreviewApplied('cleared');
+    this.update((prev) => {
+      const hadDemoVisits = prev.telemetry.uniqueVisitorIds.some((id) => isDemoPreviewId(id));
+      const cleanedVisitors = prev.telemetry.uniqueVisitorIds.filter((id) => !isDemoPreviewId(id));
+      return {
+        ...prev,
+        documents: prev.documents.filter((doc) => !doc.id.startsWith('pq-aaua-')),
+        accounts: prev.accounts.filter((acc) => !isDemoPreviewId(acc.id)),
+        payments: prev.payments.filter((tx) => !isDemoPreviewId(tx.id)),
+        userActivities: prev.userActivities.filter((act) => !isDemoPreviewId(act.id)),
+        supportTickets: prev.supportTickets.filter((tk) => !isDemoPreviewId(tk.id)),
+        telemetry: {
+          ...prev.telemetry,
+          totalVisits: hadDemoVisits
+            ? Math.max(cleanedVisitors.length, prev.telemetry.totalVisits - 184)
+            : prev.telemetry.totalVisits,
+          uniqueVisitorIds: cleanedVisitors,
         },
-      ],
-      auditLogs: [
-        createAuditEntry(
-          actor,
-          'pq_deleted',
-          'system',
-          'seed-samples',
-          'Cleared starter demo past question samples'
-        ),
-        ...prev.auditLogs,
-      ].slice(0, 300),
-    }));
+        notifications: [
+          {
+            id: `notif-${Date.now()}`,
+            title: 'Starter Samples Cleared',
+            message:
+              'Demo seed past questions and preview sample records were removed. Only live records remain.',
+            category: 'system',
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          },
+        ],
+        auditLogs: [
+          createAuditEntry(
+            actor,
+            'pq_deleted',
+            'system',
+            'seed-samples',
+            'Cleared starter demo samples and preview records'
+          ),
+          ...prev.auditLogs.filter((log) => !isDemoPreviewId(log.id)),
+        ].slice(0, 300),
+      };
+    });
   }
 
   restoreDefaultCatalog(actor: AuthenticatedUser | null | undefined): void {
@@ -1899,19 +1963,37 @@ class ArchiveRepository {
       'dev:reset',
       'Only Super Administrators can restore starter samples.'
     );
-    const defaults = getDefaultState();
+    resetDemoPreviewFlag();
+    const defaults = hydrateDemoPreviewOnce(getDefaultState());
     this.update((prev) => ({
       ...prev,
       documents: defaults.documents,
       materials: defaults.materials.map(normalizeMaterial),
       notifications: defaults.notifications,
+      accounts: mergeUniqueById(prev.accounts, defaults.accounts),
+      payments: mergeUniqueById(prev.payments, defaults.payments)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 300),
+      userActivities: mergeUniqueById(prev.userActivities, defaults.userActivities)
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+        .slice(0, 500),
+      supportTickets: mergeUniqueById(prev.supportTickets, defaults.supportTickets)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 300),
+      telemetry: {
+        totalVisits: Math.max(prev.telemetry.totalVisits, defaults.telemetry.totalVisits),
+        uniqueVisitorIds: Array.from(
+          new Set([...prev.telemetry.uniqueVisitorIds, ...defaults.telemetry.uniqueVisitorIds])
+        ),
+        lastVisitAt: prev.telemetry.lastVisitAt ?? defaults.telemetry.lastVisitAt,
+      },
       auditLogs: [
         createAuditEntry(
           actor,
           'dev_data_reset',
           'system',
           'default-catalog',
-          'Restored default past questions and study materials catalog'
+          'Restored default past questions, materials, and preview dataset'
         ),
         ...prev.auditLogs,
       ].slice(0, 300),
@@ -1919,6 +2001,7 @@ class ArchiveRepository {
   }
 
   resetAllForDev(): void {
+    resetDemoPreviewFlag();
     this.state = getDefaultState();
     localStore.removeItem(STORAGE_KEY);
     this.listeners.forEach((l) => l());
