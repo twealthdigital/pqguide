@@ -5,36 +5,34 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   FileText,
   ListChecks,
   Loader2,
-  Lock,
   Minus,
   Monitor,
   Plus,
   RotateCcw,
-  Sparkles,
+  Search,
   ToggleLeft,
   XCircle,
 } from 'lucide-react';
 import { useArchiveStore } from '../hooks/useArchiveStore';
-import { STUDY_MATERIALS } from '../data/materials';
 import {
   ALL_COURSES,
   EXAM_TYPES,
   buildExam,
   countQuestionsFor,
   listExamCourses,
-  suggestTopicsForCourse,
   type BuiltExam,
   type ExamSpec,
   type ExamType,
 } from '../core/mockExam';
-import { useBackHandler } from '../core/navGuard';
+import { useBackHandler, useNavigationGuard } from '../core/navGuard';
 import { saveExamPerformance } from '../core/performanceStore';
+import { LogoShapes } from '../components/ui/BrandLogo';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
-import { CustomSelect } from '../components/ui/CustomSelect';
 import { TactileButton } from '../components/ui/TactileButton';
 import type { PaywallContext } from '../core/subscription';
 
@@ -45,11 +43,25 @@ interface MockExamScreenProps {
 }
 
 type Phase = 'setup' | 'exam' | 'review';
+type SetupStep = 'intro' | 'course' | 'type' | 'settings';
+type PrepState = 'idle' | 'loading' | 'dropping';
 type Mark = 'got' | 'partly' | 'missed';
 
 const COUNT_CHOICES = [5, 10, 15, 20];
 const MINUTE_CHOICES = [15, 30, 45, 60, 90];
 const OPTION_LETTERS = ['A', 'B', 'C', 'D'] as const;
+
+const PREP_MESSAGES = [
+  'Loading questions...',
+  'Getting a good prediction...',
+  'Preparing your exam paper...',
+] as const;
+
+const STEP_TRANSITION_MS = 260;
+const STEP_TRANSITION_REDUCED_MS = 40;
+const PREP_HOLD_MS = 2100;
+const PREP_HOLD_REDUCED_MS = 450;
+const PREP_DROP_MS = 480;
 
 const card =
   'rounded-2xl bg-white p-4 sm:p-5 border border-[#1A1B20]/[0.06] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)]';
@@ -95,7 +107,6 @@ const Chip: React.FC<{
 export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   onBack,
   onSubmitted,
-  onOpenPaywall,
 }) => {
   const store = useArchiveStore();
 
@@ -109,8 +120,13 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   const courses = useMemo(() => listExamCourses(docs), [docs]);
 
   const [phase, setPhase] = useState<Phase>('setup');
+  const [setupStep, setSetupStep] = useState<SetupStep>('intro');
+  const [stepLoading, setStepLoading] = useState(false);
+
   const [examType, setExamType] = useState<ExamType>('obj');
   const [courseCode, setCourseCode] = useState<string>(ALL_COURSES);
+  const [courseQuery, setCourseQuery] = useState('');
+  const [courseListOpen, setCourseListOpen] = useState(true);
 
   const [questionCount, setQuestionCount] = useState<number>(5);
   const [customCountMode, setCustomCountMode] = useState<boolean>(false);
@@ -120,8 +136,8 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   const [customTimeMode, setCustomTimeMode] = useState<boolean>(false);
   const [customTimeInput, setCustomTimeInput] = useState<string>('25');
 
-  const [focus, setFocus] = useState('');
-  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
+  const [prepState, setPrepState] = useState<PrepState>('idle');
+  const [prepMessageIndex, setPrepMessageIndex] = useState(0);
 
   const [exam, setExam] = useState<BuiltExam | null>(null);
   const [spec, setSpec] = useState<ExamSpec | null>(null);
@@ -133,53 +149,131 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   const [usedSeconds, setUsedSeconds] = useState(0);
   const [endedByTimer, setEndedByTimer] = useState(false);
   const [confirm, setConfirm] = useState<'finish' | 'exit' | null>(null);
-  const [startState, setStartState] = useState<'idle' | 'starting' | 'started'>('idle');
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted'>('idle');
 
   const endAtRef = useRef(0);
   const startedAtRef = useRef(0);
+  const stepTimerRef = useRef<number | null>(null);
   const startTimersRef = useRef<number[]>([]);
   const submitTimersRef = useRef<number[]>([]);
   const finishedRef = useRef(false);
+  const leavingRef = useRef(false);
+  const pendingLeaveRef = useRef<(() => void) | null>(null);
 
   const [leaving, setLeaving] = useState(false);
 
   const isExamDialogBlocked = leaving || submitState !== 'idle' || finishedRef.current;
 
+  const goBackSetupStep = useCallback(() => {
+    if (stepLoading || prepState !== 'idle') return;
+    setSetupStep((prev) => {
+      if (prev === 'settings') return 'type';
+      if (prev === 'type') return 'course';
+      if (prev === 'course') return 'intro';
+      return 'intro';
+    });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [prepState, stepLoading]);
+
+  // Setup sub-steps claim device Back until back at the Practice Exam intro screen.
+  useBackHandler(
+    phase === 'setup' && setupStep !== 'intro' && prepState === 'idle',
+    goBackSetupStep
+  );
+
+  // Brief loader overlay blocks accidental Back presses while preparing.
+  useBackHandler(prepState !== 'idle', () => {});
+
   // Running exam claims device Back to ask before leaving.
   useBackHandler(phase === 'exam' && confirm === null && !isExamDialogBlocked, () => {
+    pendingLeaveRef.current = null;
     setConfirm('exit');
   });
 
-  // Open confirm dialog box ("Leave exam?" or "Submit exam?") has its own Back step.
+  // Open confirm dialog box ("Quit exam?" or "Submit exam?") has its own Back step.
   useBackHandler(phase === 'exam' && confirm !== null && !isExamDialogBlocked, () => {
+    pendingLeaveRef.current = null;
     setConfirm(null);
   });
 
+  // Intercept any in-app navigation (tabs, drawer links, notifications, paywall, sign-out, etc.)
+  // while an exam is actively running.
+  useNavigationGuard(
+    phase === 'exam' && !isExamDialogBlocked,
+    (proceed) => {
+      pendingLeaveRef.current = proceed;
+      setConfirm('exit');
+    },
+    () => !finishedRef.current && !leavingRef.current
+  );
+
   useEffect(() => {
     return () => {
+      if (stepTimerRef.current !== null) window.clearTimeout(stepTimerRef.current);
       startTimersRef.current.forEach((t) => window.clearTimeout(t));
       submitTimersRef.current.forEach((t) => window.clearTimeout(t));
     };
   }, []);
 
+  useEffect(() => {
+    if (prepState !== 'loading') return;
+    setPrepMessageIndex(0);
+    const intervalId = window.setInterval(() => {
+      setPrepMessageIndex((idx) => (idx + 1) % PREP_MESSAGES.length);
+    }, 700);
+    return () => window.clearInterval(intervalId);
+  }, [prepState]);
+
   const pool = useMemo(() => countQuestionsFor(docs, courseCode), [docs, courseCode]);
 
   const courseOptions = useMemo(
     () => [
-      { value: ALL_COURSES, label: 'All general courses', hint: `${countQuestionsFor(docs, ALL_COURSES)} questions` },
+      {
+        value: ALL_COURSES,
+        label: 'All general courses',
+        code: 'ALL',
+        title: 'Mixed questions across available courses',
+        hint: `${countQuestionsFor(docs, ALL_COURSES)} questions`,
+      },
       ...courses.map((c) => ({
         value: c.code,
         label: c.title ? `${c.code} — ${c.title}` : `${c.code} Past Question`,
-        hint: `${c.questionCount} questions`,
+        code: c.code,
+        title: c.title || 'Past questions archive',
+        hint: `${c.questionCount} question${c.questionCount === 1 ? '' : 's'}`,
       })),
     ],
     [courses, docs]
   );
 
-  const handleCourseChange = (nextCourse: string) => {
-    setCourseCode(nextCourse);
-    setSuggestedTopics([]);
+  const filteredCourseOptions = useMemo(() => {
+    const q = courseQuery.trim().toLowerCase();
+    if (!q) return courseOptions;
+    return courseOptions.filter(
+      (opt) =>
+        opt.label.toLowerCase().includes(q) ||
+        opt.code.toLowerCase().includes(q) ||
+        opt.title.toLowerCase().includes(q)
+    );
+  }, [courseOptions, courseQuery]);
+
+  const selectedCourseOption = useMemo(
+    () => courseOptions.find((opt) => opt.value === courseCode) ?? courseOptions[0],
+    [courseCode, courseOptions]
+  );
+
+  const advanceToStep = (nextStep: SetupStep) => {
+    if (stepLoading || prepState !== 'idle') return;
+    if (stepTimerRef.current !== null) window.clearTimeout(stepTimerRef.current);
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const delay = reduced ? STEP_TRANSITION_REDUCED_MS : STEP_TRANSITION_MS;
+    setStepLoading(true);
+    stepTimerRef.current = window.setTimeout(() => {
+      stepTimerRef.current = null;
+      setStepLoading(false);
+      setSetupStep(nextStep);
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }, delay);
   };
 
   const applyCustomCount = (raw: string) => {
@@ -198,52 +292,57 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
     }
   };
 
-  const handleSuggestTopics = () => {
-    const topics = suggestTopicsForCourse(docs, STUDY_MATERIALS, courseCode);
-    setSuggestedTopics(topics);
-  };
+  const beginExamSession = useCallback((nextSpec: ExamSpec, built: BuiltExam) => {
+    finishedRef.current = false;
+    leavingRef.current = false;
+    pendingLeaveRef.current = null;
+    setLeaving(false);
+    setSpec(nextSpec);
+    setExam(built);
+    setAnswers({});
+    setMarks({});
+    setCurrent(0);
+    setConfirm(null);
+    setSubmitState('idle');
+    setEndedByTimer(false);
+    setUsedSeconds(0);
+    startedAtRef.current = Date.now();
+    endAtRef.current = Date.now() + nextSpec.minutes * 60_000;
+    setSecondsLeft(nextSpec.minutes * 60);
+    setPhase('exam');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
 
-  const toggleSuggestedTopic = (topic: string) => {
-    const parts = focus
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const exists = parts.some((p) => p.toLowerCase() === topic.toLowerCase());
-    const next = exists
-      ? parts.filter((p) => p.toLowerCase() !== topic.toLowerCase())
-      : [...parts, topic];
-    setFocus(next.join(', '));
-  };
-
-  const startExam = useCallback(
+  const launchWithLoader = useCallback(
     (nextSpec: ExamSpec) => {
       const built = buildExam(docs, nextSpec);
       if (built.questions.length === 0) {
-        setStartState('idle');
+        setPrepState('idle');
         return;
       }
+
       startTimersRef.current.forEach((t) => window.clearTimeout(t));
       startTimersRef.current = [];
       submitTimersRef.current.forEach((t) => window.clearTimeout(t));
       submitTimersRef.current = [];
-      finishedRef.current = false;
-      setSpec(nextSpec);
-      setExam(built);
-      setAnswers({});
-      setMarks({});
-      setCurrent(0);
-      setConfirm(null);
-      setStartState('idle');
-      setSubmitState('idle');
-      setEndedByTimer(false);
-      setUsedSeconds(0);
-      startedAtRef.current = Date.now();
-      endAtRef.current = Date.now() + nextSpec.minutes * 60_000;
-      setSecondsLeft(nextSpec.minutes * 60);
-      setPhase('exam');
-      window.scrollTo({ top: 0, behavior: 'instant' });
+
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+      const holdMs = reduced ? PREP_HOLD_REDUCED_MS : PREP_HOLD_MS;
+
+      setPrepState('loading');
+
+      const dropTimer = window.setTimeout(() => {
+        beginExamSession(nextSpec, built);
+        setPrepState('dropping');
+      }, holdMs);
+
+      const doneTimer = window.setTimeout(() => {
+        setPrepState('idle');
+      }, holdMs + (reduced ? 60 : PREP_DROP_MS));
+
+      startTimersRef.current.push(dropTimer, doneTimer);
     },
-    [docs]
+    [beginExamSession, docs]
   );
 
   const completeSubmission = useCallback(
@@ -307,7 +406,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   }, [phase, completeSubmission]);
 
   const handleStart = () => {
-    if (pool === 0 || startState !== 'idle') return;
+    if (pool === 0 || prepState !== 'idle' || stepLoading) return;
     const safeCount = Math.max(1, Math.min(50, questionCount || 5));
     const safeMinutes = Math.max(1, Math.min(240, minutes || 30));
     const nextSpec: ExamSpec = {
@@ -315,17 +414,9 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
       courseCode,
       questionCount: safeCount,
       minutes: safeMinutes,
-      focus: focus.trim(),
+      focus: '',
     };
-    setStartState('starting');
-    const t1 = window.setTimeout(() => {
-      setStartState('started');
-      const t2 = window.setTimeout(() => {
-        startExam(nextSpec);
-      }, 450);
-      startTimersRef.current.push(t2);
-    }, 700);
-    startTimersRef.current.push(t1);
+    launchWithLoader(nextSpec);
   };
 
   const answeredCount = exam
@@ -385,16 +476,124 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
         ? ((current + 1) / total) * 100
         : (answeredCount / total) * 100;
 
+  // --------------------------------------------------- exam preparation overlay
+  const prepOverlay =
+    prepState !== 'idle' &&
+    typeof document !== 'undefined' &&
+    createPortal(
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label="Preparing your exam"
+        className={`fixed inset-0 z-[90] flex flex-col items-center justify-center overflow-hidden bg-[#1D1E23] px-6 text-white select-none transition-[opacity,transform] duration-[480ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          prepState === 'dropping'
+            ? 'opacity-0 translate-y-12 scale-95 pointer-events-none'
+            : 'opacity-100 translate-y-0 scale-100'
+        }`}
+      >
+        <div className="relative flex h-32 w-32 items-center justify-center">
+          {/* Rolling incomplete circle catching its end */}
+          <svg
+            viewBox="0 0 120 120"
+            className="pq-exam-ring absolute inset-0 h-full w-full"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              cx="60"
+              cy="60"
+              r="50"
+              stroke="rgba(255, 255, 255, 0.14)"
+              strokeWidth="4"
+            />
+            <circle
+              cx="60"
+              cy="60"
+              r="50"
+              stroke="#FFFFFF"
+              strokeWidth="4.5"
+              strokeLinecap="round"
+              className="pq-exam-ring-arc"
+            />
+          </svg>
+
+          {/* pqguide glasses mark only: blinking and looking around */}
+          <svg
+            viewBox="146 298 618 287"
+            className="w-16 text-white"
+            fill="none"
+            aria-hidden="true"
+          >
+            <LogoShapes pupilClassName="pq-exam-pupil" />
+            <circle
+              className="pq-exam-lid"
+              cx="315"
+              cy="411"
+              r="79"
+              fill="#1D1E23"
+              stroke="currentColor"
+              strokeWidth="6"
+            />
+            <circle
+              className="pq-exam-lid"
+              cx="594.2"
+              cy="411"
+              r="79"
+              fill="#1D1E23"
+              stroke="currentColor"
+              strokeWidth="6"
+            />
+          </svg>
+        </div>
+
+        <p className="mt-6 text-center text-sm font-medium tracking-wide text-[#E6E8EE] transition-opacity duration-200">
+          {PREP_MESSAGES[prepMessageIndex]}
+        </p>
+      </div>,
+      document.body
+    );
+
   // ---------------------------------------------------------------- header
+  const setupHeaderTitle =
+    setupStep === 'intro'
+      ? 'Practice exam'
+      : setupStep === 'course'
+        ? 'Select course'
+        : setupStep === 'type'
+          ? 'Exam type'
+          : 'Questions & time';
+
+  const setupHeaderSubtitle =
+    setupStep === 'intro'
+      ? 'Timed practice built from verified past questions'
+      : setupStep === 'course'
+        ? 'Type to filter or pick directly from the course list'
+        : setupStep === 'type'
+          ? `${selectedCourseOption?.value === ALL_COURSES ? 'All general courses' : selectedCourseOption?.code} · Pick your exam format`
+          : `${selectedCourseOption?.value === ALL_COURSES ? 'All general courses' : selectedCourseOption?.code} · ${activeExamMeta.badge}`;
+
   const header = (
     <DarkHeaderCard>
       {phase === 'setup' ? (
-        <TactileButton variant="light" size="sm" icon={<ArrowLeft className="w-4 h-4" />} onClick={onBack}>
+        <TactileButton
+          variant="light"
+          size="sm"
+          icon={<ArrowLeft className="w-4 h-4" />}
+          onClick={setupStep === 'intro' ? onBack : goBackSetupStep}
+          disabled={stepLoading || prepState !== 'idle'}
+        >
           Back
         </TactileButton>
       ) : phase === 'exam' ? (
         <div className="flex items-center justify-between gap-3">
-          <TactileButton variant="light" size="sm" onClick={() => setConfirm('exit')}>
+          <TactileButton
+            variant="light"
+            size="sm"
+            onClick={() => {
+              pendingLeaveRef.current = null;
+              setConfirm('exit');
+            }}
+          >
             Exit exam
           </TactileButton>
           <div className="flex items-center gap-2">
@@ -420,10 +619,14 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
       )}
 
       <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
-        {phase === 'review' ? 'Your results' : 'Practice exam'}
+        {phase === 'setup'
+          ? setupHeaderTitle
+          : phase === 'review'
+            ? 'Your results'
+            : 'Practice exam'}
       </h1>
       <p className="mt-1.5 text-xs text-[#C3C7D2]">
-        {phase === 'setup' && 'Choose your exam format, questions, timer and focus topic'}
+        {phase === 'setup' && setupHeaderSubtitle}
         {phase === 'exam' &&
           spec &&
           (spec.examType === 'cbt'
@@ -450,6 +653,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   if (phase === 'setup') {
     return (
       <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
+        {prepOverlay}
         {header}
 
         {courses.length === 0 ? (
@@ -462,329 +666,379 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
           </div>
         ) : (
           <>
-            <div className={`${card} space-y-5`}>
-              <CustomSelect
-                id="exam-course"
-                label="Course"
-                value={courseCode}
-                options={courseOptions}
-                onChange={handleCourseChange}
-              />
-
-              {/* Exam Type Selector */}
-              <div>
-                <p className="text-xs font-semibold text-[#686C78]">Exam type</p>
-                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2.5" role="radiogroup" aria-label="Exam type">
-                  {EXAM_TYPES.map((type) => {
-                    const active = examType === type.id;
-                    return (
-                      <button
-                        key={type.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        onClick={() => setExamType(type.id)}
-                        className={`text-left rounded-xl p-3.5 border transition-all duration-150 cursor-pointer flex items-start gap-3 ${
-                          active
-                            ? 'bg-[#1D1E23] text-white border-transparent shadow-[0_6px_16px_-6px_rgba(24,25,30,0.35)]'
-                            : 'bg-[#F6F7F9] text-[#1A1B20] border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
-                        }`}
-                      >
-                        <span
-                          className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                            active ? 'bg-white/15 text-white' : 'bg-white text-[#1D1E23] border border-[#1A1B20]/[0.08]'
-                          }`}
-                        >
-                          {EXAM_TYPE_ICON[type.id]}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-bold leading-snug">{type.label}</span>
-                          <span
-                            className={`mt-0.5 block text-xs leading-relaxed ${
-                              active ? 'text-[#C3C7D2]' : 'text-[#686C78]'
-                            }`}
-                          >
-                            {type.description}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Number of Questions with Custom Button */}
-              <div>
-                <p className="text-xs font-semibold text-[#686C78]">Number of questions</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {COUNT_CHOICES.map((n) => (
-                    <Chip
-                      key={n}
-                      selected={!customCountMode && questionCount === n}
-                      onClick={() => {
-                        setCustomCountMode(false);
-                        setQuestionCount(n);
-                      }}
-                    >
-                      {n}
-                    </Chip>
-                  ))}
-                  {examType === 'theory' && pool > 0 && !COUNT_CHOICES.includes(pool) && (
-                    <Chip
-                      selected={!customCountMode && questionCount === pool}
-                      onClick={() => {
-                        setCustomCountMode(false);
-                        setQuestionCount(pool);
-                      }}
-                    >
-                      All {pool}
-                    </Chip>
-                  )}
-                  <Chip
-                    selected={customCountMode}
-                    onClick={() => {
-                      setCustomCountMode(true);
-                      setCustomCountInput(String(questionCount));
-                    }}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Custom
-                  </Chip>
-                </div>
-
-                {customCountMode && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2.5">
-                    <button
-                      type="button"
-                      aria-label="Decrease number of questions"
-                      onClick={() => applyCustomCount(String(Math.max(1, questionCount - 1)))}
-                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      inputMode="numeric"
-                      aria-label="Custom number of questions"
-                      value={customCountInput}
-                      onChange={(e) => applyCustomCount(e.target.value)}
-                      onBlur={() => setCustomCountInput(String(questionCount))}
-                      className="h-9 w-20 rounded-lg bg-white border border-[#1A1B20]/[0.1] px-2.5 text-center font-mono-tabular text-sm font-bold text-[#1A1B20] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
-                    />
-                    <button
-                      type="button"
-                      aria-label="Increase number of questions"
-                      onClick={() => applyCustomCount(String(Math.min(50, questionCount + 1)))}
-                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                    <span className="text-xs font-medium text-[#505460] ml-1">
-                      questions (1–50)
-                    </span>
-                  </div>
-                )}
-
-                <p className="mt-2 text-xs text-[#686C78]">
-                  {questionCount} question{questionCount === 1 ? '' : 's'} selected · {pool} past question
-                  {pool === 1 ? '' : 's'} in archive.
+            {/* Step 0: Simple intro card with 2-line writeup + Take Exam button */}
+            {setupStep === 'intro' && (
+              <div className={`${card} space-y-5 page-enter`}>
+                <p className="text-sm text-[#505460] leading-relaxed">
+                  Practice under real exam timing with questions drawn from past papers and course
+                  guides. Pick your course, format, and question count to start.
                 </p>
+
+                <button
+                  type="button"
+                  onClick={() => advanceToStep('course')}
+                  disabled={stepLoading}
+                  aria-busy={stepLoading}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#1D1E23] text-sm font-semibold text-white shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.99] cursor-pointer disabled:opacity-75 disabled:cursor-default"
+                >
+                  {stepLoading ? (
+                    <Loader2 className="w-5 h-5 feedback-roll" />
+                  ) : (
+                    <>
+                      <span>Take Exam</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
               </div>
+            )}
 
-              {/* Time Allowed with Custom Button */}
-              <div>
-                <p className="text-xs font-semibold text-[#686C78]">Time allowed</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {MINUTE_CHOICES.map((m) => (
-                    <Chip
-                      key={m}
-                      selected={!customTimeMode && minutes === m}
-                      onClick={() => {
-                        setCustomTimeMode(false);
-                        setMinutes(m);
-                      }}
-                    >
-                      {m} min
-                    </Chip>
-                  ))}
-                  <Chip
-                    selected={customTimeMode}
-                    onClick={() => {
-                      setCustomTimeMode(true);
-                      setCustomTimeInput(String(minutes));
-                    }}
+            {/* Step 1: Select Course (search input + visible long scrollable dropdown + Continue) */}
+            {setupStep === 'course' && (
+              <div className={`${card} space-y-4 page-enter`}>
+                <div>
+                  <label
+                    htmlFor="exam-course-search"
+                    className="block text-xs font-semibold text-[#686C78]"
                   >
-                    <Plus className="w-3.5 h-3.5" />
-                    Custom
-                  </Chip>
-                </div>
+                    Select course
+                  </label>
 
-                {customTimeMode && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2.5">
-                    <button
-                      type="button"
-                      aria-label="Decrease exam minutes"
-                      onClick={() => applyCustomMinutes(String(Math.max(1, minutes - 5)))}
-                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
+                  <div className="relative mt-2 flex items-center">
+                    <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-[#686C78]" />
                     <input
-                      type="number"
-                      min={1}
-                      max={240}
-                      inputMode="numeric"
-                      aria-label="Custom time allowed in minutes"
-                      value={customTimeInput}
-                      onChange={(e) => applyCustomMinutes(e.target.value)}
-                      onBlur={() => setCustomTimeInput(String(minutes))}
-                      className="h-9 w-20 rounded-lg bg-white border border-[#1A1B20]/[0.1] px-2.5 text-center font-mono-tabular text-sm font-bold text-[#1A1B20] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
+                      id="exam-course-search"
+                      type="text"
+                      value={courseQuery}
+                      onFocus={() => setCourseListOpen(true)}
+                      onChange={(e) => {
+                        setCourseQuery(e.target.value);
+                        if (!courseListOpen) setCourseListOpen(true);
+                      }}
+                      placeholder="Search course code or title (e.g. CSC 201)..."
+                      autoComplete="off"
+                      className="min-h-[44px] w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] pl-10 pr-10 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
                     />
                     <button
                       type="button"
-                      aria-label="Increase exam minutes"
-                      onClick={() => applyCustomMinutes(String(Math.min(240, minutes + 5)))}
-                      className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                      onClick={() => setCourseListOpen((o) => !o)}
+                      aria-label={courseListOpen ? 'Collapse course list' : 'Expand course list'}
+                      aria-expanded={courseListOpen}
+                      className="absolute right-2 flex h-8 w-8 items-center justify-center rounded-lg text-[#686C78] hover:bg-[#ECEEF3] hover:text-[#1A1B20] cursor-pointer"
                     >
-                      <Plus className="w-4 h-4" />
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform duration-150 ${
+                          courseListOpen ? 'rotate-180' : ''
+                        }`}
+                      />
                     </button>
-                    <span className="text-xs font-medium text-[#505460] ml-1">
-                      minutes (1–240)
-                    </span>
                   </div>
-                )}
-              </div>
-
-              {/* Topic to Focus On + Suggest Button */}
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor="exam-focus" className="text-xs font-semibold text-[#686C78]">
-                    Topic to focus on (optional)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleSuggestTopics}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#1D1E23] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#2B2D35] transition-colors cursor-pointer"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Suggest
-                  </button>
                 </div>
 
-                <input
-                  id="exam-focus"
-                  type="text"
-                  value={focus}
-                  onChange={(e) => setFocus(e.target.value)}
-                  placeholder="e.g. essay writing, library, grammar"
-                  className="mt-1.5 w-full min-h-[44px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
-                />
-
-                {suggestedTopics.length > 0 && (
-                  <div className="mt-2.5 space-y-1.5">
-                    <p className="text-[11px] font-semibold text-[#686C78]">
-                      Suggested topics — tap to add or remove:
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {suggestedTopics.map((topic) => {
-                        const active = focus
-                          .split(',')
-                          .map((s) => s.trim().toLowerCase())
-                          .includes(topic.toLowerCase());
+                {courseListOpen && (
+                  <div
+                    role="listbox"
+                    aria-label="Available courses"
+                    className="max-h-64 sm:max-h-72 overflow-y-auto rounded-xl border border-[#1A1B20]/[0.08] bg-[#F6F7F9] p-1.5 space-y-1"
+                  >
+                    {filteredCourseOptions.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-xs text-[#686C78]">
+                        No courses match "{courseQuery.trim()}".
+                      </p>
+                    ) : (
+                      filteredCourseOptions.map((opt) => {
+                        const selected = courseCode === opt.value;
                         return (
                           <button
-                            key={topic}
+                            key={opt.value}
                             type="button"
-                            onClick={() => toggleSuggestedTopic(topic)}
-                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold border transition-colors cursor-pointer ${
-                              active
-                                ? 'bg-[#1D1E23] text-white border-transparent'
-                                : 'bg-[#F6F7F9] text-[#1A1B20] border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => setCourseCode(opt.value)}
+                            className={`w-full rounded-lg px-3 py-2.5 text-left transition-colors duration-100 cursor-pointer flex items-center justify-between gap-3 ${
+                              selected
+                                ? 'bg-[#1D1E23] text-white'
+                                : 'bg-white/70 text-[#1A1B20] hover:bg-white'
                             }`}
                           >
-                            {active ? '✓ ' : '+ '}
-                            {topic}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-semibold">
+                                {opt.label}
+                              </span>
+                              <span
+                                className={`block text-[11px] ${
+                                  selected ? 'text-[#C3C7D2]' : 'text-[#686C78]'
+                                }`}
+                              >
+                                {opt.hint}
+                              </span>
+                            </span>
+                            {selected && <Check className="h-4 w-4 shrink-0 text-white" />}
                           </button>
                         );
-                      })}
-                    </div>
+                      })
+                    )}
                   </div>
                 )}
-              </div>
-            </div>
 
-            <div className={`${card} flex items-start gap-3`}>
-              <div className="h-10 w-10 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center shrink-0">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <div className="min-w-0 flex-1 space-y-2.5">
-                <p className="text-sm text-[#505460] leading-relaxed">
-                  This is a prediction, not a promise. Questions are picked from real past questions
-                  and course study guides, favouring recurring themes and your topic. Real exams can
-                  still surprise you.
-                </p>
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F6F7F9] px-3.5 py-2.5 text-xs">
+                  <span className="font-medium text-[#505460] truncate">
+                    Selected:{' '}
+                    <strong className="font-semibold text-[#1A1B20]">
+                      {selectedCourseOption?.label}
+                    </strong>
+                  </span>
+                  <span className="shrink-0 font-mono-tabular font-semibold text-[#686C78]">
+                    {pool} Qs
+                  </span>
+                </div>
 
-                {onOpenPaywall && (
-                  <button
-                    type="button"
-                    aria-disabled="true"
-                    onClick={() =>
-                      onOpenPaywall({
-                        highlightTier: 'pro_ai',
-                        featureLabel: 'AI Topic Predictor & Theory Coach',
-                        reason:
-                          'Standard gives you full access to all 4 practice exam modes. Tier 3 (AI Scholar) adds AI topic predictions and personalized Theory answer coaching.',
-                      })
-                    }
-                    className="flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
+                <button
+                  type="button"
+                  onClick={() => advanceToStep('type')}
+                  disabled={pool === 0 || stepLoading}
+                  aria-busy={stepLoading}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#1D1E23] text-sm font-semibold text-white shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.99] cursor-pointer disabled:opacity-45 disabled:cursor-default"
+                >
+                  {stepLoading ? (
+                    <Loader2 className="w-5 h-5 feedback-roll" />
+                  ) : (
+                    <>
+                      <span>Continue</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Step 2: Exam Type */}
+            {setupStep === 'type' && (
+              <div className={`${card} space-y-5 page-enter`}>
+                <div>
+                  <p className="text-xs font-semibold text-[#686C78]">Choose exam type</p>
+                  <div
+                    className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2.5"
+                    role="radiogroup"
+                    aria-label="Exam type"
                   >
-                    <span className="min-w-0">
-                      <span className="block text-xs font-bold text-[#3A3D47]">
-                        AI Smart Predictor &amp; Theory Coach
-                      </span>
-                      <span className="block text-[11px] text-[#686C78]">
-                        Disabled on current plan · Unlock with Tier 3 (AI Scholar)
-                      </span>
-                    </span>
-                    <span className="inline-flex shrink-0 items-center gap-1 font-mono-tabular text-[11px] font-semibold text-[#686C78]">
-                      <Lock className="h-3.5 w-3.5" />
-                      AI
-                    </span>
-                  </button>
-                )}
-              </div>
-            </div>
+                    {EXAM_TYPES.map((type) => {
+                      const active = examType === type.id;
+                      return (
+                        <button
+                          key={type.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => setExamType(type.id)}
+                          className={`text-left rounded-xl p-3.5 border transition-all duration-150 cursor-pointer flex items-start gap-3 ${
+                            active
+                              ? 'bg-[#1D1E23] text-white border-transparent shadow-[0_6px_16px_-6px_rgba(24,25,30,0.35)]'
+                              : 'bg-[#F6F7F9] text-[#1A1B20] border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                              active
+                                ? 'bg-white/15 text-white'
+                                : 'bg-white text-[#1D1E23] border border-[#1A1B20]/[0.08]'
+                            }`}
+                          >
+                            {EXAM_TYPE_ICON[type.id]}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block text-sm font-bold leading-snug">
+                              {type.label}
+                            </span>
+                            <span
+                              className={`mt-0.5 block text-xs leading-relaxed ${
+                                active ? 'text-[#C3C7D2]' : 'text-[#686C78]'
+                              }`}
+                            >
+                              {type.description}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-            <div className="flex justify-center">
-              <button
-                type="button"
-                onClick={handleStart}
-                disabled={pool === 0 || startState !== 'idle'}
-                aria-label={
-                  startState === 'started'
-                    ? 'Exam ready'
-                    : startState === 'starting'
-                      ? 'Starting exam'
-                      : 'Start exam'
-                }
-                aria-busy={startState === 'starting'}
-                className={`inline-flex h-12 items-center justify-center overflow-hidden font-semibold text-sm text-white select-none cursor-pointer transition-[width,background-color,border-radius,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] disabled:cursor-default ${
-                  startState !== 'idle'
-                    ? 'w-12 rounded-full'
-                    : 'w-full rounded-2xl shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)]'
-                } ${
-                  startState === 'started'
-                    ? 'bg-[#16A34A]'
-                    : 'bg-[#1D1E23] hover:bg-[#2B2D35] active:scale-[0.99]'
-                } ${pool === 0 ? 'opacity-45' : ''}`}
-              >
-                {startState === 'idle' && <span>Start exam</span>}
-                {startState === 'starting' && <Loader2 className="w-5 h-5 feedback-roll" />}
-                {startState === 'started' && <Check className="w-5 h-5 feedback-check" strokeWidth={3} />}
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => advanceToStep('settings')}
+                  disabled={stepLoading}
+                  aria-busy={stepLoading}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#1D1E23] text-sm font-semibold text-white shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.99] cursor-pointer disabled:opacity-75 disabled:cursor-default"
+                >
+                  {stepLoading ? (
+                    <Loader2 className="w-5 h-5 feedback-roll" />
+                  ) : (
+                    <>
+                      <span>Continue</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Step 3: Number of Questions & Time Allowed */}
+            {setupStep === 'settings' && (
+              <div className={`${card} space-y-5 page-enter`}>
+                <div>
+                  <p className="text-xs font-semibold text-[#686C78]">Number of questions</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {COUNT_CHOICES.map((n) => (
+                      <Chip
+                        key={n}
+                        selected={!customCountMode && questionCount === n}
+                        onClick={() => {
+                          setCustomCountMode(false);
+                          setQuestionCount(n);
+                        }}
+                      >
+                        {n}
+                      </Chip>
+                    ))}
+                    {examType === 'theory' && pool > 0 && !COUNT_CHOICES.includes(pool) && (
+                      <Chip
+                        selected={!customCountMode && questionCount === pool}
+                        onClick={() => {
+                          setCustomCountMode(false);
+                          setQuestionCount(pool);
+                        }}
+                      >
+                        All {pool}
+                      </Chip>
+                    )}
+                    <Chip
+                      selected={customCountMode}
+                      onClick={() => {
+                        setCustomCountMode(true);
+                        setCustomCountInput(String(questionCount));
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Custom
+                    </Chip>
+                  </div>
+
+                  {customCountMode && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2.5">
+                      <button
+                        type="button"
+                        aria-label="Decrease number of questions"
+                        onClick={() => applyCustomCount(String(Math.max(1, questionCount - 1)))}
+                        className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        inputMode="numeric"
+                        aria-label="Custom number of questions"
+                        value={customCountInput}
+                        onChange={(e) => applyCustomCount(e.target.value)}
+                        onBlur={() => setCustomCountInput(String(questionCount))}
+                        className="h-9 w-20 rounded-lg bg-white border border-[#1A1B20]/[0.1] px-2.5 text-center font-mono-tabular text-sm font-bold text-[#1A1B20] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Increase number of questions"
+                        onClick={() => applyCustomCount(String(Math.min(50, questionCount + 1)))}
+                        className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                      <span className="text-xs font-medium text-[#505460] ml-1">
+                        questions (1–50)
+                      </span>
+                    </div>
+                  )}
+
+                  <p className="mt-2 text-xs text-[#686C78]">
+                    {questionCount} question{questionCount === 1 ? '' : 's'} selected · {pool} past question
+                    {pool === 1 ? '' : 's'} in archive.
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-[#686C78]">Time allowed</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {MINUTE_CHOICES.map((m) => (
+                      <Chip
+                        key={m}
+                        selected={!customTimeMode && minutes === m}
+                        onClick={() => {
+                          setCustomTimeMode(false);
+                          setMinutes(m);
+                        }}
+                      >
+                        {m} min
+                      </Chip>
+                    ))}
+                    <Chip
+                      selected={customTimeMode}
+                      onClick={() => {
+                        setCustomTimeMode(true);
+                        setCustomTimeInput(String(minutes));
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Custom
+                    </Chip>
+                  </div>
+
+                  {customTimeMode && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2.5">
+                      <button
+                        type="button"
+                        aria-label="Decrease exam minutes"
+                        onClick={() => applyCustomMinutes(String(Math.max(1, minutes - 5)))}
+                        className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <input
+                        type="number"
+                        min={1}
+                        max={240}
+                        inputMode="numeric"
+                        aria-label="Custom time allowed in minutes"
+                        value={customTimeInput}
+                        onChange={(e) => applyCustomMinutes(e.target.value)}
+                        onBlur={() => setCustomTimeInput(String(minutes))}
+                        className="h-9 w-20 rounded-lg bg-white border border-[#1A1B20]/[0.1] px-2.5 text-center font-mono-tabular text-sm font-bold text-[#1A1B20] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Increase exam minutes"
+                        onClick={() => applyCustomMinutes(String(Math.min(240, minutes + 5)))}
+                        className="h-9 w-9 rounded-lg bg-white border border-[#1A1B20]/[0.1] flex items-center justify-center text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                      <span className="text-xs font-medium text-[#505460] ml-1">
+                        minutes (1–240)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleStart}
+                  disabled={pool === 0 || prepState !== 'idle'}
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#1D1E23] text-sm font-semibold text-white shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.99] cursor-pointer disabled:opacity-45 disabled:cursor-default"
+                >
+                  <span>Start exam</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -839,27 +1093,30 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
       typeof document !== 'undefined' &&
       createPortal(
         <div
-          className="fixed inset-0 z-[70] bg-[#121318]/50 backdrop-blur-[2px] flex items-center justify-center p-4"
+          className="fixed inset-0 z-[80] bg-[#121318]/55 backdrop-blur-[2px] flex items-center justify-center p-4"
           onClick={() => {
-            if (!isBusySubmitting) setConfirm(null);
+            if (!isBusySubmitting) {
+              pendingLeaveRef.current = null;
+              setConfirm(null);
+            }
           }}
         >
           <div
             role="alertdialog"
             aria-modal="true"
-            aria-label="Confirm"
+            aria-label={confirm === 'exit' ? 'Quit exam' : 'Submit exam'}
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-sm rounded-2xl bg-white p-5 border border-[#1A1B20]/[0.08] shadow-[0_24px_48px_-12px_rgba(14,15,20,0.35)] space-y-4 page-enter"
           >
             {confirm === 'exit' ? (
-              <div className="space-y-1">
-                <p className="font-display text-base font-bold text-[#1A1B20]">Leave this exam?</p>
+              <div className="space-y-1.5">
+                <p className="font-display text-base font-bold text-[#1A1B20]">Quit exam?</p>
                 <p className="text-sm text-[#505460] leading-relaxed">
-                  Your current answers will not be saved.
+                  Your current answers will not be saved if you end this exam now.
                 </p>
               </div>
             ) : (
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <p className="font-display text-base font-bold text-[#1A1B20]">
                   {unanswered > 0
                     ? `${unanswered} unanswered question${unanswered === 1 ? '' : 's'}`
@@ -875,28 +1132,49 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
 
             <div className="flex flex-wrap items-center gap-2.5">
               {confirm === 'exit' ? (
-                <TactileButton
-                  variant="dark"
-                  size="sm"
-                  onClick={() => {
-                    setLeaving(true);
-                    setConfirm(null);
-                    onBack();
-                  }}
-                >
-                  Leave exam
-                </TactileButton>
+                <>
+                  <TactileButton
+                    variant="dark"
+                    size="sm"
+                    onClick={() => {
+                      pendingLeaveRef.current = null;
+                      setConfirm(null);
+                    }}
+                  >
+                    Continue
+                  </TactileButton>
+                  <TactileButton
+                    variant="light"
+                    size="sm"
+                    onClick={() => {
+                      leavingRef.current = true;
+                      setLeaving(true);
+                      setConfirm(null);
+                      const proceed = pendingLeaveRef.current;
+                      pendingLeaveRef.current = null;
+                      if (proceed) {
+                        proceed();
+                      } else {
+                        onBack();
+                      }
+                    }}
+                  >
+                    End exam
+                  </TactileButton>
+                </>
               ) : (
-                renderAnimatedSubmitButton(() => triggerAnimatedSubmit(false), 'Submit exam')
+                <>
+                  {renderAnimatedSubmitButton(() => triggerAnimatedSubmit(false), 'Submit exam')}
+                  <TactileButton
+                    variant="light"
+                    size="sm"
+                    disabled={isBusySubmitting}
+                    onClick={() => setConfirm(null)}
+                  >
+                    Continue
+                  </TactileButton>
+                </>
               )}
-              <TactileButton
-                variant="light"
-                size="sm"
-                disabled={isBusySubmitting}
-                onClick={() => setConfirm(null)}
-              >
-                Keep going
-              </TactileButton>
             </div>
           </div>
         </div>,
@@ -911,6 +1189,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
 
       return (
         <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
+          {prepOverlay}
           {header}
           {confirmDialog}
 
@@ -1038,6 +1317,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
 
     return (
       <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
+        {prepOverlay}
         {header}
         {confirmDialog}
 
@@ -1218,6 +1498,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   // ---------------------------------------------------------------- review
   return (
     <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
+      {prepOverlay}
       {header}
 
       <section aria-label="Summary" className={`${card}`}>
@@ -1453,11 +1734,17 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
         <TactileButton
           variant="dark"
           icon={<RotateCcw className="w-4 h-4" />}
-          onClick={() => spec && startExam(spec)}
+          onClick={() => spec && launchWithLoader(spec)}
         >
           Try a new exam like this
         </TactileButton>
-        <TactileButton variant="light" onClick={() => setPhase('setup')}>
+        <TactileButton
+          variant="light"
+          onClick={() => {
+            setPhase('setup');
+            setSetupStep('settings');
+          }}
+        >
           Change settings
         </TactileButton>
       </div>

@@ -68,3 +68,59 @@ export const useBackHandler = (active: boolean, handler: BackHandler): void => {
     };
   }, [active]);
 };
+
+export type LeaveProceed = () => void;
+export type NavigationGuardHandler = (proceed: LeaveProceed) => void;
+
+interface NavigationGuardEntry {
+  id: string;
+  onAttemptLeave: NavigationGuardHandler;
+  isStillBlocking?: () => boolean;
+}
+
+let nextGuardSeq = 1;
+const navGuards: NavigationGuardEntry[] = [];
+
+export const useNavigationGuard = (
+  active: boolean,
+  onAttemptLeave: NavigationGuardHandler,
+  isStillBlocking?: () => boolean
+): void => {
+  const handlerRef = useRef(onAttemptLeave);
+  handlerRef.current = onAttemptLeave;
+  const checkRef = useRef(isStillBlocking);
+  checkRef.current = isStillBlocking;
+
+  useEffect(() => {
+    if (!active) return;
+    const entry: NavigationGuardEntry = {
+      id: `guard-${nextGuardSeq++}`,
+      onAttemptLeave: (proceed) => handlerRef.current(proceed),
+      isStillBlocking: () => (checkRef.current ? checkRef.current() : true),
+    };
+    navGuards.push(entry);
+    return () => {
+      const i = navGuards.findIndex((g) => g.id === entry.id);
+      if (i >= 0) navGuards.splice(i, 1);
+    };
+  }, [active]);
+};
+
+/**
+ * Runs active navigation guards before executing `proceed`.
+ * Returns true when navigation was intercepted (held pending user confirmation),
+ * or false when navigation executed immediately.
+ */
+export const runNavigationGuard = (proceed: LeaveProceed): boolean => {
+  for (let i = navGuards.length - 1; i >= 0; i--) {
+    const entry = navGuards[i];
+    if (entry.isStillBlocking && !entry.isStillBlocking()) {
+      continue;
+    }
+    entry.onAttemptLeave(proceed);
+    return true;
+  }
+  proceed();
+  return false;
+};
+

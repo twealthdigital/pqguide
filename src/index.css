@@ -541,3 +541,120 @@ input::-ms-clear {
   .feedback-roll { animation-duration: 1.6s; }
   .feedback-check { animation: none; }
 }
+
+/* Practice Exam loader: incomplete arc catching its tail & opening again while rolling around the blinking/looking icon */
+@keyframes pqExamRingSpin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pqExamRingArc {
+  0% {
+    stroke-dasharray: 28 310;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 255 310;
+    stroke-dashoffset: -48;
+  }
+  100% {
+    stroke-dasharray: 28 310;
+    stroke-dashoffset: -301;
+  }
+}
+
+@keyframes pqExamLook {
+  0%,
+  18% {
+    transform: translate(0, 0);
+  }
+  28%,
+  44% {
+    transform: translate(-11px, -30px);
+  }
+  56%,
+  72% {
+    transform: translate(11px, 30px);
+  }
+  84%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes pqExamLid {
+  0%,
+  16% {
+    opacity: 0;
+    transform: scaleY(0);
+  }
+  17% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  21% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  25% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  26%,
+  74% {
+    opacity: 0;
+    transform: scaleY(0);
+  }
+  75% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  79% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  83% {
+    opacity: 1;
+    transform: scaleY(0);
+  }
+  84%,
+  100% {
+    opacity: 0;
+    transform: scaleY(0);
+  }
+}
+
+.pq-exam-ring {
+  animation: pqExamRingSpin 1.35s linear infinite;
+  transform-origin: center;
+}
+
+.pq-exam-ring-arc {
+  animation: pqExamRingArc 1.55s ease-in-out infinite;
+}
+
+.pq-exam-pupil {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pqExamLook 2.4s ease-in-out infinite;
+}
+
+.pq-exam-lid {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation: pqExamLid 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pq-exam-ring {
+    animation-duration: 2.8s;
+  }
+  .pq-exam-ring-arc,
+  .pq-exam-pupil,
+  .pq-exam-lid {
+    animation: none !important;
+  }
+}
+

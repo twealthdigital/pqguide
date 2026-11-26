@@ -9,6 +9,7 @@ import type {
 import {
   closeBackLayer,
   getBackLayers,
+  runNavigationGuard,
   subscribeBackHandlers,
 } from './core/navGuard';
 import type { AuthView } from './screens/AuthScreen';
@@ -668,7 +669,7 @@ function AppContent() {
     return () => window.removeEventListener('popstate', onPopState);
   }, [buildCurrentState]);
 
-  const openPaywall = useCallback(
+  const openPaywallDirect = useCallback(
     (context?: PaywallContext) => {
       const prev = navRef.current;
       const nextStack =
@@ -687,25 +688,32 @@ function AppContent() {
     [go]
   );
 
+  const openPaywall = useCallback(
+    (context?: PaywallContext) => {
+      runNavigationGuard(() => openPaywallDirect(context));
+    },
+    [openPaywallDirect]
+  );
+
   // Single paywall gate used when FREE_TIER_ENABLED is set to false.
   const ensureStandardAccess = useCallback(
     (reason?: string) => {
       if (subscriptionService.hasStandardAccess()) return true;
-      openPaywall({
+      openPaywallDirect({
         highlightTier: 'standard',
         blockedByPaywall: true,
         reason: reason ?? 'Free access has ended. Choose Standard or AI Scholar to continue.',
       });
       return false;
     },
-    [openPaywall]
+    [openPaywallDirect]
   );
 
   // Tabs reset the trail. Alerts (opened from the bell) and Practice Exam remember where you were.
-  const handleNavigate = useCallback(
+  const navigateDirect = useCallback(
     (screen: AppScreen) => {
       if (screen === 'subscription') {
-        openPaywall();
+        openPaywallDirect();
         return;
       }
       if (!ensureStandardAccess()) return;
@@ -729,7 +737,19 @@ function AppContent() {
         INITIAL_PERF
       );
     },
-    [ensureStandardAccess, go, openPaywall]
+    [ensureStandardAccess, go, openPaywallDirect]
+  );
+
+  const handleNavigate = useCallback(
+    (screen: AppScreen) => {
+      const prev = navRef.current;
+      if (prev.screen === screen && (screen !== 'performance' || perfRef.current.view === 'list')) {
+        navigateDirect(screen);
+        return;
+      }
+      runNavigationGuard(() => navigateDirect(screen));
+    },
+    [navigateDirect]
   );
 
   // Back goes to exactly where the person came from (home if there is no trail).
@@ -789,17 +809,19 @@ function AppContent() {
 
   const handleOpenDocument = useCallback(
     (doc: PastQuestionDoc) => {
-      if (!ensureStandardAccess('Subscribe to open verified past questions and worked answers.')) {
-        return;
-      }
-      archiveRepository.incrementView(doc.id);
-      archiveRepository.recordRecent(doc.id);
-      const prev = navRef.current;
-      go({
-        screen: 'reader',
-        docId: doc.id,
-        materialId: prev.materialId,
-        stack: [...prev.stack, entryOf(prev)],
+      runNavigationGuard(() => {
+        if (!ensureStandardAccess('Subscribe to open verified past questions and worked answers.')) {
+          return;
+        }
+        archiveRepository.incrementView(doc.id);
+        archiveRepository.recordRecent(doc.id);
+        const prev = navRef.current;
+        go({
+          screen: 'reader',
+          docId: doc.id,
+          materialId: prev.materialId,
+          stack: [...prev.stack, entryOf(prev)],
+        });
       });
     },
     [ensureStandardAccess, go]
@@ -807,27 +829,37 @@ function AppContent() {
 
   const handleOpenMaterial = useCallback(
     (material: StudyMaterial) => {
-      if (!ensureStandardAccess('Subscribe to open course study guides.')) {
-        return;
-      }
-      const prev = navRef.current;
-      go({
-        screen: 'material_reader',
-        docId: prev.docId,
-        materialId: material.id,
-        stack: [...prev.stack, entryOf(prev)],
+      runNavigationGuard(() => {
+        if (!ensureStandardAccess('Subscribe to open course study guides.')) {
+          return;
+        }
+        const prev = navRef.current;
+        go({
+          screen: 'material_reader',
+          docId: prev.docId,
+          materialId: material.id,
+          stack: [...prev.stack, entryOf(prev)],
+        });
       });
     },
     [ensureStandardAccess, go]
   );
 
   const handleQuickFind = useCallback(() => {
-    if (!ensureStandardAccess()) return;
     const prev = navRef.current;
-    if (prev.screen !== 'home') {
-      go({ ...prev, screen: 'home', stack: [] }, INITIAL_PERF, false);
+    if (prev.screen === 'home') {
+      if (!ensureStandardAccess()) return;
+      setFocusSearchSignal((n) => n + 1);
+      return;
     }
-    setFocusSearchSignal((n) => n + 1);
+    runNavigationGuard(() => {
+      if (!ensureStandardAccess()) return;
+      const latest = navRef.current;
+      if (latest.screen !== 'home') {
+        go({ ...latest, screen: 'home', stack: [] }, INITIAL_PERF, false);
+      }
+      setFocusSearchSignal((n) => n + 1);
+    });
   }, [ensureStandardAccess, go]);
 
   const handleExamSubmitted = useCallback(() => {
@@ -998,13 +1030,31 @@ function AppContent() {
     scrollTop();
   }, [pushHistory]);
 
+  const handleRoleChange = useCallback(
+    (role: UserRole) => {
+      runNavigationGuard(() => {
+        archiveRepository.setActiveRole(role);
+        const target: AppScreen =
+          role === 'school_admin'
+            ? 'school_admin'
+            : role === 'super_admin'
+              ? 'super_admin'
+              : 'home';
+        navigateDirect(target);
+      });
+    },
+    [navigateDirect]
+  );
+
   const handleSignOut = useCallback(() => {
-    authService.clearActiveSession();
-    setAuthenticatedStudent(null);
-    navRef.current = INITIAL_NAV;
-    perfRef.current = INITIAL_PERF;
-    setNav(INITIAL_NAV);
-    setPerf(INITIAL_PERF);
+    runNavigationGuard(() => {
+      authService.clearActiveSession();
+      setAuthenticatedStudent(null);
+      navRef.current = INITIAL_NAV;
+      perfRef.current = INITIAL_PERF;
+      setNav(INITIAL_NAV);
+      setPerf(INITIAL_PERF);
+    });
   }, []);
 
   if (!hasCompletedOnboarding) {
@@ -1058,7 +1108,7 @@ function AppContent() {
       onQuickFind={handleQuickFind}
       unreadCount={unreadCount}
       activeRole={store.activeRole}
-      onRoleChange={(role) => archiveRepository.setActiveRole(role)}
+      onRoleChange={handleRoleChange}
       student={authenticatedStudent}
       onSignOut={handleSignOut}
     >

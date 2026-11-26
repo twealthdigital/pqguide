@@ -521,11 +521,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               { value: 'super_admin', label: 'Super Admin View' },
             ]}
             onChange={(val) => {
-              const role = val as UserRole;
-              onRoleChange(role);
-              if (role === 'school_admin') onNavigate('school_admin');
-              else if (role === 'super_admin') onNavigate('super_admin');
-              else onNavigate('home');
+              onRoleChange(val as UserRole);
             }}
           />
           </div>
@@ -1030,11 +1026,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   { value: 'super_admin', label: 'Super Admin View' },
                 ]}
                 onChange={(val) => {
-                  const role = val as UserRole;
-                  onRoleChange(role);
-                  if (role === 'school_admin') onNavigate('school_admin');
-                  else if (role === 'super_admin') onNavigate('super_admin');
-                  else onNavigate('home');
+                  onRoleChange(val as UserRole);
                   setDrawerOpen(false);
                 }}
               />
