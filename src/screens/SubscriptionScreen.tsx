@@ -169,23 +169,53 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
         {/* Direct Title & 1-Line Action Guide */}
         <div className="mx-auto max-w-xl text-center">
           <h1 className="font-display text-2xl font-bold tracking-tight text-[#1A1B20] sm:text-3xl">
-            {paywallContext?.blockedByPaywall
-              ? 'Pick a plan to continue'
-              : isAiTrigger
-                ? 'Unlock AI Scholar'
-                : 'Choose your plan'}
+            {activeTier === 'infinity'
+              ? 'Infinity Plan Active'
+              : paywallContext?.blockedByPaywall
+                ? 'Pick a plan to continue'
+                : isAiTrigger
+                  ? 'Unlock AI Scholar'
+                  : 'Choose your plan'}
           </h1>
           <p className="mt-1.5 text-sm text-[#5A5E6B]">
-            {paywallContext?.blockedByPaywall
-              ? 'Free access has ended. Pick Standard or AI Scholar below.'
-              : isAiTrigger
-                ? `${paywallContext?.featureLabel ?? 'This tool'} is part of AI Scholar (coming soon).`
-                : 'Select a billing cycle, then tap a plan below.'}
+            {activeTier === 'infinity'
+              ? 'Every control across Standard Pass and Tier 3 AI Scholar is unlocked for your Super Admin account.'
+              : paywallContext?.blockedByPaywall
+                ? 'Free access has ended. Pick Standard or AI Scholar below.'
+                : isAiTrigger
+                  ? `${paywallContext?.featureLabel ?? 'This tool'} is part of AI Scholar (coming soon).`
+                  : 'Select a billing cycle, then tap a plan below.'}
           </p>
         </div>
 
+        {/* Super Admin Infinity Master Control Banner */}
+        {activeTier === 'infinity' && (
+          <div
+            role="status"
+            className="mx-auto mt-5 flex max-w-3xl items-center justify-between gap-4 rounded-3xl border border-[#1D1E23] bg-[#1D1E23] px-5 py-4 text-white shadow-[0_14px_32px_-12px_rgba(18,19,24,0.45)]"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white">
+                <Sparkles className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="font-display text-sm sm:text-base font-bold">
+                  Infinity Plan · Master Access Enabled
+                </p>
+                <p className="mt-0.5 text-xs text-[#C3C7D2]">
+                  Unlimited past questions, offline guides, mock exams, AI breakdowns, and flashcards active at no charge.
+                </p>
+              </div>
+            </div>
+            <span className="hidden sm:inline-flex items-center gap-1.5 font-mono-tabular text-xs font-semibold text-[#4ADE80] shrink-0">
+              <CheckCircle2 className="h-4 w-4" />
+              Unlocked
+            </span>
+          </div>
+        )}
+
         {/* Compact AI Feature Notice when opened from a locked AI button */}
-        {isAiTrigger && (
+        {isAiTrigger && activeTier !== 'infinity' && (
           <div
             role="status"
             className="mx-auto mt-5 flex max-w-2xl items-center gap-3 rounded-2xl border border-[#1A1B20]/10 bg-white px-4 py-3 text-xs text-[#3A3D47] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)] sm:text-sm"
@@ -345,7 +375,20 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
 
                 {/* Action Button */}
                 <div className="mt-6 space-y-2.5">
-                  {isFree ? (
+                  {activeTier === 'infinity' && !isFree ? (
+                    <button
+                      type="button"
+                      disabled
+                      className={`min-h-[46px] w-full rounded-2xl px-4 text-sm font-semibold cursor-default inline-flex items-center justify-center gap-2 ${
+                        useDarkCard
+                          ? 'bg-white/15 text-white'
+                          : 'bg-[#1D1E23] text-white'
+                      }`}
+                    >
+                      <CheckCircle2 className="h-4 w-4 text-[#4ADE80]" />
+                      <span>Unlocked · Infinity Plan</span>
+                    </button>
+                  ) : isFree ? (
                     <button
                       type="button"
                       disabled

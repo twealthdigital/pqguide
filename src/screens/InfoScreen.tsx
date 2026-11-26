@@ -6,9 +6,9 @@ import {
   Check,
   CheckCircle2,
   ClipboardCheck,
+  Clock,
   Crown,
   FileText,
-  Headphones,
   Loader2,
   Mail,
   MessageCircle,
@@ -18,8 +18,8 @@ import {
   Send,
   Sparkles,
 } from 'lucide-react';
-import type { AppScreen } from '../core/types';
-import { SITE_INFO } from '../data/siteInfo';
+import type { AppScreen, AuthenticatedUser, SupportTicket } from '../core/types';
+import { useArchiveStore } from '../hooks/useArchiveStore';
 import { submitFeedback } from '../services/feedbackService';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { SearchField } from '../components/ui/SearchField';
@@ -29,16 +29,10 @@ export type InfoPage = 'about' | 'services' | 'help' | 'support';
 
 interface InfoScreenProps {
   page: InfoPage;
+  currentUser?: AuthenticatedUser | null;
   restrictedAdminView?: boolean;
   onNavigate: (screen: AppScreen) => void;
 }
-
-const HEADERS: Record<InfoPage, { title: string; subtitle: string }> = {
-  about: { title: 'About pqguide', subtitle: 'The Past Questions Guide' },
-  services: { title: 'Services', subtitle: 'What you can do on pqguide' },
-  help: { title: 'Help', subtitle: 'How it works, and quick answers' },
-  support: { title: 'Customer Support', subtitle: 'We are here to help' },
-};
 
 const card =
   'rounded-2xl bg-white p-4 sm:p-5 border border-[#1A1B20]/[0.06] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)]';
@@ -69,343 +63,161 @@ const FeatureRow: React.FC<{
   </div>
 );
 
-const AboutPage: React.FC = () => (
-  <div className="space-y-4">
-    <div className={card}>
-      <p className="text-sm sm:text-base text-[#3A3D47] leading-relaxed">
-        pqguide is a fast, simple home for university past questions. Search a course code, open the
-        past question and revise with worked answers, all in one place and quick even on a slow connection.
-      </p>
-    </div>
-    <FeatureRow
-      icon={<CheckCircle2 className="w-5 h-5" />}
-      title="Verified past questions"
-      text="Past questions are added by school admins and checked before they are published."
-    />
-    <FeatureRow
-      icon={<Sparkles className="w-5 h-5" />}
-      title="Built to be quick"
-      text="Light pages, clear search and an app-like feel that works well on any phone."
-    />
-    <FeatureRow
-      icon={<BookOpen className="w-5 h-5" />}
-      title="Free to read"
-      text="Reading guides for general courses are free for every student."
-    />
-    <FeatureRow
-      icon={<ClipboardCheck className="w-5 h-5" />}
-      title="Practice exams made for you"
-      text="Pick OBJ Paper, Theory Paper, True / False, or CBT, set your own question count and timer, or tap Suggest for focus topics. Every submission is saved so you can track your score out of 100%."
-    />
-    <div className={card}>
-      <h2 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">
-        How the exam prediction works
-      </h2>
-      <div className="mt-2 space-y-2.5 text-xs sm:text-sm text-[#505460] leading-relaxed">
-        <p>
-          There is no guessing game behind it. pqguide looks through the past questions on
-          Home for the course you pick and chooses the ones most likely to matter: themes that
-          keep coming back across sessions, questions from the latest session, and anything that
-          matches the topic you ask to focus on.
-        </p>
-        <p>
-          When you submit, your attempt is saved to Performance. You can inspect missed answers,
-          mark Theory responses against model answers, and check your overall rating out of 100%
-          across all questions taken.
-        </p>
+const AboutPage: React.FC = () => {
+  const { siteCms } = useArchiveStore();
+  const about = siteCms.aboutPage;
+
+  return (
+    <div className="space-y-4">
+      <FeatureRow
+        icon={<Sparkles className="w-5 h-5" />}
+        title={about.card1Title}
+        text={about.card1Body}
+      />
+      <FeatureRow
+        icon={<CheckCircle2 className="w-5 h-5" />}
+        title={about.card2Title}
+        text={about.card2Body}
+      />
+      <div className={card}>
+        <h2 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">
+          {about.card3Title}
+        </h2>
+        <p className="mt-2 text-xs sm:text-sm text-[#505460] leading-relaxed">{about.card3Body}</p>
       </div>
     </div>
-  </div>
-);
+  );
+};
+
+const SERVICE_ICONS = [
+  <Search className="w-5 h-5" key="search" />,
+  <FileText className="w-5 h-5" key="file" />,
+  <ClipboardCheck className="w-5 h-5" key="exam" />,
+  <BarChart3 className="w-5 h-5" key="perf" />,
+  <BookOpen className="w-5 h-5" key="book" />,
+  <ScanLine className="w-5 h-5" key="scan" />,
+];
+
+function inferServiceAction(
+  title: string,
+  onNavigate: (s: AppScreen) => void,
+  restrictedAdminView: boolean
+): { label: string; onClick: () => void } | undefined {
+  const lower = title.toLowerCase();
+  if (lower.includes('alert') || lower.includes('notif')) {
+    return { label: 'See alerts', onClick: () => onNavigate('notifications') };
+  }
+  if (restrictedAdminView) return undefined;
+  if (lower.includes('past questions home') || lower.includes('search')) {
+    return { label: 'Open Home', onClick: () => onNavigate('home') };
+  }
+  if (lower.includes('worked answer')) {
+    return { label: 'Browse past questions', onClick: () => onNavigate('past_questions') };
+  }
+  if (lower.includes('practice exam') || lower.includes('mock')) {
+    return { label: 'Start a practice exam', onClick: () => onNavigate('mock_exam') };
+  }
+  if (lower.includes('performance') || lower.includes('rating')) {
+    return { label: 'Open Performance', onClick: () => onNavigate('performance') };
+  }
+  if (lower.includes('guide') || lower.includes('material')) {
+    return { label: 'Open materials', onClick: () => onNavigate('materials') };
+  }
+  if (lower.includes('subscription') || lower.includes('plan')) {
+    return { label: 'View plans', onClick: () => onNavigate('subscription') };
+  }
+  return undefined;
+}
 
 const ServicesPage: React.FC<{
   onNavigate: (s: AppScreen) => void;
   restrictedAdminView?: boolean;
-}> = ({ onNavigate, restrictedAdminView = false }) => (
-  <div className="space-y-4">
-    <FeatureRow
-      icon={<Search className="w-5 h-5" />}
-      title="Past questions home"
-      text="Find past questions by course code, keyword, session, semester and level."
-      action={!restrictedAdminView ? { label: 'Open Home', onClick: () => onNavigate('home') } : undefined}
-    />
-    <FeatureRow
-      icon={<FileText className="w-5 h-5" />}
-      title="Worked answers"
-      text="Open a past question, then tap View answer under a question to see how it is solved."
-      action={!restrictedAdminView ? { label: 'Browse past questions', onClick: () => onNavigate('past_questions') } : undefined}
-    />
-    <FeatureRow
-      icon={<ClipboardCheck className="w-5 h-5" />}
-      title="Practice exams"
-      text="Choose OBJ Paper, Theory Paper, True / False, or CBT (one question at a time). Set custom question counts and exam timers, tap Suggest for topics, and submit to record your attempt."
-      action={!restrictedAdminView ? { label: 'Start a practice exam', onClick: () => onNavigate('mock_exam') } : undefined}
-    />
-    <FeatureRow
-      icon={<BarChart3 className="w-5 h-5" />}
-      title="Performance & overall rating"
-      text="Review every submitted exam, inspect the questions you took and answers you missed, and open Check overall rating to see your combined score out of 100%."
-      action={!restrictedAdminView ? { label: 'Open Performance', onClick: () => onNavigate('performance') } : undefined}
-    />
-    <FeatureRow
-      icon={<BookOpen className="w-5 h-5" />}
-      title="Reading guides"
-      text="Free study notes to help you prepare for your exams."
-      action={!restrictedAdminView ? { label: 'Open materials', onClick: () => onNavigate('materials') } : undefined}
-    />
-    <FeatureRow
-      icon={<Bell className="w-5 h-5" />}
-      title="Alerts"
-      text="Get notified when new past questions and system broadcasts are published."
-      action={{ label: 'See alerts', onClick: () => onNavigate('notifications') }}
-    />
-    {!restrictedAdminView && (
+}> = ({ onNavigate, restrictedAdminView = false }) => {
+  const { siteCms } = useArchiveStore();
+  const items = siteCms.servicesPage.items;
+
+  return (
+    <div className="space-y-4">
+      {items.map((item, idx) => (
+        <FeatureRow
+          key={`${item.title}-${idx}`}
+          icon={SERVICE_ICONS[idx % SERVICE_ICONS.length]}
+          title={item.title}
+          text={item.description}
+          action={inferServiceAction(item.title, onNavigate, restrictedAdminView)}
+        />
+      ))}
       <FeatureRow
-        icon={<Crown className="w-5 h-5" />}
-        title="Subscription plans & AI Scholar"
-        text="View Monthly, Semester, and Yearly plans across Free, Standard Pass, and upcoming AI Scholar (Tier 3) from the side menu."
-        action={{ label: 'View plans', onClick: () => onNavigate('subscription') }}
+        icon={<Bell className="w-5 h-5" />}
+        title="Alerts & Broadcasts"
+        text="Get notified when new past questions and system broadcasts are published."
+        action={{ label: 'See alerts', onClick: () => onNavigate('notifications') }}
       />
-    )}
-    <FeatureRow
-      icon={<ScanLine className="w-5 h-5" />}
-      title="Scan-to-PDF uploads for schools"
-      text="Authorized school administrators verify and upload past questions so students get clean, searchable papers."
-    />
-  </div>
-);
+      {!restrictedAdminView && (
+        <FeatureRow
+          icon={<Crown className="w-5 h-5" />}
+          title="Subscription plans & AI Scholar"
+          text="View Monthly, Semester, and Yearly plans across Free Starter, Standard Pass, and AI Scholar from the side menu."
+          action={{ label: 'View plans', onClick: () => onNavigate('subscription') }}
+        />
+      )}
+    </div>
+  );
+};
 
-interface HelpAction {
-  label: string;
-  screen: AppScreen;
-}
-
-interface HelpItem {
+interface ParsedHelpStep {
   id: string;
   title: string;
   text: string;
-  /** Extra words people might search for. */
-  keywords?: string;
-  action?: HelpAction;
 }
 
-const HOW_IT_WORKS: HelpItem[] = [
-  {
-    id: 'find',
-    title: 'Find a past question',
-    text: 'On the home page, pick your academic session and semester, then search a course code (for example GNS 101) or a keyword. Results update as you type.',
-    keywords: 'search find filter session semester level course code home',
-    action: { label: 'Open Home', screen: 'home' },
-  },
-  {
-    id: 'open',
-    title: 'Open it and read',
-    text: 'Tap a past question to open it. Every question is laid out clearly, and you can use the search bar at the top to find words inside it.',
-    keywords: 'open read view inside search',
-    action: { label: 'Browse past questions', screen: 'past_questions' },
-  },
-  {
-    id: 'answer',
-    title: 'See how it is solved',
-    text: 'Under each question, tap View answer. You get the answer and a step-by-step explanation. If a question has no answer yet, it will say so.',
-    keywords: 'answer solution explanation worked steps view answer',
-  },
-  {
-    id: 'guides',
-    title: 'Study with reading guides',
-    text: 'Materials has free reading guides for general courses. Open one and search inside it to jump to what you need.',
-    keywords: 'materials guides notes study read learn',
-    action: { label: 'Open materials', screen: 'materials' },
-  },
-  {
-    id: 'exam',
-    title: 'Set up and take a practice exam',
-    text: 'Open Practice Exam, pick a course, and choose your format: OBJ (full question sheet with A–D options), Theory (full paper with answer boxes underneath), True / False, or CBT (one question at a time). Use the Custom buttons to type your own question count or minutes, and tap Suggest to pick focus topics.',
-    keywords: 'exam practice mock test timer predict obj theory cbt true false custom suggest topic',
-    action: { label: 'Start a practice exam', screen: 'mock_exam' },
-  },
-  {
-    id: 'performance',
-    title: 'Review your performance and overall rating',
-    text: 'When you submit an exam, it saves to Performance (found right after Practice Exam in the desktop sidebar and mobile side menu). Tap any exam to see every question you took, the answers you missed, and your total score. Tap Check overall rating to view your combined percentage out of 100% across all graded questions.',
-    keywords: 'performance score missed rating overall 100 percentage review history',
-    action: { label: 'Open Performance', screen: 'performance' },
-  },
-  {
-    id: 'alerts',
-    title: 'Get alerts',
-    text: 'Tap the bell at the top of the screen to see when new past questions are added.',
-    keywords: 'alerts notifications bell new added',
-    action: { label: 'See alerts', screen: 'notifications' },
-  },
-  {
-    id: 'back',
-    title: 'Go back',
-    text: 'Use the Back button at the top of a past question, guide or exam. It takes you to the screen you came from.',
-    keywords: 'back return previous navigate',
-  },
-];
-
-const FAQ: HelpItem[] = [
-  {
-    id: 'faq-missing',
-    title: 'I cannot find a past question',
-    text: 'Search with just the course code (for example GNS 101) and clear any session, semester or level filters. If it is still missing, it may not have been uploaded yet.',
-    keywords: 'missing not found search cannot find course code filters',
-  },
-  {
-    id: 'faq-answer',
-    title: 'How do I see the answer to a question?',
-    text: 'Open the past question, then tap View answer under the question. Answers are added by admins, so a few questions may not have one yet.',
-    keywords: 'answer solution view answer explanation',
-  },
-  {
-    id: 'faq-recent',
-    title: 'Where are the past questions I opened recently?',
-    text: 'Tap PQs on the bottom bar (Past Questions on desktop). Your recently opened past questions are listed at the top.',
-    keywords: 'recent history opened pqs',
-  },
-  {
-    id: 'faq-alerts',
-    title: 'How do I know when a new past question is added?',
-    text: 'Tap the bell at the top of the screen to see your alerts.',
-    keywords: 'alerts notifications bell new',
-  },
-  {
-    id: 'faq-exam-types',
-    title: 'What exam types can I choose from?',
-    text: 'You can take OBJ (Paper) for a full multiple-choice sheet, Theory (Paper) to write full answers directly under each question, True / False for statement checks, or CBT to answer multiple-choice questions one at a time.',
-    keywords: 'exam types obj theory cbt true false boolean paper',
-    action: { label: 'Start a practice exam', screen: 'mock_exam' },
-  },
-  {
-    id: 'faq-exam-custom',
-    title: 'Can I set my own number of questions, time, and focus topics?',
-    text: 'Yes. Tap Custom under Number of questions or Time allowed to enter your own values. Under Topic to focus on, tap Suggest to generate clickable topic chips from the selected course.',
-    keywords: 'custom number questions time minutes suggest topic focus',
-  },
-  {
-    id: 'faq-exam-accurate',
-    title: 'Will the real exam look like the practice exam?',
-    text: 'It is a prediction, not a promise. Questions are chosen from past questions, favouring themes that keep coming back and the latest session. Use it to practise and find weak spots, and keep studying your notes and guides too.',
-    keywords: 'exam prediction accurate real predict likely',
-  },
-  {
-    id: 'faq-exam-saved',
-    title: 'Where do I see my scores and missed answers after submitting?',
-    text: 'Submitting automatically opens Performance (also available in the desktop sidebar and mobile side drawer right after Practice Exam). Tap any attempt to inspect every question, missed answers, and explanations, or mark Theory answers yourself.',
-    keywords: 'exam answers saved performance history score missed keep drawer',
-    action: { label: 'Open Performance', screen: 'performance' },
-  },
-  {
-    id: 'faq-overall-rating',
-    title: 'How does Check overall rating calculate my score out of 100%?',
-    text: 'No matter how many questions were in each exam, 100% is shared evenly across all graded questions you have taken. Your overall rating divides your total earned points by the total graded questions so every question counts fairly.',
-    keywords: 'overall rating 100 percent percentage calculation share questions',
-    action: { label: 'Open Performance', screen: 'performance' },
-  },
-  {
-    id: 'faq-exam-time',
-    title: 'What happens when the time runs out?',
-    text: 'Your exam is submitted automatically with the answers you have entered and saved to Performance.',
-    keywords: 'exam time up timer ends submit automatic',
-  },
-  {
-    id: 'faq-subscriptions',
-    title: 'How do subscriptions and Tier 3 AI Scholar work?',
-    text: 'Open Subscription Plans in the side menu to compare Monthly, Semester, and Yearly options across Tier 1 (Free), Tier 2 (Standard Pass for all core webapp features), and Tier 3 (AI Scholar for upcoming AI tutoring and smart predictions).',
-    keywords: 'subscription premium paywall tier pricing monthly semester yearly ai scholar',
-    action: { label: 'View plans', screen: 'subscription' },
-  },
-];
-
-const matchesQuery = (item: HelpItem, needle: string) => {
-  const haystack = `${item.title} ${item.text} ${item.keywords ?? ''}`.toLowerCase();
-  return needle
-    .split(/\s+/)
-    .filter(Boolean)
-    .every((word) => haystack.includes(word));
-};
-
-const HelpActionLink: React.FC<{ action?: HelpAction; onNavigate: (s: AppScreen) => void }> = ({
-  action,
-  onNavigate,
-}) =>
-  action ? (
-    <button
-      type="button"
-      onClick={() => onNavigate(action.screen)}
-      className="mt-2.5 text-xs font-semibold text-[#1A1B20] underline underline-offset-4 decoration-[#1A1B20]/30 hover:decoration-[#1A1B20] cursor-pointer"
-    >
-      {action.label}
-    </button>
-  ) : null;
-
-const StepCard: React.FC<{
-  item: HelpItem;
-  number?: number;
-  onNavigate: (s: AppScreen) => void;
-}> = ({ item, number, onNavigate }) => (
-  <li className={`${card} flex items-start gap-3.5`}>
-    {number !== undefined && (
-      <span className="h-8 w-8 rounded-full bg-[#1D1E23] text-white text-xs font-bold flex items-center justify-center shrink-0">
-        {number}
-      </span>
-    )}
-    <div className="min-w-0 flex-1">
-      <h3 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">{item.title}</h3>
-      <p className="mt-0.5 text-xs sm:text-sm text-[#505460] leading-relaxed">{item.text}</p>
-      <HelpActionLink action={item.action} onNavigate={onNavigate} />
-    </div>
-  </li>
-);
-
-const FaqItem: React.FC<{
-  item: HelpItem;
-  defaultOpen?: boolean;
-  onNavigate: (s: AppScreen) => void;
-}> = ({ item, defaultOpen, onNavigate }) => (
-  <details
-    open={defaultOpen}
-    className="group rounded-2xl bg-white border border-[#1A1B20]/[0.06] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)] open:shadow-[0_8px_20px_-6px_rgba(24,25,30,0.1)]"
-  >
-    <summary className="cursor-pointer list-none px-4 py-3.5 flex items-center justify-between gap-3 text-sm font-semibold text-[#1A1B20] [&::-webkit-details-marker]:hidden">
-      {item.title}
-      <span
-        aria-hidden="true"
-        className="text-[#686C78] text-lg leading-none transition-transform group-open:rotate-45"
-      >
-        +
-      </span>
-    </summary>
-    <div className="px-4 pb-4 -mt-1">
-      <p className="text-sm text-[#505460] leading-relaxed">{item.text}</p>
-      <HelpActionLink action={item.action} onNavigate={onNavigate} />
-    </div>
-  </details>
-);
+function parseHelpStep(raw: string, index: number): ParsedHelpStep {
+  const colonIdx = raw.indexOf(':');
+  if (colonIdx > 0 && colonIdx < 56) {
+    return {
+      id: `step-${index}`,
+      title: raw.slice(0, colonIdx).trim(),
+      text: raw.slice(colonIdx + 1).trim(),
+    };
+  }
+  return {
+    id: `step-${index}`,
+    title: `Step ${index + 1}`,
+    text: raw,
+  };
+}
 
 const HelpPage: React.FC<{
   query: string;
   onNavigate: (s: AppScreen) => void;
   restrictedAdminView?: boolean;
-}> = ({ query, onNavigate, restrictedAdminView = false }) => {
+}> = ({ query, onNavigate }) => {
+  const { siteCms } = useArchiveStore();
   const needle = query.trim().toLowerCase();
-  const isActionAllowed = (action?: HelpAction) =>
-    action &&
-    (!restrictedAdminView ||
-      action.screen === 'notifications' ||
-      action.screen === 'help' ||
-      action.screen === 'support');
 
-  const steps = useMemo(
-    () => HOW_IT_WORKS.filter((item) => !needle || matchesQuery(item, needle)),
-    [needle]
+  const allSteps = useMemo(
+    () => siteCms.helpPage.howItWorks.map((item, idx) => parseHelpStep(item, idx)),
+    [siteCms.helpPage.howItWorks]
   );
-  const faqs = useMemo(
-    () => FAQ.filter((item) => !needle || matchesQuery(item, needle)),
-    [needle]
-  );
+
+  const steps = useMemo(() => {
+    if (!needle) return allSteps;
+    const words = needle.split(/\s+/).filter(Boolean);
+    return allSteps.filter((step) => {
+      const hay = `${step.title} ${step.text}`.toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+  }, [allSteps, needle]);
+
+  const faqs = useMemo(() => {
+    const words = needle.split(/\s+/).filter(Boolean);
+    return siteCms.helpPage.faqs.filter((faq) => {
+      if (words.length === 0) return true;
+      const hay = `${faq.question} ${faq.answer}`.toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+  }, [siteCms.helpPage.faqs, needle]);
+
   const nothing = needle && steps.length === 0 && faqs.length === 0;
 
   return (
@@ -426,12 +238,21 @@ const HelpPage: React.FC<{
               <h2 className="font-display text-base font-bold text-[#1A1B20]">How it works</h2>
               <ol className="space-y-2.5">
                 {steps.map((item, i) => (
-                  <StepCard
-                    key={item.id}
-                    item={{ ...item, action: isActionAllowed(item.action) ? item.action : undefined }}
-                    number={needle ? undefined : i + 1}
-                    onNavigate={onNavigate}
-                  />
+                  <li key={item.id} className={`${card} flex items-start gap-3.5`}>
+                    {!needle && (
+                      <span className="h-8 w-8 rounded-full bg-[#1D1E23] text-white text-xs font-bold font-mono-tabular flex items-center justify-center shrink-0">
+                        {i + 1}
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">
+                        {item.title}
+                      </h3>
+                      <p className="mt-0.5 text-xs sm:text-sm text-[#505460] leading-relaxed">
+                        {item.text}
+                      </p>
+                    </div>
+                  </li>
                 ))}
               </ol>
             </section>
@@ -440,13 +261,25 @@ const HelpPage: React.FC<{
           {faqs.length > 0 && (
             <section aria-label="Common questions" className="space-y-2.5">
               <h2 className="font-display text-base font-bold text-[#1A1B20]">Common questions</h2>
-              {faqs.map((item) => (
-                <FaqItem
-                  key={item.id}
-                  item={{ ...item, action: isActionAllowed(item.action) ? item.action : undefined }}
-                  defaultOpen={Boolean(needle)}
-                  onNavigate={onNavigate}
-                />
+              {faqs.map((item, idx) => (
+                <details
+                  key={`${item.question}-${idx}`}
+                  open={Boolean(needle)}
+                  className="group rounded-2xl bg-white border border-[#1A1B20]/[0.06] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)] open:shadow-[0_8px_20px_-6px_rgba(24,25,30,0.1)]"
+                >
+                  <summary className="cursor-pointer list-none px-4 py-3.5 flex items-center justify-between gap-3 text-sm font-semibold text-[#1A1B20] [&::-webkit-details-marker]:hidden">
+                    {item.question}
+                    <span
+                      aria-hidden="true"
+                      className="text-[#686C78] text-lg leading-none transition-transform group-open:rotate-45"
+                    >
+                      +
+                    </span>
+                  </summary>
+                  <div className="px-4 pb-4 -mt-1">
+                    <p className="text-sm text-[#505460] leading-relaxed">{item.answer}</p>
+                  </div>
+                </details>
               ))}
             </section>
           )}
@@ -455,7 +288,9 @@ const HelpPage: React.FC<{
 
       <div className={`${card} flex items-center justify-between gap-3`}>
         <p className="text-sm text-[#3A3D47]">
-          {nothing ? 'Cannot find what you need? Ask our support team.' : 'Still stuck? Our support team can help.'}
+          {nothing
+            ? 'Cannot find what you need? Ask our support team.'
+            : 'Still stuck? Our support team can help.'}
         </p>
         <TactileButton variant="dark" size="sm" onClick={() => onNavigate('support')}>
           Contact support
@@ -467,7 +302,14 @@ const HelpPage: React.FC<{
 
 type SendState = 'idle' | 'sending' | 'sent';
 
-const FeedbackForm: React.FC = () => {
+const SUPPORT_KINDS: SupportTicket['kind'][] = ['Question', 'Missing Paper', 'Report Issue'];
+
+const FeedbackForm: React.FC<{
+  currentUser?: AuthenticatedUser | null;
+  formTitle: string;
+  formSubtitle: string;
+}> = ({ currentUser, formTitle, formSubtitle }) => {
+  const [kind, setKind] = useState<SupportTicket['kind']>('Question');
   const [message, setMessage] = useState('');
   const [state, setState] = useState<SendState>('idle');
   const timers = useRef<number[]>([]);
@@ -480,7 +322,18 @@ const FeedbackForm: React.FC = () => {
     if (!canSend) return;
     setState('sending');
     const minSpin = new Promise((r) => timers.current.push(window.setTimeout(r, 900)));
-    await Promise.all([submitFeedback(message), minSpin]);
+    await Promise.all([
+      submitFeedback(message, {
+        userId: currentUser?.id,
+        role: currentUser?.role,
+        fullName: currentUser?.fullName,
+        email: currentUser?.email,
+        matricNumber: currentUser?.matricNumber,
+        level: currentUser?.level,
+        kind,
+      }),
+      minSpin,
+    ]);
     setMessage('');
     setState('sent');
     timers.current.push(window.setTimeout(() => setState('idle'), 3000));
@@ -491,15 +344,34 @@ const FeedbackForm: React.FC = () => {
   return (
     <div className={`${card} space-y-3`}>
       <div>
-        <h2 className="font-display text-base font-bold text-[#1A1B20]">Send us feedback</h2>
-        <p className="mt-1 text-sm text-[#505460] leading-relaxed">
-          Found a problem or have an idea? Tell us below.
-        </p>
+        <h2 className="font-display text-base font-bold text-[#1A1B20]">{formTitle}</h2>
+        <p className="mt-1 text-sm text-[#505460] leading-relaxed">{formSubtitle}</p>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Message topic">
+        {SUPPORT_KINDS.map((item) => {
+          const active = kind === item;
+          return (
+            <button
+              key={item}
+              type="button"
+              disabled={busy}
+              onClick={() => setKind(item)}
+              className={`min-h-[36px] px-3 rounded-xl text-xs font-semibold border transition-colors cursor-pointer whitespace-nowrap ${
+                active
+                  ? 'bg-[#1D1E23] text-white border-[#1D1E23]'
+                  : 'bg-[#F6F7F9] text-[#505460] border-[#1A1B20]/10 hover:text-[#1A1B20]'
+              }`}
+            >
+              {item}
+            </button>
+          );
+        })}
       </div>
 
       <div>
         <label htmlFor="support-feedback" className="sr-only">
-          Your feedback
+          Your support message
         </label>
         <textarea
           id="support-feedback"
@@ -508,7 +380,7 @@ const FeedbackForm: React.FC = () => {
           disabled={busy}
           rows={4}
           maxLength={1000}
-          placeholder="Write your feedback here..."
+          placeholder="Write your message for Super Admin support here..."
           className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 py-2.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:ring-2 focus:ring-[#1D1E23]/20 resize-none disabled:opacity-60"
         />
       </div>
@@ -518,7 +390,9 @@ const FeedbackForm: React.FC = () => {
           type="button"
           onClick={handleSend}
           disabled={!canSend}
-          aria-label={state === 'sent' ? 'Feedback sent' : state === 'sending' ? 'Sending feedback' : 'Send feedback'}
+          aria-label={
+            state === 'sent' ? 'Message sent' : state === 'sending' ? 'Sending message' : 'Send message'
+          }
           aria-busy={state === 'sending'}
           className={`feedback-send inline-flex h-11 items-center justify-center overflow-hidden font-semibold text-sm text-white select-none cursor-pointer transition-[width,background-color,border-radius,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] disabled:cursor-default ${
             busy ? 'w-11 rounded-full' : 'w-28 rounded-full'
@@ -536,7 +410,7 @@ const FeedbackForm: React.FC = () => {
           {state === 'sent' && <Check className="w-5 h-5 feedback-check" strokeWidth={3} />}
         </button>
         <p className="text-xs text-[#686C78]" role="status" aria-live="polite">
-          {state === 'sent' ? 'Thanks! Your feedback has been sent.' : ''}
+          {state === 'sent' ? 'Sent! Your message is now in the Support Inbox.' : ''}
         </p>
       </div>
     </div>
@@ -565,51 +439,67 @@ const ContactRow: React.FC<{
   </a>
 );
 
-const SupportPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavigate }) => {
-  const { supportEmail, supportWhatsApp, supportPhone } = SITE_INFO;
-  const hasContact = Boolean(supportEmail || supportWhatsApp || supportPhone);
+const SupportPage: React.FC<{
+  currentUser?: AuthenticatedUser | null;
+  onNavigate: (s: AppScreen) => void;
+}> = ({ currentUser, onNavigate }) => {
+  const { siteCms } = useArchiveStore();
+  const support = siteCms.supportPage;
+  const hasContact = Boolean(support.email || support.whatsappNumber || support.phone);
 
   return (
     <div className="space-y-4">
       <div className={`${card} space-y-3`}>
-        <h2 className="font-display text-base font-bold text-[#1A1B20]">Contact us</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-base font-bold text-[#1A1B20]">Contact us</h2>
+          {support.hours && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-mono-tabular text-[#686C78]">
+              <Clock className="w-3.5 h-3.5" />
+              {support.hours}
+            </span>
+          )}
+        </div>
         {hasContact ? (
           <div className="space-y-2.5">
-            {supportWhatsApp && (
+            {support.whatsappNumber && (
               <ContactRow
                 icon={<MessageCircle className="w-4 h-4" />}
-                label="WhatsApp"
-                value={`+${supportWhatsApp.replace(/\D/g, '')}`}
-                href={`https://wa.me/${supportWhatsApp.replace(/\D/g, '')}`}
+                label={support.whatsappLabel || 'WhatsApp'}
+                value={`+${support.whatsappNumber.replace(/\D/g, '')}`}
+                href={`https://wa.me/${support.whatsappNumber.replace(/\D/g, '')}`}
                 external
               />
             )}
-            {supportEmail && (
+            {support.email && (
               <ContactRow
                 icon={<Mail className="w-4 h-4" />}
                 label="Email"
-                value={supportEmail}
-                href={`mailto:${supportEmail}?subject=${encodeURIComponent('pqguide support')}`}
+                value={support.email}
+                href={`mailto:${support.email}?subject=${encodeURIComponent('pqguide support')}`}
               />
             )}
-            {supportPhone && (
+            {support.phone && (
               <ContactRow
                 icon={<Phone className="w-4 h-4" />}
                 label="Phone"
-                value={supportPhone}
-                href={`tel:${supportPhone.replace(/[^\d+]/g, '')}`}
+                value={support.phone}
+                href={`tel:${support.phone.replace(/[^\d+]/g, '')}`}
               />
             )}
           </div>
         ) : (
           <p className="text-sm text-[#505460] leading-relaxed">
-            Contact details will appear here soon. In the meantime, leave your feedback below or
+            Contact details will appear here soon. In the meantime, send a direct message below or
             check the Help page.
           </p>
         )}
       </div>
 
-      <FeedbackForm />
+      <FeedbackForm
+        currentUser={currentUser}
+        formTitle={support.formTitle}
+        formSubtitle={support.formSubtitle}
+      />
 
       <div className={`${card} flex items-center justify-between gap-3`}>
         <p className="text-sm text-[#3A3D47]">Looking for a quick answer first?</p>
@@ -623,13 +513,22 @@ const SupportPage: React.FC<{ onNavigate: (s: AppScreen) => void }> = ({ onNavig
 
 export const InfoScreen: React.FC<InfoScreenProps> = ({
   page,
+  currentUser = null,
   restrictedAdminView = false,
   onNavigate,
 }) => {
-  const header = HEADERS[page];
+  const { siteCms } = useArchiveStore();
   const [helpQuery, setHelpQuery] = useState('');
 
-  // Each visit to Help starts with an empty search.
+  const header =
+    page === 'about'
+      ? { title: siteCms.aboutPage.heading, subtitle: siteCms.aboutPage.lead }
+      : page === 'services'
+        ? { title: siteCms.servicesPage.heading, subtitle: siteCms.servicesPage.lead }
+        : page === 'help'
+          ? { title: siteCms.helpPage.heading, subtitle: siteCms.helpPage.lead }
+          : { title: siteCms.supportPage.heading, subtitle: siteCms.supportPage.lead };
+
   useEffect(() => {
     setHelpQuery('');
   }, [page]);
@@ -660,7 +559,9 @@ export const InfoScreen: React.FC<InfoScreenProps> = ({
           restrictedAdminView={restrictedAdminView}
         />
       )}
-      {page === 'support' && <SupportPage onNavigate={onNavigate} />}
+      {page === 'support' && (
+        <SupportPage currentUser={currentUser} onNavigate={onNavigate} />
+      )}
     </div>
   );
 };

@@ -10,7 +10,7 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react';
-import { canAccessScreen } from '../core/permissions';
+import { canAccessScreen, isRestrictedAccount } from '../core/permissions';
 import { sanitizeSafeUrl } from '../core/security';
 import type { AuthenticatedUser, PastQuestionDoc, SemesterType } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
@@ -34,6 +34,8 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
 }) => {
   const store = useArchiveStore();
   const isSuperAdminPreview = currentUser.role === 'super_admin';
+  const accountRestricted = !isSuperAdminPreview && isRestrictedAccount(currentUser);
+  const adminCms = store.siteCms.schoolAdminUi;
 
   const assignedSchool = useMemo(() => {
     if (isSuperAdminPreview) {
@@ -251,15 +253,15 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
             <p className="text-xs font-medium text-[#A5AAB8]">
               {isSuperAdminPreview
                 ? `Super Admin View · Inspecting ${assignedSchool.code} School Desk`
-                : `School Admin Panel · ${assignedSchool.code} Ingestion Desk`}
+                : `${adminCms.deskLabel} · ${assignedSchool.code}`}
             </p>
             <h1 className="font-display text-2xl sm:text-3xl font-bold text-white mt-1.5">
-              Upload &amp; Manage {assignedSchool.code} Past Questions
+              {adminCms.deskHeadline.replace(/\{SCHOOL\}/g, assignedSchool.code)}
             </h1>
             <p className="text-sm text-[#B8BCC8] mt-2 max-w-2xl">
               {isSuperAdminPreview
                 ? `You are viewing the School Admin experience for ${assignedSchool.name} while keeping full Super Admin privileges.`
-                : `Your administrator account is scoped strictly to ${assignedSchool.name}. Upload PDF, DOCX, TXT, or scanned exam pages to preview, save as draft, or publish.`}
+                : adminCms.deskDescription}
             </p>
           </div>
 
@@ -288,6 +290,15 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
         </div>
       </SurfaceCard>
 
+      {accountRestricted && (
+        <div
+          role="alert"
+          className="rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] px-4 py-3 text-xs font-medium text-[#92400E]"
+        >
+          Your administrator account is currently restricted (read-only). Uploading, editing, publishing, and deleting are disabled until lifted by a Super Admin.
+        </div>
+      )}
+
       {errorMsg && (
         <div
           role="alert"
@@ -312,16 +323,23 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
         <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-5">
           <div>
             <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              1. Upload Past Question File
+              {adminCms.uploadPanelTitle}
             </h2>
             <p className="text-xs text-[#686C78] mt-0.5">
-              Accepts JPG, PNG, WEBP, PDF, DOCX, DOC, TXT, MD, CSV (max 10 MB; SVG/HTML/executables blocked)
+              {adminCms.uploadPanelHint}
             </p>
           </div>
 
-          <label className="block rounded-2xl border-2 border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] hover:bg-[#EFF1F5] transition-colors p-6 text-center cursor-pointer">
+          <label
+            className={`block rounded-2xl border-2 border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] transition-colors p-6 text-center ${
+              accountRestricted
+                ? 'opacity-50 cursor-not-allowed'
+                : 'hover:bg-[#EFF1F5] cursor-pointer'
+            }`}
+          >
             <input
               type="file"
+              disabled={accountRestricted}
               accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.txt,.md,.csv"
               onChange={handleFilePicked}
               className="sr-only"
@@ -330,9 +348,11 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
               <UploadCloud className="w-5 h-5" />
             </div>
             <p className="font-display text-sm font-bold text-[#1A1B20]">
-              {processing
-                ? 'Validating & processing file...'
-                : 'Tap to select past question image or document'}
+              {accountRestricted
+                ? 'Uploads locked (read-only restriction)'
+                : processing
+                  ? 'Validating & processing file...'
+                  : 'Tap to select past question image or document'}
             </p>
             <p className="text-xs text-[#686C78] mt-1">
               Runs strict file signature check and Scan-to-PDF / text extraction
@@ -710,16 +730,18 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                     </button>
                     <button
                       type="button"
+                      disabled={accountRestricted}
                       onClick={() => startEditing(doc)}
-                      className="min-h-[36px] px-2.5 rounded-lg bg-[#F6F7F9] hover:bg-[#ECEEF3] text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
+                      className="min-h-[36px] px-2.5 rounded-lg bg-[#F6F7F9] hover:bg-[#ECEEF3] text-xs font-semibold text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                       <span>Edit</span>
                     </button>
                     <button
                       type="button"
+                      disabled={accountRestricted}
                       onClick={() => handleToggleStatus(doc)}
-                      className={`min-h-[36px] px-2.5 rounded-lg text-xs font-semibold cursor-pointer ${
+                      className={`min-h-[36px] px-2.5 rounded-lg text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                         doc.status === 'published'
                           ? 'bg-[#EEF0F4] text-[#1A1B20]'
                           : 'bg-[#1D1E23] text-white'
@@ -729,9 +751,10 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                     </button>
                     <button
                       type="button"
+                      disabled={accountRestricted}
                       onClick={() => handleDelete(doc)}
                       aria-label={`Delete ${doc.courseCode}`}
-                      className="min-h-[36px] px-2.5 rounded-lg bg-[#FEF2F2] hover:bg-[#FEE2E2] text-xs font-semibold text-[#B91C1C] inline-flex items-center gap-1 cursor-pointer"
+                      className="min-h-[36px] px-2.5 rounded-lg bg-[#FEF2F2] hover:bg-[#FEE2E2] text-xs font-semibold text-[#B91C1C] inline-flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       <span>Delete</span>

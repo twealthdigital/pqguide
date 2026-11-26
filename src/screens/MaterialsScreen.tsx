@@ -221,7 +221,7 @@ export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial
   return (
     <div className="space-y-6 page-enter">
       <WaveHeader
-        title="Materials"
+        title={store.siteCms.studentUi.materialsTitle}
         noun="materials"
         placeholder="Search a course or topic..."
         searchValue={query}
@@ -240,7 +240,7 @@ export const MaterialsScreen: React.FC<MaterialsScreenProps> = ({ onOpenMaterial
           <div>
             <h2 className="font-display text-lg font-bold text-[#1A1B20]">Reading guides</h2>
             <p className="mt-0.5 text-xs text-[#686C78]">
-              Read here or download to study offline
+              {store.siteCms.studentUi.materialsSubtitle}
               {appliedCourse !== 'All' ? ` · ${appliedCourse}` : ''}
               {appliedLevel !== 'All' ? ` · ${appliedLevel}` : ''}
             </p>

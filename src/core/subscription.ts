@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { UserRole } from './types';
 
 /**
  * MASTER FREE-TIER SWITCH
@@ -11,14 +12,14 @@ export const FREE_TIER_ENABLED = true;
 
 /**
  * Master AI-feature flag (kept `false` until backend AI integration is installed).
- * Tier 3 UI entries stay visible in a locked/disabled state and route to the
- * Subscription Paywall highlighting Tier 3 AI benefits.
+ * Tier 3 UI entries stay visible in a locked/disabled state for standard users,
+ * while Super Admin sessions receive the highest Infinity Plan with all controls unlocked.
  */
 export const AI_INTEGRATION_ENABLED = false;
 
 export type BillingPeriod = 'monthly' | 'semester' | 'yearly';
 
-export type SubscriptionTierId = 'free' | 'standard' | 'pro_ai';
+export type SubscriptionTierId = 'free' | 'standard' | 'pro_ai' | 'infinity';
 
 export interface BillingPeriodMeta {
   id: BillingPeriod;
@@ -161,7 +162,9 @@ let currentState: SubscriptionState = (() => {
         ? parsed.billingPeriod
         : 'semester';
     const validTier: SubscriptionTierId | null =
-      parsed.activeTier === 'standard' || parsed.activeTier === 'pro_ai'
+      parsed.activeTier === 'standard' ||
+      parsed.activeTier === 'pro_ai' ||
+      parsed.activeTier === 'infinity'
         ? parsed.activeTier
         : FREE_TIER_ENABLED
           ? 'free'
@@ -172,19 +175,39 @@ let currentState: SubscriptionState = (() => {
   }
 })();
 
+let roleOverride: UserRole | null = null;
+
 const listeners = new Set<() => void>();
 
-function notify() {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentState));
-  } catch {
-    /* ignore storage errors */
+function notify(persist = true) {
+  if (persist) {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentState));
+    } catch {
+      /* ignore storage errors */
+    }
   }
   listeners.forEach((fn) => fn());
 }
 
 export const subscriptionService = {
+  setRoleOverride(role: UserRole | null) {
+    if (roleOverride === role) return;
+    roleOverride = role;
+    notify(false);
+  },
+
+  isInfinityActive(): boolean {
+    return roleOverride === 'super_admin' || currentState.activeTier === 'infinity';
+  },
+
   getState(): SubscriptionState {
+    if (roleOverride === 'super_admin') {
+      return {
+        activeTier: 'infinity',
+        billingPeriod: currentState.billingPeriod,
+      };
+    }
     return currentState;
   },
 
@@ -199,11 +222,17 @@ export const subscriptionService = {
   },
 
   hasStandardAccess(): boolean {
+    if (roleOverride === 'super_admin') return true;
     if (FREE_TIER_ENABLED) return true;
-    return currentState.activeTier === 'standard' || currentState.activeTier === 'pro_ai';
+    return (
+      currentState.activeTier === 'standard' ||
+      currentState.activeTier === 'pro_ai' ||
+      currentState.activeTier === 'infinity'
+    );
   },
 
   hasAiAccess(): boolean {
+    if (roleOverride === 'super_admin') return true;
     return AI_INTEGRATION_ENABLED && currentState.activeTier === 'pro_ai';
   },
 
@@ -216,6 +245,7 @@ export function useSubscription(): SubscriptionState {
   const [state, setState] = useState<SubscriptionState>(() => subscriptionService.getState());
   useEffect(() => {
     const update = () => setState(subscriptionService.getState());
+    update();
     listeners.add(update);
     return () => {
       listeners.delete(update);

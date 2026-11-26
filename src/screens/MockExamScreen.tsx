@@ -35,8 +35,11 @@ import { LogoShapes } from '../components/ui/BrandLogo';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { TactileButton } from '../components/ui/TactileButton';
 import type { PaywallContext } from '../core/subscription';
+import type { AuthenticatedUser } from '../core/types';
+import { isRestrictedAccount } from '../core/permissions';
 
 interface MockExamScreenProps {
+  currentUser?: AuthenticatedUser | null;
   onBack: () => void;
   onSubmitted?: (recordId: string) => void;
   onOpenPaywall?: (context?: PaywallContext) => void;
@@ -105,10 +108,13 @@ const Chip: React.FC<{
 );
 
 export const MockExamScreen: React.FC<MockExamScreenProps> = ({
+  currentUser = null,
   onBack,
   onSubmitted,
 }) => {
   const store = useArchiveStore();
+  const accountRestricted = isRestrictedAccount(currentUser);
+  const examCms = store.siteCms.studentUi;
 
   const docs = useMemo(
     () =>
@@ -561,7 +567,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
   // ---------------------------------------------------------------- header
   const setupHeaderTitle =
     setupStep === 'intro'
-      ? 'Practice exam'
+      ? examCms.mockExamHeadline
       : setupStep === 'course'
         ? 'Select course'
         : setupStep === 'type'
@@ -675,23 +681,31 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
             {setupStep === 'intro' && (
               <div className={`${card} space-y-5 page-enter`}>
                 <p className="text-sm text-[#505460] leading-relaxed">
-                  Practice under real exam timing with questions drawn from past papers and course
-                  guides. Pick your course, format, and question count to start.
+                  {examCms.mockExamDescription}
                 </p>
+
+                {accountRestricted && (
+                  <div
+                    role="alert"
+                    className="rounded-xl bg-[#FEF2F2] border border-[#FECACA] px-3.5 py-2.5 text-xs font-medium text-[#B91C1C]"
+                  >
+                    Your account is currently in read-only mode. Practice exams are disabled until your restriction is lifted.
+                  </div>
+                )}
 
                 <button
                   type="button"
                   onClick={() => advanceToStep('course')}
-                  disabled={stepLoading}
+                  disabled={stepLoading || accountRestricted}
                   aria-busy={stepLoading}
-                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#1D1E23] text-sm font-semibold text-white shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.99] cursor-pointer disabled:opacity-75 disabled:cursor-default"
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#1D1E23] text-sm font-semibold text-white shadow-[0_8px_18px_-8px_rgba(24,25,30,0.45)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.99] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {stepLoading ? (
                     <Loader2 className="w-5 h-5 feedback-roll" />
                   ) : (
                     <>
-                      <span>Take Exam</span>
-                      <ArrowRight className="w-4 h-4" />
+                      <span>{accountRestricted ? 'Restricted · Read Only' : 'Take Exam'}</span>
+                      {!accountRestricted && <ArrowRight className="w-4 h-4" />}
                     </>
                   )}
                 </button>

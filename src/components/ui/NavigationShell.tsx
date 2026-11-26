@@ -1,10 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Activity,
   ArrowUpRight,
   BarChart3,
   Bell,
+  BookOpen,
+  Building2,
+  Check,
+  ChevronDown,
   ChevronLeft,
   ClipboardCheck,
+  CreditCard,
   Crown,
   Eye as PreviewEye,
   EyeOff as PreviewOff,
@@ -14,26 +20,33 @@ import {
   Headphones,
   HelpCircle,
   Home,
+  Inbox,
   Info,
   Layers,
+  LayoutDashboard,
   LogOut,
   Megaphone,
   MoreVertical,
   Search,
+  Settings,
+  ShieldAlert,
   ShieldCheck,
   UploadCloud,
   User,
+  Users,
   X,
 } from 'lucide-react';
 import type {
   AppScreen,
   AuthenticatedUser,
   HeaderMarqueeConfig,
+  SuperAdminSectionId,
   WorkspaceViewMode,
 } from '../../core/types';
 import {
   canAccessScreen,
   getDefaultScreenForRole,
+  isRestrictedAccount,
   ROLE_LABELS,
 } from '../../core/permissions';
 import { FREE_TIER_ENABLED, useSubscription, type PaywallContext } from '../../core/subscription';
@@ -48,6 +61,9 @@ interface NavigationShellProps {
   parentScreen?: AppScreen;
   workspaceMode?: WorkspaceViewMode;
   onWorkspaceModeChange?: (mode: WorkspaceViewMode) => void;
+  activeAdminSection?: SuperAdminSectionId;
+  onSelectAdminSection?: (section: SuperAdminSectionId) => void;
+  openSupportCount?: number;
   marquee?: HeaderMarqueeConfig;
   onNavigate: (screen: AppScreen) => void;
   onOpenPaywall: (context?: PaywallContext) => void;
@@ -70,6 +86,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   parentScreen = 'home',
   workspaceMode,
   onWorkspaceModeChange,
+  activeAdminSection = 'overview',
+  onSelectAdminSection,
+  openSupportCount = 0,
   marquee,
   onNavigate,
   onOpenPaywall,
@@ -81,6 +100,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 }) => {
   const { activeTier } = useSubscription();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -95,11 +115,14 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   });
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
   const [isSwipingDrawer, setIsSwipingDrawer] = useState(false);
+
   useBackHandler(drawerOpen, () => setDrawerOpen(false));
   useBackHandler(accountMenuOpen, () => setAccountMenuOpen(false));
+  useBackHandler(workspaceDropdownOpen, () => setWorkspaceDropdownOpen(false));
 
   const desktopTriggerRef = useRef<HTMLButtonElement | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const workspaceDropdownRef = useRef<HTMLDivElement | null>(null);
   const userPanelRef = useRef<HTMLDivElement | null>(null);
   const drawerPanelRef = useRef<HTMLElement | null>(null);
   const signOutTimerRef = useRef<number | null>(null);
@@ -108,9 +131,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const initials = getStudentInitials(student.fullName);
 
-  // The bottom bar must stay at the bottom of the screen. When the on-screen
-  // keyboard opens, some browsers shrink the viewport and drag fixed bars up
-  // above the keyboard. Slide the bar down behind the keyboard instead.
   useEffect(() => {
     const vv = window.visualViewport;
     let baseHeight = Math.max(window.innerHeight, vv?.height ?? 0);
@@ -197,6 +217,29 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   }, [accountMenuOpen]);
 
   useEffect(() => {
+    if (!workspaceDropdownOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (workspaceDropdownRef.current?.contains(target)) return;
+      setWorkspaceDropdownOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setWorkspaceDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [workspaceDropdownOpen]);
+
+  useEffect(() => {
     if (!drawerOpen) {
       setSwipeOffsetX(0);
       setIsSwipingDrawer(false);
@@ -245,7 +288,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       const absY = Math.abs(dy);
       if (absX < 10 && absY < 10) return;
 
-      // Immediately yield to native vertical scroll on any vertical or leftward motion
       if (absY >= absX * 0.85 || dx <= 0) {
         gestureAxisRef.current = 'vertical';
         return;
@@ -300,7 +342,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     }, 450);
   };
 
-  // Screens that open with the full-bleed dark banner (transparent top bar, no top padding).
   const hasBanner =
     activeScreen === 'home' ||
     activeScreen === 'past_questions' ||
@@ -321,6 +362,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       ? 'school_admin'
       : 'student';
   const isAdminWorkspace = effectiveWorkspace !== 'student';
+  const isSuperAdminConsole = isSuperAdmin && effectiveWorkspace === 'super_admin';
   const showStudentBottomBar = !isAdminWorkspace;
   const showSubscriptionCta = !isSchoolAdmin && (!isSuperAdmin || effectiveWorkspace === 'student');
 
@@ -379,7 +421,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               },
             ]
           : [
-              { id: 'super_admin', label: 'Super Admin Console', icon: <ShieldCheck className="w-5 h-5" /> },
               {
                 id: 'notifications',
                 label: 'Notifications',
@@ -397,7 +438,31 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const navItems = allNavItems.filter((item) => canAccessScreen(student, item.id));
 
-  // Company / constant links: top bar on desktop, side panel on mobile and tablet.
+  // Dedicated Super Admin console sections inside the rounded sidebar container
+  const superAdminPages: Array<{
+    id: SuperAdminSectionId;
+    label: string;
+    icon: React.ReactNode;
+    badge?: number;
+  }> = [
+    { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-[18px] h-[18px]" /> },
+    { id: 'students', label: 'Students', icon: <Users className="w-[18px] h-[18px]" /> },
+    { id: 'universities', label: 'Universities', icon: <Building2 className="w-[18px] h-[18px]" /> },
+    { id: 'administrators', label: 'Administrators', icon: <ShieldCheck className="w-[18px] h-[18px]" /> },
+    { id: 'activities', label: 'Activities', icon: <Activity className="w-[18px] h-[18px]" /> },
+    { id: 'actions', label: 'Actions', icon: <ShieldAlert className="w-[18px] h-[18px]" /> },
+    { id: 'announcements', label: 'Announcements', icon: <Megaphone className="w-[18px] h-[18px]" /> },
+    {
+      id: 'support_inbox',
+      label: 'Support Inbox',
+      icon: <Inbox className="w-[18px] h-[18px]" />,
+      badge: openSupportCount,
+    },
+    { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-[18px] h-[18px]" /> },
+    { id: 'study_materials', label: 'Study Materials', icon: <BookOpen className="w-[18px] h-[18px]" /> },
+    { id: 'payments', label: 'Payments', icon: <CreditCard className="w-[18px] h-[18px]" /> },
+  ];
+
   const infoLinks: Array<{ id: AppScreen; label: string; icon: React.ReactNode }> = [
     { id: 'about', label: 'About', icon: <Info className="w-5 h-5" /> },
     { id: 'services', label: 'Services', icon: <Layers className="w-5 h-5" /> },
@@ -405,19 +470,25 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: 'support', label: 'Customer Support', icon: <Headphones className="w-5 h-5" /> },
   ];
 
-  const workspaceModes: Array<{ id: WorkspaceViewMode; label: string; shortLabel: string; icon: React.ReactNode }> = [
-    { id: 'super_admin', label: 'Super Admin', shortLabel: 'Super Admin', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
-    { id: 'school_admin', label: 'School Admin View', shortLabel: 'School Admin', icon: <UploadCloud className="w-3.5 h-3.5" /> },
-    { id: 'student', label: 'Student Website', shortLabel: 'Student Site', icon: <Globe className="w-3.5 h-3.5" /> },
+  const workspaceModes: Array<{
+    id: WorkspaceViewMode;
+    label: string;
+    shortLabel: string;
+    icon: React.ReactNode;
+  }> = [
+    { id: 'super_admin', label: 'Super Admin', shortLabel: 'Super Admin', icon: <ShieldCheck className="w-4 h-4" /> },
+    { id: 'school_admin', label: 'School Admin View', shortLabel: 'School Admin', icon: <UploadCloud className="w-4 h-4" /> },
+    { id: 'student', label: 'Student Website', shortLabel: 'Student Site', icon: <Globe className="w-4 h-4" /> },
   ];
 
-  const onBanner = false;
+  const activeWorkspaceOption =
+    workspaceModes.find((m) => m.id === effectiveWorkspace) ?? workspaceModes[0];
 
+  const onBanner = false;
   const userPopoverVisible = sidebarCollapsed && userPopoverOpen;
 
   useBackHandler(userPopoverVisible, () => setUserPopoverOpen(false));
 
-  // Collapsed side panel: the avatar opens a pop-out with the user's details.
   useEffect(() => {
     if (!sidebarCollapsed) setUserPopoverOpen(false);
   }, [sidebarCollapsed]);
@@ -453,6 +524,22 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   };
   const sbEase = 'duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none';
 
+  const handlePickSuperAdminSection = (section: SuperAdminSectionId) => {
+    if (onSelectAdminSection) {
+      onSelectAdminSection(section);
+    }
+    if (activeScreen !== 'super_admin') {
+      onNavigate('super_admin');
+    }
+  };
+
+  const renderSubscriptionSubline = () => {
+    if (activeTier === 'infinity') return 'Infinity Plan · All unlocked';
+    if (activeTier === 'standard') return 'Standard · Upgrade to AI';
+    if (activeTier === 'pro_ai') return 'AI Scholar Active';
+    return FREE_TIER_ENABLED ? 'Free plan · Upgrade anytime' : 'Unlock full access';
+  };
+
   return (
     <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#1A1B20] flex flex-col lg:flex-row">
       {/* Desktop Left Sidebar */}
@@ -476,7 +563,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           />
         </button>
 
-        <div className="min-h-0 flex-1 overflow-y-auto space-y-5 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto space-y-4 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <button
             type="button"
             onClick={() => onNavigate(defaultScreen)}
@@ -510,42 +597,89 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     ? 'Super Admin Control'
                     : effectiveWorkspace === 'school_admin'
                       ? 'Preview: School Admin'
-                      : 'Preview: Student Site'
+                      : 'Infinity · Student Site'
                   : 'University Exam Home'}
             </span>
           </button>
 
-          {/* Super-Admin-Only Workspace View Switcher (Desktop Sidebar) */}
-          {isSuperAdmin && onWorkspaceModeChange && !sidebarCollapsed && (
-            <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] p-1.5 space-y-1">
-              <p className="px-2 pt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
-                Active Workspace
-              </p>
-              {workspaceModes.map((mode) => {
-                const active = effectiveWorkspace === mode.id;
-                return (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    onClick={() => onWorkspaceModeChange(mode.id)}
-                    className={`w-full min-h-[34px] px-2.5 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
-                      active
-                        ? 'bg-[#1D1E23] text-white'
-                        : 'text-[#505460] hover:bg-white hover:text-[#1A1B20]'
+          {/* Active Workspace Dropdown (Desktop Sidebar) */}
+          {isSuperAdmin && onWorkspaceModeChange && (
+            <div ref={workspaceDropdownRef} className="relative">
+              {!sidebarCollapsed && (
+                <p className="px-1 mb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                  Active Workspace
+                </p>
+              )}
+              <button
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={workspaceDropdownOpen}
+                title={sidebarCollapsed ? `Workspace: ${activeWorkspaceOption.label}` : undefined}
+                onClick={() => setWorkspaceDropdownOpen((prev) => !prev)}
+                className={`w-full min-h-[42px] rounded-2xl bg-[#1D1E23] text-white text-xs font-semibold flex items-center cursor-pointer hover:bg-[#2B2D35] transition-colors ${
+                  sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-3 gap-2'
+                }`}
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="shrink-0">{activeWorkspaceOption.icon}</span>
+                  {!sidebarCollapsed && (
+                    <span className="truncate">{activeWorkspaceOption.label}</span>
+                  )}
+                </span>
+                {!sidebarCollapsed && (
+                  <ChevronDown
+                    className={`w-4 h-4 shrink-0 text-[#C3C7D2] transition-transform duration-200 ${
+                      workspaceDropdownOpen ? 'rotate-180' : ''
                     }`}
-                  >
-                    {mode.icon}
-                    <span className="truncate">{mode.label}</span>
-                  </button>
-                );
-              })}
+                  />
+                )}
+              </button>
+
+              {workspaceDropdownOpen && (
+                <div
+                  role="listbox"
+                  aria-label="Select workspace"
+                  className={`z-50 mt-1.5 rounded-2xl bg-white border border-[#1A1B20]/[0.1] shadow-[0_18px_38px_-12px_rgba(18,19,24,0.34)] p-1.5 space-y-1 page-enter ${
+                    sidebarCollapsed
+                      ? 'fixed left-[84px] top-[148px] w-56'
+                      : 'absolute left-0 right-0'
+                  }`}
+                >
+                  {workspaceModes.map((mode) => {
+                    const active = effectiveWorkspace === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        onClick={() => {
+                          setWorkspaceDropdownOpen(false);
+                          onWorkspaceModeChange(mode.id);
+                        }}
+                        className={`w-full min-h-[38px] px-2.5 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                          active
+                            ? 'bg-[#1D1E23] text-white'
+                            : 'text-[#505460] hover:bg-[#F6F7F9] hover:text-[#1A1B20]'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          {mode.icon}
+                          <span className="truncate">{mode.label}</span>
+                        </span>
+                        {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
+          {/* Primary Navigation Items */}
           <nav aria-label="Primary desktop navigation" className="space-y-1.5">
             {navItems.map((item) => {
-              const isActive =
-                tabScreen === item.id;
+              const isActive = tabScreen === item.id;
               return (
                 <button
                   key={item.id}
@@ -581,6 +715,60 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             })}
           </nav>
 
+          {/* Super Admin Pages inside Rounded-Edge Container (per sidebar sketch) */}
+          {isSuperAdminConsole && onSelectAdminSection && (
+            <nav
+              aria-label="Super Admin pages"
+              className={`rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] space-y-1 ${
+                sidebarCollapsed ? 'p-1' : 'p-1.5'
+              }`}
+            >
+              {!sidebarCollapsed && (
+                <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                  Console Pages
+                </p>
+              )}
+              {superAdminPages.map((pg) => {
+                const isActive =
+                  activeScreen === 'super_admin' && activeAdminSection === pg.id;
+                return (
+                  <button
+                    key={pg.id}
+                    type="button"
+                    onClick={() => handlePickSuperAdminSection(pg.id)}
+                    title={sidebarCollapsed ? pg.label : undefined}
+                    aria-label={pg.label}
+                    className={`relative w-full min-h-[38px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                      sidebarCollapsed ? 'justify-center px-1.5' : 'px-2.5 py-2'
+                    } ${
+                      isActive
+                        ? 'bg-[#1D1E23] text-white shadow-xs'
+                        : 'text-[#505460] hover:bg-white hover:text-[#1A1B20]'
+                    }`}
+                  >
+                    <span className="shrink-0">{pg.icon}</span>
+                    <span
+                      className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                        sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
+                      }`}
+                    >
+                      {pg.label}
+                    </span>
+                    {pg.badge !== undefined && pg.badge > 0 && (
+                      <span
+                        className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
+                          sidebarCollapsed ? 'opacity-0 w-0 px-0 overflow-hidden' : 'opacity-100'
+                        } ${isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'}`}
+                      >
+                        {pg.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          )}
+
           {/* Prominent Solid Subscription CTA (Hidden on isolated Admin Views) */}
           {showSubscriptionCta && (
             <button
@@ -605,13 +793,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                         Subscription Plans
                       </p>
                       <p className="text-[11px] text-[#C3C7D2] truncate">
-                        {activeTier === 'standard'
-                          ? 'Standard · Upgrade to AI'
-                          : activeTier === 'pro_ai'
-                            ? 'AI Scholar Preview'
-                            : FREE_TIER_ENABLED
-                              ? 'Free plan · Upgrade anytime'
-                              : 'Unlock full access'}
+                        {renderSubscriptionSubline()}
                       </p>
                     </div>
                   )}
@@ -622,10 +804,32 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           )}
         </div>
 
-        {/* Verified Account Card & Sign Out (No public role switcher) */}
-        <div className="shrink-0 space-y-3 pt-4 border-t border-[#1A1B20]/[0.07]">
+        {/* Bottom Settings + Verified Account Card & Sign Out */}
+        <div className="shrink-0 space-y-2.5 pt-3 border-t border-[#1A1B20]/[0.07]">
+          {isSuperAdminConsole && onSelectAdminSection && (
+            <button
+              type="button"
+              onClick={() => handlePickSuperAdminSection('settings')}
+              title={sidebarCollapsed ? 'Settings (Live UI Editor)' : undefined}
+              aria-label="Settings"
+              className={`w-full min-h-[42px] px-3 rounded-2xl flex items-center text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                  ? 'bg-[#1D1E23] text-white'
+                  : 'bg-[#F6F7F9] text-[#1A1B20] hover:bg-[#ECEEF3]'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span
+                className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                  sidebarCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-2.5'
+                }`}
+              >
+                Settings (Website UIs)
+              </span>
+            </button>
+          )}
+
           <div ref={userPanelRef} className="relative">
-            {/* Account card (expanded: name + identifier/role; collapsed: avatar only, opens the pop-out) */}
             <div
               className={`rounded-2xl flex items-center transition-[padding,background-color] ${sbEase} ${
                 sidebarCollapsed ? 'justify-center p-1 bg-transparent' : 'p-3 bg-[#F6F7F9]'
@@ -656,7 +860,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               </div>
             </div>
 
-            {/* Sign out: icon + text, sits under the account card */}
             <div
               className={`transition-[max-height,opacity,margin] ${sbEase} ${
                 sidebarCollapsed
@@ -677,7 +880,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               </button>
             </div>
 
-            {/* Collapsed pop-out: slides out beside the panel */}
+            {/* Collapsed pop-out */}
             <div
               role="dialog"
               aria-label="Account details"
@@ -719,7 +922,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
       {/* Main Content Viewport */}
       <div className="flex-1 flex flex-col min-w-0 relative">
-        {/* Mobile & Tablet Fixed Top Bar: compact app logo left, space, bare Bell + 3-dot menu right; turns solid dark ash smoothly on scroll */}
+        {/* Mobile & Tablet Fixed Top Bar */}
         <header
           className={`lg:hidden fixed top-0 inset-x-0 z-40 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 sm:px-6 flex items-center justify-between transition-colors duration-250 ease-out ${
             isScrolled
@@ -782,14 +985,13 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </div>
         </header>
 
-        {/* Desktop 3-Zone Top Bar */}
+        {/* Desktop 3-Zone Top Bar (Workspace switcher consolidated into sidebar dropdown) */}
         <header
-          className={`hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30`}
+          className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30"
         >
           <nav aria-label="Company links" className="flex items-center gap-7 text-sm font-medium">
             {infoLinks.map((item) => {
-              const active =
-                activeScreen === item.id;
+              const active = activeScreen === item.id;
               return (
                 <button
                   key={item.id}
@@ -813,33 +1015,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </nav>
 
           <div className="flex items-center gap-2.5 shrink-0">
-            {isSuperAdmin && onWorkspaceModeChange && (
-              <div
-                role="group"
-                aria-label="Super Admin view switcher"
-                className="hidden xl:inline-flex items-center rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-1 gap-1"
-              >
-                {workspaceModes.map((mode) => {
-                  const active = effectiveWorkspace === mode.id;
-                  return (
-                    <button
-                      key={mode.id}
-                      type="button"
-                      onClick={() => onWorkspaceModeChange(mode.id)}
-                      className={`min-h-[32px] px-2.5 rounded-lg inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer transition-colors ${
-                        active
-                          ? 'bg-[#1D1E23] text-white'
-                          : 'text-[#5A5E6B] hover:text-[#1A1B20]'
-                      }`}
-                    >
-                      {mode.icon}
-                      <span>{mode.shortLabel}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
             <button
               type="button"
               onClick={() => onNavigate('notifications')}
@@ -911,10 +1086,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             <div className="flex items-center gap-2 font-semibold text-[#1A1B20]">
               <PreviewEye className="w-3.5 h-3.5 text-[#1D1E23]" />
               <span>
-                Super Admin Preview Mode:{' '}
+                Super Admin View:{' '}
                 {effectiveWorkspace === 'school_admin'
                   ? 'School Admin Interface'
-                  : 'Normal Student Website'}
+                  : 'Student Website (Infinity Plan Unlocked)'}
               </span>
             </div>
             <button
@@ -974,7 +1149,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </div>
         )}
 
-        {/* Mobile & Tablet Slide-Out Navigation Drawer (slides from right beside hamburger) */}
+        {/* Mobile & Tablet Slide-Out Navigation Drawer */}
         <div
           aria-hidden={!drawerOpen}
           className={`lg:hidden fixed inset-0 z-50 flex justify-end transition-opacity duration-200 ${
@@ -983,7 +1158,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               : 'opacity-0 pointer-events-none'
           }`}
         >
-          {/* Dimmed Scrim */}
           <div
             onClick={() => setDrawerOpen(false)}
             style={
@@ -999,7 +1173,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             className="absolute inset-0 bg-[#121318]/55 transition-opacity duration-150"
           />
 
-          {/* Sliding Panel */}
           <aside
             ref={drawerPanelRef}
             id="mobile-slide-drawer"
@@ -1077,43 +1250,37 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 </div>
               </div>
 
-              {/* Super-Admin-Only Mobile Workspace Switcher */}
+              {/* Active Workspace Dropdown (Mobile Drawer) */}
               {isSuperAdmin && onWorkspaceModeChange && (
-                <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] p-2 space-y-1.5">
-                  <p className="px-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
-                    Switch Workspace View
-                  </p>
-                  <div className="grid grid-cols-1 gap-1">
-                    {workspaceModes.map((mode) => {
-                      const active = effectiveWorkspace === mode.id;
-                      return (
-                        <button
-                          key={mode.id}
-                          type="button"
-                          onClick={() => {
-                            onWorkspaceModeChange(mode.id);
-                            setDrawerOpen(false);
-                          }}
-                          className={`min-h-[38px] px-3 rounded-xl flex items-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
-                            active
-                              ? 'bg-[#1D1E23] text-white'
-                              : 'bg-white text-[#505460] hover:text-[#1A1B20]'
-                          }`}
-                        >
-                          {mode.icon}
-                          <span>{mode.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div className="space-y-1">
+                  <label
+                    htmlFor="mobile-workspace-select"
+                    className="block px-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]"
+                  >
+                    Active Workspace
+                  </label>
+                  <select
+                    id="mobile-workspace-select"
+                    value={effectiveWorkspace}
+                    onChange={(e) => {
+                      onWorkspaceModeChange(e.target.value as WorkspaceViewMode);
+                      setDrawerOpen(false);
+                    }}
+                    className="w-full min-h-[44px] rounded-2xl bg-[#1D1E23] text-white px-3.5 text-xs font-semibold cursor-pointer"
+                  >
+                    {workspaceModes.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
               {/* Primary Navigation Links */}
               <nav aria-label="Mobile drawer navigation" className="space-y-1">
                 {navItems.map((item) => {
-                  const isActive =
-                    tabScreen === item.id;
+                  const isActive = tabScreen === item.id;
                   return (
                     <button
                       key={item.id}
@@ -1148,14 +1315,74 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 })}
               </nav>
 
-              {/* Company links (kept in the side panel on mobile and tablet) */}
+              {/* Super Admin Console Pages inside Rounded Container (Mobile Drawer) */}
+              {isSuperAdminConsole && onSelectAdminSection && (
+                <nav
+                  aria-label="Super Admin mobile console pages"
+                  className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] p-2 space-y-1"
+                >
+                  <p className="px-2 pt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                    Console Pages
+                  </p>
+                  {superAdminPages.map((pg) => {
+                    const active =
+                      activeScreen === 'super_admin' && activeAdminSection === pg.id;
+                    return (
+                      <button
+                        key={pg.id}
+                        type="button"
+                        onClick={() => {
+                          handlePickSuperAdminSection(pg.id);
+                          setDrawerOpen(false);
+                        }}
+                        className={`w-full min-h-[40px] px-3 rounded-xl flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors ${
+                          active
+                            ? 'bg-[#1D1E23] text-white'
+                            : 'text-[#505460] hover:bg-white hover:text-[#1A1B20]'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2.5">
+                          {pg.icon}
+                          <span>{pg.label}</span>
+                        </span>
+                        {pg.badge !== undefined && pg.badge > 0 && (
+                          <span
+                            className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                              active ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
+                            }`}
+                          >
+                            {pg.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handlePickSuperAdminSection('settings');
+                      setDrawerOpen(false);
+                    }}
+                    className={`w-full min-h-[40px] px-3 mt-1 border-t border-[#1A1B20]/[0.07] pt-2 rounded-xl flex items-center gap-2.5 text-xs font-semibold cursor-pointer transition-colors ${
+                      activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                        ? 'bg-[#1D1E23] text-white'
+                        : 'text-[#1A1B20] hover:bg-white'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span>Settings (Website UIs)</span>
+                  </button>
+                </nav>
+              )}
+
+              {/* Company links */}
               <nav
                 aria-label="About and support"
                 className="space-y-1 pt-4 border-t border-[#1A1B20]/[0.07]"
               >
                 {infoLinks.map((item) => {
-                  const isActive =
-                    activeScreen === item.id;
+                  const isActive = activeScreen === item.id;
                   return (
                     <button
                       key={item.id}
@@ -1177,7 +1404,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 })}
               </nav>
 
-              {/* Prominent Solid Subscription CTA (Mobile Drawer, hidden for isolated Admin views) */}
               {showSubscriptionCta && (
                 <div className="pt-2">
                   <button
@@ -1199,11 +1425,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                             Subscription Plans
                           </p>
                           <p className="text-xs text-[#C3C7D2] truncate">
-                            {activeTier === 'standard'
-                              ? 'Standard · View Tier 3 AI'
-                              : FREE_TIER_ENABLED
-                                ? 'Free plan · View 3 tiers'
-                                : 'Upgrade to continue'}
+                            {renderSubscriptionSubline()}
                           </p>
                         </div>
                       </div>
@@ -1214,7 +1436,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               )}
             </div>
 
-            {/* Bottom Controls: Sign Out Only (Role switching removed) */}
             <div className="p-5 pt-4 border-t border-[#1A1B20]/[0.07] pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
               <TactileButton
                 type="button"
@@ -1241,7 +1462,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
           }`}
         >
-          {/* Mobile Marquee Banner & Super Admin Return Bar */}
+          {/* Mobile Marquee Banner */}
           {showMarquee && marquee && (
             <div
               role="region"
@@ -1266,7 +1487,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               }`}
             >
               <span className="font-semibold text-[#1A1B20] truncate">
-                Preview: {effectiveWorkspace === 'school_admin' ? 'School Admin' : 'Student Site'}
+                {effectiveWorkspace === 'school_admin'
+                  ? 'School Admin View'
+                  : 'Student Site · Infinity Unlocked'}
               </span>
               <button
                 type="button"
@@ -1278,11 +1501,34 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             </div>
           )}
 
+          {isRestrictedAccount(student) && (
+            <div
+              role="alert"
+              className="mb-4 rounded-2xl bg-[#FEF3C7] border border-[#F59E0B]/40 px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[#92400E]"
+            >
+              <div>
+                <span className="font-bold">Account Restricted:</span>{' '}
+                <span>
+                  {student.moderationNote
+                    ? student.moderationNote
+                    : 'Interactive submissions and uploads are paused while your account is in read-only mode.'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigate('support')}
+                className="px-3 py-1 rounded-lg bg-[#92400E] text-white font-semibold cursor-pointer shrink-0"
+              >
+                Contact Support
+              </button>
+            </div>
+          )}
+
           {children}
         </main>
       </div>
 
-      {/* Mobile Bottom Tab Footer (Student Website Only; strictly hidden for School Admin & Admin Views) */}
+      {/* Mobile Bottom Tab Footer */}
       {showStudentBottomBar && (
         <nav
           aria-label="Mobile bottom navigation"
@@ -1318,7 +1564,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               <span className="text-[10px] leading-none">PQs</span>
             </button>
 
-            {/* Raised Center Tactile Dark Ash Quick Action Button */}
             <div className="flex items-center justify-center">
               <button
                 type="button"

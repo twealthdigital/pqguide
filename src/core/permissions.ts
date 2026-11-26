@@ -60,11 +60,19 @@ const CONSTANT_ADMIN_SCREENS = new Set<AppScreen>([
   'support',
 ]);
 
+const READ_ONLY_PERMISSIONS = new Set<Permission>(['pq:read', 'materials:read']);
+
+export function isRestrictedAccount(
+  user: AuthenticatedUser | null | undefined
+): boolean {
+  return Boolean(user && user.status === 'restricted');
+}
+
 export function isActiveAccount(
   user: AuthenticatedUser | null | undefined
 ): user is AuthenticatedUser {
-  if (!user) return false;
-  return user.status === 'active' && user.isEmailVerified;
+  if (!user || !user.isEmailVerified) return false;
+  return user.status === 'active' || user.status === 'restricted';
 }
 
 export function hasPermission(
@@ -72,6 +80,9 @@ export function hasPermission(
   permission: Permission
 ): boolean {
   if (!isActiveAccount(user)) return false;
+  if (user.status === 'restricted' && !READ_ONLY_PERMISSIONS.has(permission)) {
+    return false;
+  }
   const set = ROLE_PERMISSIONS[user.role];
   return Boolean(set && set.has(permission));
 }
@@ -88,6 +99,7 @@ export function canManageSchoolDocument(
   schoolId: string
 ): boolean {
   if (!isActiveAccount(user)) return false;
+  if (user.status === 'restricted') return false;
   if (hasPermission(user, 'pq:manage_all')) return true;
   if (hasPermission(user, 'pq:manage_school')) {
     return Boolean(user.assignedSchoolId && user.assignedSchoolId === schoolId);

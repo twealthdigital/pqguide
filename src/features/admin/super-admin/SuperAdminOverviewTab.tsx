@@ -1,18 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import {
   Activity,
-  BookOpen,
+  ArrowRight,
   Building2,
   CreditCard,
   Eye,
-  FileText,
-  LogIn,
-  LogOut,
+  Inbox,
+  Megaphone,
   RotateCcw,
-  UploadCloud,
+  ShieldAlert,
   Users,
 } from 'lucide-react';
-import type { AuthenticatedUser } from '../../../core/types';
+import type { AuthenticatedUser, SuperAdminSectionId } from '../../../core/types';
 import { archiveRepository, type AppStoreState } from '../../../services/archiveRepository';
 import { authService, IS_DEV_BOOTSTRAP_ENV } from '../../../services/authService';
 import { SurfaceCard, TactileButton } from '../../../components/ui';
@@ -23,6 +22,7 @@ interface SuperAdminOverviewTabProps {
   onNotice: (msg: string) => void;
   onError: (msg: string) => void;
   onSignedOutReset: () => void;
+  onNavigateSection?: (section: SuperAdminSectionId) => void;
 }
 
 export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
@@ -31,49 +31,29 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
   onNotice,
   onError,
   onSignedOutReset,
+  onNavigateSection,
 }) => {
   const [devResetPhrase, setDevResetPhrase] = useState('');
   const [showDevReset, setShowDevReset] = useState(false);
 
   const metrics = useMemo(() => {
-    const totalAccounts = store.accounts.length;
-    const totalSchools = store.schools.length;
-    const activeSchools = store.schools.filter((s) => s.isActive).length;
-    const totalPQs = store.documents.length;
-    const publishedPQs = store.documents.filter((d) => d.status === 'published').length;
-    const totalMaterials = store.materials.length;
-    const publishedMaterials = store.materials.filter(
-      (m) => (m.status ?? 'published') === 'published'
-    ).length;
-    const totalUploads = totalPQs + totalMaterials;
-    const schoolAdmins = store.accounts.filter((a) => a.role === 'school_admin').length;
     const studentsCount = store.accounts.filter((a) => a.role === 'student').length;
-
-    const loggedInAccounts = store.accounts.filter((a) => a.sessionState === 'logged_in');
-    const loggedOutAccounts = store.accounts.filter((a) => a.sessionState !== 'logged_in');
-    const loggedInStudents = loggedInAccounts.filter((a) => a.role === 'student').length;
-    const loggedInAdmins = loggedInAccounts.filter((a) => a.role !== 'student').length;
-
+    const schoolAdminsCount = store.accounts.filter((a) => a.role === 'school_admin').length;
+    const activeSchools = store.schools.filter((s) => s.isActive).length;
+    const loggedInCount = store.accounts.filter((a) => a.sessionState === 'logged_in').length;
+    const openTicketsCount = store.supportTickets.filter((t) => t.status === 'new').length;
     const verifiedPayments = store.payments.filter((p) => p.status === 'verified_auto');
     const verifiedRevenueNaira = verifiedPayments.reduce((sum, p) => sum + p.amountNaira, 0);
 
     return {
-      totalAccounts,
-      totalSchools,
-      activeSchools,
-      totalPQs,
-      publishedPQs,
-      totalMaterials,
-      publishedMaterials,
-      totalUploads,
-      schoolAdmins,
       studentsCount,
-      loggedInCount: loggedInAccounts.length,
-      loggedOutCount: loggedOutAccounts.length,
-      loggedInStudents,
-      loggedInAdmins,
+      schoolAdminsCount,
+      totalSchools: store.schools.length,
+      activeSchools,
       totalVisits: store.telemetry.totalVisits,
-      uniqueVisitors: store.telemetry.uniqueVisitorIds.length,
+      loggedInCount,
+      openTicketsCount,
+      totalUploads: store.documents.length + store.materials.length,
       verifiedPaymentsCount: verifiedPayments.length,
       verifiedRevenueNaira,
     };
@@ -83,11 +63,11 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
     store.documents,
     store.materials,
     store.payments,
+    store.supportTickets,
     store.telemetry,
   ]);
 
-  const recentLogs = store.auditLogs.slice(0, 8);
-  const recentActivities = store.userActivities.slice(0, 10);
+  const latestAudit = store.auditLogs.slice(0, 4);
 
   const handleClearSamples = () => {
     try {
@@ -121,209 +101,163 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Focused 4-Metric Executive Row */}
       <section
-        aria-label="Platform overview metrics"
-        className="grid grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4"
-      >
-        <SurfaceCard tone="white" className="p-4 sm:p-5">
-          <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Registered Accounts</span>
-            <Users className="w-4 h-4" />
-          </div>
-          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
-            {metrics.totalAccounts}
-          </p>
-          <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
-            {metrics.studentsCount} Students · {metrics.schoolAdmins} Admins
-          </p>
-        </SurfaceCard>
-
-        <SurfaceCard tone="white" className="p-4 sm:p-5">
-          <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Universities</span>
-            <Building2 className="w-4 h-4" />
-          </div>
-          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
-            {metrics.totalSchools}
-          </p>
-          <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
-            {metrics.activeSchools} active
-          </p>
-        </SurfaceCard>
-
-        <SurfaceCard tone="white" className="p-4 sm:p-5">
-          <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Past Questions</span>
-            <FileText className="w-4 h-4" />
-          </div>
-          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
-            {metrics.totalPQs}
-          </p>
-          <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
-            {metrics.publishedPQs} published
-          </p>
-        </SurfaceCard>
-
-        <SurfaceCard tone="white" className="p-4 sm:p-5">
-          <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Study Materials</span>
-            <BookOpen className="w-4 h-4" />
-          </div>
-          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
-            {metrics.totalMaterials}
-          </p>
-          <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
-            {metrics.publishedMaterials} published
-          </p>
-        </SurfaceCard>
-
-        <SurfaceCard tone="white" className="p-4 sm:p-5 col-span-2 lg:col-span-1">
-          <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Total Uploads</span>
-            <UploadCloud className="w-4 h-4" />
-          </div>
-          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
-            {metrics.totalUploads}
-          </p>
-          <p className="text-[11px] text-[#686C78] mt-1">PQs + Study Guides</p>
-        </SurfaceCard>
-      </section>
-
-      {/* Visitors, Sessions & Automatic Payment Confirmations */}
-      <section
-        aria-label="Website visitors, logged sessions, and verified payments"
+        aria-label="Key platform indicators"
         className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4"
       >
         <SurfaceCard tone="white" className="p-4 sm:p-5">
           <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Website Visitors</span>
+            <span className="text-xs font-medium">Students &amp; Admins</span>
+            <Users className="w-4 h-4" />
+          </div>
+          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
+            {metrics.studentsCount}
+          </p>
+          <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
+            {metrics.schoolAdminsCount} School Admins
+          </p>
+        </SurfaceCard>
+
+        <SurfaceCard tone="white" className="p-4 sm:p-5">
+          <div className="flex items-center justify-between text-[#686C78]">
+            <span className="text-xs font-medium">Universities &amp; Uploads</span>
+            <Building2 className="w-4 h-4" />
+          </div>
+          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
+            {metrics.activeSchools}/{metrics.totalSchools}
+          </p>
+          <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
+            {metrics.totalUploads} total content items
+          </p>
+        </SurfaceCard>
+
+        <SurfaceCard tone="white" className="p-4 sm:p-5">
+          <div className="flex items-center justify-between text-[#686C78]">
+            <span className="text-xs font-medium">Visitors &amp; Active</span>
             <Eye className="w-4 h-4" />
           </div>
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
             {metrics.totalVisits}
           </p>
           <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
-            {metrics.uniqueVisitors} unique visitors
-          </p>
-        </SurfaceCard>
-
-        <SurfaceCard tone="white" className="p-4 sm:p-5">
-          <div className="flex items-center justify-between text-[#15803D]">
-            <span className="text-xs font-medium text-[#686C78]">Logged-In Users</span>
-            <LogIn className="w-4 h-4" />
-          </div>
-          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
-            {metrics.loggedInCount}
-          </p>
-          <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
-            {metrics.loggedInStudents} Students · {metrics.loggedInAdmins} Admins
+            {metrics.loggedInCount} currently signed in
           </p>
         </SurfaceCard>
 
         <SurfaceCard tone="white" className="p-4 sm:p-5">
           <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Logged-Out Users</span>
-            <LogOut className="w-4 h-4" />
-          </div>
-          <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
-            {metrics.loggedOutCount}
-          </p>
-          <p className="text-[11px] text-[#686C78] mt-1">Inactive or signed out</p>
-        </SurfaceCard>
-
-        <SurfaceCard tone="white" className="p-4 sm:p-5">
-          <div className="flex items-center justify-between text-[#686C78]">
-            <span className="text-xs font-medium">Verified Payments</span>
+            <span className="text-xs font-medium">Verified Revenue</span>
             <CreditCard className="w-4 h-4" />
           </div>
           <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20] mt-2">
             ₦{metrics.verifiedRevenueNaira.toLocaleString()}
           </p>
           <p className="text-[11px] text-[#686C78] mt-1 font-mono-tabular">
-            {metrics.verifiedPaymentsCount} auto-verified receipts
+            {metrics.verifiedPaymentsCount} verified receipts
           </p>
         </SurfaceCard>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-                Live User Activity &amp; Sessions
-              </h2>
-              <p className="text-xs text-[#686C78]">
-                Signups, logins, logouts, opened papers, mock exams, and verified payments
-              </p>
-            </div>
-            <Users className="w-4 h-4 text-[#686C78]" />
+      {/* Priority Operational Desks + Brief Latest Audit */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        <SurfaceCard tone="white" className="lg:col-span-5 p-5 sm:p-6 space-y-3.5">
+          <div>
+            <h2 className="font-display text-base font-bold text-[#1A1B20]">
+              Priority Desks
+            </h2>
+            <p className="text-xs text-[#686C78]">
+              Open focused management workspaces directly
+            </p>
           </div>
 
-          {recentActivities.length === 0 ? (
-            <p className="py-8 text-center text-xs text-[#686C78]">
-              No user activity events captured yet.
-            </p>
-          ) : (
-            <div className="divide-y divide-[#1A1B20]/[0.06]">
-              {recentActivities.map((act) => (
-                <div key={act.id} className="py-3 first:pt-1 last:pb-1 space-y-0.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-bold text-[#1A1B20] truncate">
-                      {act.userName}
-                      {act.matricNumber ? ` · ${act.matricNumber}` : ''}
-                      {act.level ? ` (${act.level})` : ''}
-                    </p>
-                    <span className="text-[11px] font-mono-tabular text-[#686C78] shrink-0">
-                      {new Date(act.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#505460]">
-                    {act.detail}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="space-y-2">
+            {onNavigateSection && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection('support_inbox')}
+                  className="w-full min-h-[46px] px-3.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] flex items-center justify-between gap-2 text-left cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center gap-2.5 text-xs font-semibold text-[#1A1B20]">
+                    <Inbox className="w-4 h-4 text-[#1D1E23]" />
+                    <span>Customer Support Inbox</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-mono-tabular font-bold text-[#1A1B20]">
+                    {metrics.openTicketsCount} new
+                    <ArrowRight className="w-3.5 h-3.5 text-[#686C78]" />
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection('actions')}
+                  className="w-full min-h-[46px] px-3.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] flex items-center justify-between gap-2 text-left cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center gap-2.5 text-xs font-semibold text-[#1A1B20]">
+                    <ShieldAlert className="w-4 h-4 text-[#1D1E23]" />
+                    <span>Account Moderation &amp; Warnings</span>
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5 text-[#686C78]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onNavigateSection('announcements')}
+                  className="w-full min-h-[46px] px-3.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] flex items-center justify-between gap-2 text-left cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center gap-2.5 text-xs font-semibold text-[#1A1B20]">
+                    <Megaphone className="w-4 h-4 text-[#1D1E23]" />
+                    <span>Header Marquee &amp; Broadcasts</span>
+                  </span>
+                  <span className="text-[11px] font-semibold text-[#686C78]">
+                    {store.marquee.enabled ? 'Ticker Live' : 'Ticker Off'}
+                  </span>
+                </button>
+              </>
+            )}
+          </div>
         </SurfaceCard>
 
-        <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-                Recent Administrative Activity
+        <SurfaceCard tone="white" className="lg:col-span-7 p-5 sm:p-6 space-y-3.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-[#1D1E23]" />
+              <h2 className="font-display text-base font-bold text-[#1A1B20]">
+                Latest Governance Events
               </h2>
-              <p className="text-xs text-[#686C78]">
-                Audited actions across accounts, universities, broadcasts, and uploads
-              </p>
             </div>
-            <Activity className="w-4 h-4 text-[#686C78]" />
+            {onNavigateSection && (
+              <button
+                type="button"
+                onClick={() => onNavigateSection('activities')}
+                className="text-xs font-semibold text-[#1A1B20] underline underline-offset-4 cursor-pointer"
+              >
+                View all activity
+              </button>
+            )}
           </div>
 
-          {recentLogs.length === 0 ? (
-            <p className="py-8 text-center text-xs text-[#686C78]">
-              No administrative actions recorded yet in this session.
+          {latestAudit.length === 0 ? (
+            <p className="py-6 text-center text-xs text-[#686C78]">
+              No audited governance actions captured yet.
             </p>
           ) : (
             <div className="divide-y divide-[#1A1B20]/[0.06]">
-              {recentLogs.map((log) => (
-                <div key={log.id} className="py-3 first:pt-1 last:pb-1 space-y-0.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-bold text-[#1A1B20] truncate">
-                      {log.summary}
+              {latestAudit.map((log) => (
+                <div key={log.id} className="py-2.5 first:pt-1 last:pb-1 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-[#1A1B20] truncate">{log.summary}</p>
+                    <p className="text-[11px] text-[#686C78] truncate">
+                      {log.actorName} · {log.action.replace(/_/g, ' ')}
                     </p>
-                    <span className="text-[11px] font-mono-tabular text-[#686C78] shrink-0">
-                      {new Date(log.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
                   </div>
-                  <p className="text-[11px] text-[#686C78]">
-                    {log.actorName} ({log.actorRole.replace('_', ' ')}) · {log.action.replace(/_/g, ' ')}
-                  </p>
+                  <span className="text-[11px] font-mono-tabular text-[#686C78] shrink-0">
+                    {new Date(log.timestamp).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
                 </div>
               ))}
             </div>
@@ -331,10 +265,11 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
         </SurfaceCard>
       </div>
 
+      {/* Dataset & Local Development Controls */}
       <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-lg font-bold text-[#1A1B20]">
+            <h2 className="font-display text-base font-bold text-[#1A1B20]">
               Dataset &amp; Development Controls
             </h2>
             <p className="text-xs text-[#686C78]">
@@ -400,4 +335,3 @@ export const SuperAdminOverviewTab: React.FC<SuperAdminOverviewTabProps> = ({
     </div>
   );
 };
-

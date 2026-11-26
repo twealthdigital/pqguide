@@ -16,6 +16,8 @@ type AuditCategoryFilter =
   | 'study_material'
   | 'payment'
   | 'broadcast'
+  | 'support'
+  | 'cms'
   | 'system';
 
 const ACTION_LABELS: Record<AuditLogEntry['action'], string> = {
@@ -29,7 +31,10 @@ const ACTION_LABELS: Record<AuditLogEntry['action'], string> = {
   admin_reactivated: 'Admin Reactivated',
   admin_revoked: 'Admin Access Revoked',
   account_verified: 'Student Verification Updated',
+  account_warned: 'Account Warning Issued',
+  account_restricted: 'Account Restricted',
   account_suspended: 'Account Suspended',
+  account_banned: 'Account Banned',
   account_reactivated: 'Account Reactivated',
   role_changed: 'Role Changed',
   university_created: 'University Added',
@@ -47,6 +52,8 @@ const ACTION_LABELS: Record<AuditLogEntry['action'], string> = {
   material_deleted: 'Study Material Deleted',
   broadcast_sent: 'Notification Broadcast Sent',
   marquee_updated: 'Header Marquee Updated',
+  support_replied: 'Customer Support Replied',
+  cms_updated: 'Website UI Content Updated',
   payment_verified: 'Automatic Payment Verified',
   dev_data_reset: 'Dev Data Reset',
 };
@@ -64,7 +71,7 @@ export const AuditLogsTab: React.FC<AuditLogsTabProps> = ({ store }) => {
         entry.summary.toLowerCase().includes(q) ||
         entry.actorName.toLowerCase().includes(q) ||
         entry.actorEmail.toLowerCase().includes(q) ||
-        ACTION_LABELS[entry.action].toLowerCase().includes(q)
+        (ACTION_LABELS[entry.action] ?? entry.action).toLowerCase().includes(q)
       );
     });
   }, [store.auditLogs, category, query]);
@@ -77,6 +84,8 @@ export const AuditLogsTab: React.FC<AuditLogsTabProps> = ({ store }) => {
     { id: 'study_material', label: 'Study Materials' },
     { id: 'payment', label: 'Payments' },
     { id: 'broadcast', label: 'Broadcasts' },
+    { id: 'support', label: 'Support' },
+    { id: 'cms', label: 'UI Settings' },
     { id: 'system', label: 'System' },
   ];
 

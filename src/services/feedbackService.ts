@@ -1,7 +1,6 @@
-/**
- * Stores customer feedback. There is no backend yet, so entries are kept on the
- * device; swap `submitFeedback` for an API call when one exists.
- */
+import type { SupportTicket, UserRole } from '../core/types';
+import { archiveRepository } from './archiveRepository';
+
 const KEY = 'pqguide.feedback.v1';
 
 export interface FeedbackEntry {
@@ -10,12 +9,41 @@ export interface FeedbackEntry {
   createdAt: string;
 }
 
-export function submitFeedback(message: string): Promise<FeedbackEntry> {
+export interface FeedbackSenderContext {
+  userId?: string;
+  role?: UserRole;
+  fullName?: string;
+  email?: string;
+  matricNumber?: string;
+  level?: SupportTicket['senderLevel'];
+  kind?: SupportTicket['kind'];
+}
+
+export function submitFeedback(
+  message: string,
+  sender?: FeedbackSenderContext
+): Promise<FeedbackEntry> {
   const entry: FeedbackEntry = {
     id: `fb-${Date.now()}`,
     message: message.trim(),
     createdAt: new Date().toISOString(),
   };
+
+  try {
+    archiveRepository.submitSupportTicket({
+      senderUserId: sender?.userId,
+      senderRole: sender?.role,
+      senderName: sender?.fullName,
+      senderEmail: sender?.email,
+      senderMatric: sender?.matricNumber,
+      senderLevel: sender?.level,
+      kind: sender?.kind,
+      message,
+    });
+  } catch {
+    // Keep resilient even if validation fails silently
+  }
+
   try {
     const raw = window.localStorage.getItem(KEY);
     const list: FeedbackEntry[] = raw ? JSON.parse(raw) : [];
@@ -24,5 +52,6 @@ export function submitFeedback(message: string): Promise<FeedbackEntry> {
   } catch {
     // Storage unavailable (private mode, quota): the send still completes.
   }
+
   return Promise.resolve(entry);
 }

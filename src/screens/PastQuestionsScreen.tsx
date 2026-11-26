@@ -96,7 +96,7 @@ export const PastQuestionsScreen: React.FC<PastQuestionsScreenProps> = ({ onOpen
   return (
     <div className="space-y-6 page-enter">
       <WaveHeader
-        title="Past Questions"
+        title={store.siteCms.studentUi.pastQuestionsTitle}
         placeholder="Search course code or topic..."
         searchValue={query}
         onSearchChange={handleSearchInputChange}
@@ -173,6 +173,9 @@ export const PastQuestionsScreen: React.FC<PastQuestionsScreenProps> = ({ onOpen
 
           <section aria-label="All past questions">
             <h2 className="font-display text-lg font-bold text-[#1A1B20]">All past questions</h2>
+            <p className="mt-0.5 text-xs text-[#686C78]">
+              {store.siteCms.studentUi.pastQuestionsSubtitle}
+            </p>
             {published.length === 0 ? (
               <p className="py-10 text-center text-sm text-[#686C78]">
                 No past questions have been added yet.

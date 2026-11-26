@@ -24,13 +24,16 @@ import type {
   PastQuestionDoc,
   PaymentTransaction,
   School,
+  SiteCmsConfig,
   StudyMaterial,
+  SupportTicket,
   UserActivityEvent,
   UserRole,
   VisitorTelemetry,
   WorkspaceViewMode,
 } from '../core/types';
 import { STUDY_MATERIALS } from '../data/materials';
+import { createDefaultSiteCms } from '../data/siteInfo';
 import {
   SEED_ACCOUNTS,
   SEED_NOTIFICATIONS,
@@ -52,6 +55,8 @@ export interface AppStoreState {
   auditLogs: AuditLogEntry[];
   payments: PaymentTransaction[];
   userActivities: UserActivityEvent[];
+  supportTickets: SupportTicket[];
+  siteCms: SiteCmsConfig;
   telemetry: VisitorTelemetry;
   marquee: HeaderMarqueeConfig;
   selectedSchoolId: string;
@@ -81,6 +86,8 @@ function getDefaultState(): AppStoreState {
     auditLogs: [],
     payments: [],
     userActivities: [],
+    supportTickets: [],
+    siteCms: createDefaultSiteCms(),
     telemetry: {
       totalVisits: 0,
       uniqueVisitorIds: [],
@@ -106,6 +113,39 @@ function normalizeMaterial(m: StudyMaterial): StudyMaterial {
     schoolCode: m.schoolCode ?? 'AAUA',
     status: m.status === 'draft' ? 'draft' : 'published',
     attachmentPreviewUrl: sanitizeSafeUrl(m.attachmentPreviewUrl),
+  };
+}
+
+function mergeSiteCms(raw?: Partial<SiteCmsConfig> | null): SiteCmsConfig {
+  const base = createDefaultSiteCms();
+  if (!raw || typeof raw !== 'object') return base;
+  return {
+    studentUi: { ...base.studentUi, ...(raw.studentUi ?? {}) },
+    schoolAdminUi: { ...base.schoolAdminUi, ...(raw.schoolAdminUi ?? {}) },
+    aboutPage: { ...base.aboutPage, ...(raw.aboutPage ?? {}) },
+    servicesPage: {
+      ...base.servicesPage,
+      ...(raw.servicesPage ?? {}),
+      items:
+        Array.isArray(raw.servicesPage?.items) && raw.servicesPage.items.length > 0
+          ? raw.servicesPage.items
+          : base.servicesPage.items,
+    },
+    helpPage: {
+      ...base.helpPage,
+      ...(raw.helpPage ?? {}),
+      howItWorks:
+        Array.isArray(raw.helpPage?.howItWorks) && raw.helpPage.howItWorks.length > 0
+          ? raw.helpPage.howItWorks
+          : base.helpPage.howItWorks,
+      faqs:
+        Array.isArray(raw.helpPage?.faqs) && raw.helpPage.faqs.length > 0
+          ? raw.helpPage.faqs
+          : base.helpPage.faqs,
+    },
+    supportPage: { ...base.supportPage, ...(raw.supportPage ?? {}) },
+    updatedAt: raw.updatedAt,
+    updatedBy: raw.updatedBy,
   };
 }
 
@@ -213,6 +253,10 @@ function loadState(): AppStoreState {
       userActivities: Array.isArray(parsed.userActivities)
         ? parsed.userActivities.slice(0, 500)
         : [],
+      supportTickets: Array.isArray(parsed.supportTickets)
+        ? parsed.supportTickets.slice(0, 300)
+        : [],
+      siteCms: mergeSiteCms(parsed.siteCms),
       telemetry,
       marquee,
       selectedSchoolId: parsed.selectedSchoolId ?? defaults.selectedSchoolId,
@@ -338,8 +382,12 @@ class ArchiveRepository {
     }));
   }
 
-  getNotificationsForWorkspace(workspace: WorkspaceViewMode): AppNotification[] {
+  getNotificationsForWorkspace(workspace: WorkspaceViewMode, userId?: string): AppNotification[] {
     return this.state.notifications.filter((n) => {
+      if (n.targetUserId) {
+        if (workspace === 'super_admin') return true;
+        return Boolean(userId && n.targetUserId === userId);
+      }
       const audience = n.audience ?? 'all';
       if (audience === 'all') return true;
       return workspace === 'student' ? audience === 'students' : audience === 'admins';
@@ -362,10 +410,15 @@ class ArchiveRepository {
     }));
   }
 
-  markAllNotificationsReadForWorkspace(workspace: WorkspaceViewMode): void {
+  markAllNotificationsReadForWorkspace(workspace: WorkspaceViewMode, userId?: string): void {
     this.update((prev) => ({
       ...prev,
       notifications: prev.notifications.map((n) => {
+        if (n.targetUserId) {
+          const matchesTarget =
+            workspace === 'super_admin' || Boolean(userId && n.targetUserId === userId);
+          return matchesTarget ? { ...n, isRead: true } : n;
+        }
         const audience = n.audience ?? 'all';
         const matches =
           audience === 'all' ||
@@ -1327,6 +1380,326 @@ class ArchiveRepository {
     }));
 
     return notif;
+  }
+
+  sendDirectNotification(
+    actor: AuthenticatedUser | null | undefined,
+    payload: {
+      targetUserId: string;
+      title: string;
+      message: string;
+      category?: AppNotification['category'];
+    }
+  ): AppNotification {
+    this.requirePermission(
+      actor,
+      'accounts:manage',
+      'Only Super Administrators can send direct user notifications.'
+    );
+
+    const target = this.state.accounts.find((a) => a.id === payload.targetUserId);
+    if (!target) {
+      throw new Error('Target account not found.');
+    }
+    const title = sanitizeSingleLine(payload.title, 120);
+    const message = sanitizePlainText(payload.message, 600).trim();
+    if (!title || !message) {
+      throw new Error('Enter both a notification title and message.');
+    }
+
+    const notif: AppNotification = {
+      id: `notif-dir-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      message,
+      category: payload.category ?? 'system',
+      audience: target.role === 'student' ? 'students' : 'admins',
+      targetUserId: target.id,
+      createdAt: new Date().toISOString(),
+      isRead: false,
+      createdBy: sanitizeSingleLine(actor.fullName, 120),
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      notifications: [notif, ...prev.notifications],
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'broadcast_sent',
+          'account',
+          target.id,
+          `Sent direct notification "${title}" to ${target.fullName} (${target.email})`
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return notif;
+  }
+
+  recordModerationAction(
+    actor: AuthenticatedUser | null | undefined,
+    accountId: string,
+    patch: {
+      status?: AccountStatus;
+      role?: UserRole;
+      warningsCount?: number;
+      moderationNote?: string;
+    },
+    action: AuditActionType,
+    summary: string,
+    directAlert?: { title: string; message: string }
+  ): void {
+    this.requirePermission(
+      actor,
+      'accounts:manage',
+      'Only Super Administrators can perform moderation actions.'
+    );
+
+    const now = new Date().toISOString();
+    const target = this.state.accounts.find((a) => a.id === accountId);
+
+    this.update((prev) => {
+      const nextNotifications =
+        directAlert && target
+          ? [
+              {
+                id: `notif-mod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                title: sanitizeSingleLine(directAlert.title, 120),
+                message: sanitizePlainText(directAlert.message, 600),
+                category: 'access' as const,
+                audience: (target.role === 'student' ? 'students' : 'admins') as BroadcastAudience,
+                targetUserId: target.id,
+                createdAt: now,
+                isRead: false,
+                createdBy: sanitizeSingleLine(actor.fullName, 120),
+              },
+              ...prev.notifications,
+            ]
+          : prev.notifications;
+
+      return {
+        ...prev,
+        accounts: prev.accounts.map((acc) =>
+          acc.id === accountId
+            ? {
+                ...acc,
+                ...(patch.status ? { status: patch.status } : {}),
+                ...(patch.role ? { role: patch.role } : {}),
+                ...(patch.warningsCount !== undefined ? { warningsCount: patch.warningsCount } : {}),
+                ...(patch.moderationNote !== undefined
+                  ? { moderationNote: sanitizeSingleLine(patch.moderationNote, 260) }
+                  : {}),
+                lastModeratedAt: now,
+              }
+            : acc
+        ),
+        notifications: nextNotifications,
+        auditLogs: [
+          createAuditEntry(actor, action, 'account', accountId, summary, target?.schoolId),
+          ...prev.auditLogs,
+        ].slice(0, 300),
+      };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Customer Support Inbox (Tickets & Super Admin Responses)
+  // -------------------------------------------------------------------------
+
+  submitSupportTicket(payload: {
+    senderUserId?: string;
+    senderRole?: UserRole;
+    senderName?: string;
+    senderEmail?: string;
+    senderMatric?: string;
+    senderLevel?: SupportTicket['senderLevel'];
+    kind?: SupportTicket['kind'];
+    message: string;
+  }): SupportTicket {
+    const cleanMsg = sanitizePlainText(payload.message, 1200).trim();
+    if (!cleanMsg) {
+      throw new Error('Please write a message before sending.');
+    }
+
+    const ticket: SupportTicket = {
+      id: `sup-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      senderUserId: payload.senderUserId,
+      senderRole: payload.senderRole ?? 'student',
+      senderName: sanitizeSingleLine(payload.senderName || 'Student Guest', 120),
+      senderEmail: sanitizeSingleLine(payload.senderEmail || 'No email provided', 160),
+      senderMatric: payload.senderMatric
+        ? sanitizeIdentifier(payload.senderMatric, 32)
+        : undefined,
+      senderLevel: payload.senderLevel,
+      kind: payload.kind ?? 'Question',
+      message: cleanMsg,
+      status: 'new',
+      createdAt: new Date().toISOString(),
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      supportTickets: [ticket, ...prev.supportTickets].slice(0, 300),
+    }));
+
+    return ticket;
+  }
+
+  replyToSupportTicket(
+    actor: AuthenticatedUser | null | undefined,
+    ticketId: string,
+    replyMessage: string,
+    status: SupportTicket['status'] = 'resolved'
+  ): SupportTicket {
+    this.requirePermission(
+      actor,
+      'accounts:manage',
+      'Only Super Administrators can respond to Customer Support tickets.'
+    );
+    const existing = this.state.supportTickets.find((t) => t.id === ticketId);
+    if (!existing) {
+      throw new Error('Support message not found.');
+    }
+
+    const cleanReply = sanitizePlainText(replyMessage, 800).trim();
+    if (!cleanReply) {
+      throw new Error('Write a response before sending.');
+    }
+
+    const now = new Date().toISOString();
+    const updated: SupportTicket = {
+      ...existing,
+      status,
+      adminReply: cleanReply,
+      repliedBy: sanitizeSingleLine(actor.fullName, 120),
+      repliedAt: now,
+    };
+
+    this.update((prev) => {
+      const nextNotifications = existing.senderUserId
+        ? [
+            {
+              id: `notif-sup-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              title: 'Support Response from pqguide',
+              message: cleanReply,
+              category: 'system' as const,
+              audience: (existing.senderRole === 'student'
+                ? 'students'
+                : 'admins') as BroadcastAudience,
+              targetUserId: existing.senderUserId,
+              createdAt: now,
+              isRead: false,
+              createdBy: sanitizeSingleLine(actor.fullName, 120),
+            },
+            ...prev.notifications,
+          ]
+        : prev.notifications;
+
+      return {
+        ...prev,
+        supportTickets: prev.supportTickets.map((t) => (t.id === ticketId ? updated : t)),
+        notifications: nextNotifications,
+        auditLogs: [
+          createAuditEntry(
+            actor,
+            'support_replied',
+            'support',
+            ticketId,
+            `Replied to support ticket from ${existing.senderName} (${existing.senderEmail})`
+          ),
+          ...prev.auditLogs,
+        ].slice(0, 300),
+      };
+    });
+
+    return updated;
+  }
+
+  setSupportTicketStatus(
+    actor: AuthenticatedUser | null | undefined,
+    ticketId: string,
+    status: SupportTicket['status']
+  ): void {
+    this.requirePermission(
+      actor,
+      'accounts:manage',
+      'Only Super Administrators can update support ticket status.'
+    );
+    this.update((prev) => ({
+      ...prev,
+      supportTickets: prev.supportTickets.map((t) =>
+        t.id === ticketId ? { ...t, status } : t
+      ),
+    }));
+  }
+
+  // -------------------------------------------------------------------------
+  // Live Website UI Settings (CMS Editor for Student UI, School Admin UI & Constant Pages)
+  // -------------------------------------------------------------------------
+
+  updateSiteCms(
+    actor: AuthenticatedUser | null | undefined,
+    nextConfig: SiteCmsConfig
+  ): SiteCmsConfig {
+    this.requirePermission(
+      actor,
+      'broadcasts:manage',
+      'Only Super Administrators can edit website UI content.'
+    );
+    const merged = mergeSiteCms({
+      ...nextConfig,
+      updatedAt: new Date().toISOString(),
+      updatedBy: sanitizeSingleLine(actor.fullName, 120),
+    });
+
+    this.update((prev) => ({
+      ...prev,
+      siteCms: merged,
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'cms_updated',
+          'cms',
+          'site-cms',
+          'Updated live Student Website / School Admin UI & Info pages content'
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return merged;
+  }
+
+  resetSiteCms(actor: AuthenticatedUser | null | undefined): SiteCmsConfig {
+    this.requirePermission(
+      actor,
+      'broadcasts:manage',
+      'Only Super Administrators can reset website UI content.'
+    );
+    const defaults = createDefaultSiteCms();
+    const withMeta: SiteCmsConfig = {
+      ...defaults,
+      updatedAt: new Date().toISOString(),
+      updatedBy: sanitizeSingleLine(actor.fullName, 120),
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      siteCms: withMeta,
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'cms_updated',
+          'cms',
+          'site-cms',
+          'Reset website UI copy and constant pages to defaults'
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return withMeta;
   }
 
   // -------------------------------------------------------------------------

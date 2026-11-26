@@ -5,6 +5,7 @@ import type {
   AuthPortal,
   PastQuestionDoc,
   StudyMaterial,
+  SuperAdminSectionId,
   WorkspaceViewMode,
 } from './core/types';
 import { getDefaultScreenForRole } from './core/permissions';
@@ -148,12 +149,15 @@ const entryOf = (n: NavState): NavEntry => ({
 function AppContent() {
   const store = useArchiveStore();
   const [portal, setPortal] = useState<AuthPortal>(() => detectAuthPortal());
-  const [authenticatedStudent, setAuthenticatedStudent] = useState<AuthenticatedUser | null>(() =>
-    authService.getActiveSession()
-  );
+  const [authenticatedStudent, setAuthenticatedStudent] = useState<AuthenticatedUser | null>(() => {
+    const session = authService.getActiveSession();
+    subscriptionService.setRoleOverride(session?.role ?? null);
+    return session;
+  });
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceViewMode>(
     () => authService.getActiveSession()?.role ?? 'student'
   );
+  const [superAdminSection, setSuperAdminSection] = useState<SuperAdminSectionId>('overview');
   const [superAdminPreviewSchoolId, setSuperAdminPreviewSchoolId] = useState('sch-aaua');
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
     () => authService.hasCompletedOnboarding() || authService.getActiveSession() !== null
@@ -219,10 +223,19 @@ function AppContent() {
   const unreadCount = useMemo(
     () =>
       archiveRepository
-        .getNotificationsForWorkspace(effectiveWorkspace)
+        .getNotificationsForWorkspace(effectiveWorkspace, authenticatedStudent?.id)
         .filter((n) => !n.isRead).length,
-    [store.notifications, effectiveWorkspace]
+    [store.notifications, effectiveWorkspace, authenticatedStudent?.id]
   );
+
+  const openSupportCount = useMemo(
+    () => store.supportTickets.filter((t) => t.status === 'new').length,
+    [store.supportTickets]
+  );
+
+  useEffect(() => {
+    subscriptionService.setRoleOverride(authenticatedStudent?.role ?? null);
+  }, [authenticatedStudent?.role]);
 
   const selectedDoc = useMemo(
     () => store.documents.find((d) => d.id === selectedDocId) ?? null,
@@ -1155,6 +1168,30 @@ function AppContent() {
     [go]
   );
 
+  const handleSelectSuperAdminSection = useCallback(
+    (section: SuperAdminSectionId) => {
+      const actor = authRef.current;
+      if (!actor || actor.role !== 'super_admin') return;
+      runNavigationGuard(() => {
+        setSuperAdminSection(section);
+        workspaceModeRef.current = 'super_admin';
+        setWorkspaceMode('super_admin');
+        if (navRef.current.screen !== 'super_admin') {
+          go(
+            {
+              screen: 'super_admin',
+              docId: null,
+              materialId: null,
+              stack: [],
+            },
+            INITIAL_PERF
+          );
+        }
+      });
+    },
+    [go]
+  );
+
   const handleSignOut = useCallback(() => {
     runNavigationGuard(() => {
       const current = authRef.current;
@@ -1166,7 +1203,9 @@ function AppContent() {
             : 'student';
 
       authService.clearActiveSession(current);
+      subscriptionService.setRoleOverride(null);
       setAuthenticatedStudent(null);
+      setSuperAdminSection('overview');
       workspaceModeRef.current = 'student';
       setWorkspaceMode('student');
       navRef.current = INITIAL_NAV;
@@ -1238,6 +1277,13 @@ function AppContent() {
       onWorkspaceModeChange={
         authenticatedStudent.role === 'super_admin' ? handleSwitchWorkspace : undefined
       }
+      activeAdminSection={superAdminSection}
+      onSelectAdminSection={
+        authenticatedStudent.role === 'super_admin'
+          ? handleSelectSuperAdminSection
+          : undefined
+      }
+      openSupportCount={openSupportCount}
       marquee={store.marquee}
       onNavigate={handleNavigate}
       onOpenPaywall={openPaywall}
@@ -1270,6 +1316,7 @@ function AppContent() {
         {activeScreen === 'notifications' && (
           <NotificationsScreen
             workspaceMode={effectiveWorkspace}
+            userId={authenticatedStudent.id}
             restrictedAdminView={isRestrictedAdmin}
             onBack={handleBack}
             onOpenDocument={handleOpenDocument}
@@ -1290,6 +1337,7 @@ function AppContent() {
 
         {activeScreen === 'mock_exam' && (
           <MockExamScreen
+            currentUser={authenticatedStudent}
             onBack={handleBack}
             onSubmitted={handleExamSubmitted}
             onOpenPaywall={openPaywall}
@@ -1314,6 +1362,7 @@ function AppContent() {
           activeScreen === 'support') && (
           <InfoScreen
             page={activeScreen}
+            currentUser={authenticatedStudent}
             restrictedAdminView={isRestrictedAdmin}
             onNavigate={handleNavigate}
           />
@@ -1343,8 +1392,9 @@ function AppContent() {
           >
             <SuperAdminScreen
               currentUser={authenticatedStudent}
+              activeSection={superAdminSection}
+              onSelectSection={handleSelectSuperAdminSection}
               onSignedOutReset={handleSignOut}
-              onSwitchWorkspace={handleSwitchWorkspace}
             />
           </ProtectedRoute>
         )}

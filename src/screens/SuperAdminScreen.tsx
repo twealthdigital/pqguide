@@ -1,69 +1,93 @@
 import React, { useState } from 'react';
-import {
-  Activity,
-  BookOpen,
-  Building2,
-  CheckCircle2,
-  CreditCard,
-  FileText,
-  Globe,
-  LayoutDashboard,
-  Megaphone,
-  ShieldAlert,
-  ShieldCheck,
-  Users,
-} from 'lucide-react';
+import { CheckCircle2, ShieldAlert } from 'lucide-react';
 import { canAccessScreen } from '../core/permissions';
-import type { AuthenticatedUser, WorkspaceViewMode } from '../core/types';
+import type {
+  AuthenticatedUser,
+  SuperAdminSectionId,
+} from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { SurfaceCard } from '../components/ui';
 import { SuperAdminOverviewTab } from '../features/admin/super-admin/SuperAdminOverviewTab';
+import { StudentsTab } from '../features/admin/super-admin/StudentsTab';
 import { UniversityManagementTab } from '../features/admin/super-admin/UniversityManagementTab';
-import { AdminAccountsTab } from '../features/admin/super-admin/AdminAccountsTab';
+import { AdministratorsTab } from '../features/admin/super-admin/AdministratorsTab';
+import { ActivitiesTab } from '../features/admin/super-admin/ActivitiesTab';
+import { ModerationActionsTab } from '../features/admin/super-admin/ModerationActionsTab';
+import { BroadcastsTab } from '../features/admin/super-admin/BroadcastsTab';
+import { SupportInboxTab } from '../features/admin/super-admin/SupportInboxTab';
 import { PastQuestionsManagerTab } from '../features/admin/super-admin/PastQuestionsManagerTab';
 import { StudyMaterialsManagerTab } from '../features/admin/super-admin/StudyMaterialsManagerTab';
-import { AuditLogsTab } from '../features/admin/super-admin/AuditLogsTab';
 import { PaymentsTab } from '../features/admin/super-admin/PaymentsTab';
-import { BroadcastsTab } from '../features/admin/super-admin/BroadcastsTab';
-
-type SuperAdminTabId =
-  | 'overview'
-  | 'universities'
-  | 'accounts'
-  | 'past_questions'
-  | 'study_materials'
-  | 'payments'
-  | 'broadcasts'
-  | 'audit_logs';
+import { AdminSettingsTab } from '../features/admin/super-admin/AdminSettingsTab';
 
 interface SuperAdminScreenProps {
   currentUser: AuthenticatedUser;
+  activeSection: SuperAdminSectionId;
+  onSelectSection: (section: SuperAdminSectionId) => void;
   onSignedOutReset: () => void;
-  onSwitchWorkspace?: (mode: WorkspaceViewMode) => void;
 }
 
-const TABS: Array<{
-  id: SuperAdminTabId;
-  label: string;
-  icon: React.FC<{ className?: string }>;
-}> = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'universities', label: 'Universities', icon: Building2 },
-  { id: 'accounts', label: 'Admins & Users', icon: Users },
-  { id: 'past_questions', label: 'Past Questions', icon: FileText },
-  { id: 'study_materials', label: 'Study Materials', icon: BookOpen },
-  { id: 'payments', label: 'Payments', icon: CreditCard },
-  { id: 'broadcasts', label: 'Broadcasts & Marquee', icon: Megaphone },
-  { id: 'audit_logs', label: 'Activity Logs', icon: Activity },
-];
+const SECTION_META: Record<
+  SuperAdminSectionId,
+  { title: string; subtitle: string }
+> = {
+  overview: {
+    title: 'Overview',
+    subtitle: 'Key platform numbers, priority alerts, and starter dataset controls.',
+  },
+  students: {
+    title: 'Students',
+    subtitle: 'Inspect matric numbers, levels, departments, login verification, and history.',
+  },
+  universities: {
+    title: 'Universities',
+    subtitle: 'Add universities, edit institution details, and toggle active visibility.',
+  },
+  administrators: {
+    title: 'Administrators',
+    subtitle: 'Manage University Administrators and inspect Company Administrators role desk.',
+  },
+  activities: {
+    title: 'Activities & Visitors',
+    subtitle: 'Track website visitors, signed-in/signed-out rosters, and audited governance logs.',
+  },
+  actions: {
+    title: 'Moderation & Actions',
+    subtitle: 'Warn, send direct notifications, restrict, suspend, ban, or restore accounts uniformly.',
+  },
+  announcements: {
+    title: 'Announcements & Marquee',
+    subtitle: 'Push live scrolling header marquees and targeted platform notifications.',
+  },
+  support_inbox: {
+    title: 'Customer Support Inbox',
+    subtitle: 'Read student and admin support messages and send direct notification replies.',
+  },
+  past_questions: {
+    title: 'Past Questions Manager',
+    subtitle: 'Upload, edit, publish, unpublish, or remove past question papers.',
+  },
+  study_materials: {
+    title: 'Study Materials Manager',
+    subtitle: 'Upload structured lecture notes and reading guides across universities.',
+  },
+  payments: {
+    title: 'Payment Verifications',
+    subtitle: 'Auto-verified Paystack and Flutterwave receipts with tier breakdown.',
+  },
+  settings: {
+    title: 'Website UI & Pages Settings',
+    subtitle: 'Edit live Student UI, School Admin UI, About, Services, Help, and Customer Support.',
+  },
+};
 
 export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
   currentUser,
+  activeSection,
+  onSelectSection,
   onSignedOutReset,
-  onSwitchWorkspace,
 }) => {
   const store = useArchiveStore();
-  const [activeTab, setActiveTab] = useState<SuperAdminTabId>('overview');
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -91,78 +115,22 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
     setErrorMsg(msg);
   };
 
+  const meta = SECTION_META[activeSection] ?? SECTION_META.overview;
+
   return (
     <div className="space-y-6 page-enter">
-      {/* Control Banner */}
+      {/* Calm Control Header Banner */}
       <SurfaceCard tone="ash" withWaves className="p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-medium text-[#A5AAB8]">
-              Super Admin Control Desk · {currentUser.fullName}
-            </p>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold text-white mt-1.5">
-              Platform Administration &amp; Governance
-            </h1>
-            <p className="text-sm text-[#B8BCC8] mt-1.5 max-w-2xl">
-              Control universities, grant School Admin email access, verify accounts, monitor visitors and payments, push header marquees, and audit every action.
-            </p>
-          </div>
-
-          {onSwitchWorkspace && (
-            <div className="flex flex-wrap gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => onSwitchWorkspace('school_admin')}
-                className="min-h-[40px] px-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer"
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>School Admin View</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onSwitchWorkspace('student')}
-                className="min-h-[40px] px-3.5 rounded-xl bg-white text-[#1A1B20] hover:bg-[#F2F4F7] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-              >
-                <Globe className="w-3.5 h-3.5" />
-                <span>Student Website View</span>
-              </button>
-            </div>
-          )}
-        </div>
+        <p className="text-xs font-medium text-[#A5AAB8]">
+          Super Admin Control · {currentUser.fullName}
+        </p>
+        <h1 className="font-display text-2xl sm:text-3xl font-bold text-white mt-1.5">
+          {meta.title}
+        </h1>
+        <p className="text-sm text-[#B8BCC8] mt-1.5 max-w-2xl">
+          {meta.subtitle}
+        </p>
       </SurfaceCard>
-
-      {/* Scrollable Sub-Navigation Tabs */}
-      <div
-        role="tablist"
-        aria-label="Super Admin workspaces"
-        className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar"
-      >
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => {
-                setActiveTab(tab.id);
-                setNotice(null);
-                setErrorMsg(null);
-              }}
-              className={`min-h-[44px] px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
-                active
-                  ? 'bg-[#1D1E23] text-white'
-                  : 'bg-white text-[#505460] border border-[#1A1B20]/[0.08] hover:bg-[#ECEEF3]'
-              }`}
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
 
       {errorMsg && (
         <div
@@ -183,17 +151,27 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
         </div>
       )}
 
-      {activeTab === 'overview' && (
+      {activeSection === 'overview' && (
         <SuperAdminOverviewTab
           currentUser={currentUser}
           store={store}
           onNotice={handleNotice}
           onError={handleError}
           onSignedOutReset={onSignedOutReset}
+          onNavigateSection={onSelectSection}
         />
       )}
 
-      {activeTab === 'universities' && (
+      {activeSection === 'students' && (
+        <StudentsTab
+          currentUser={currentUser}
+          store={store}
+          onNotice={handleNotice}
+          onError={handleError}
+        />
+      )}
+
+      {activeSection === 'universities' && (
         <UniversityManagementTab
           currentUser={currentUser}
           store={store}
@@ -202,8 +180,8 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
         />
       )}
 
-      {activeTab === 'accounts' && (
-        <AdminAccountsTab
+      {activeSection === 'administrators' && (
+        <AdministratorsTab
           currentUser={currentUser}
           store={store}
           onNotice={handleNotice}
@@ -211,8 +189,10 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
         />
       )}
 
-      {activeTab === 'past_questions' && (
-        <PastQuestionsManagerTab
+      {activeSection === 'activities' && <ActivitiesTab store={store} />}
+
+      {activeSection === 'actions' && (
+        <ModerationActionsTab
           currentUser={currentUser}
           store={store}
           onNotice={handleNotice}
@@ -220,18 +200,7 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
         />
       )}
 
-      {activeTab === 'study_materials' && (
-        <StudyMaterialsManagerTab
-          currentUser={currentUser}
-          store={store}
-          onNotice={handleNotice}
-          onError={handleError}
-        />
-      )}
-
-      {activeTab === 'payments' && <PaymentsTab store={store} />}
-
-      {activeTab === 'broadcasts' && (
+      {activeSection === 'announcements' && (
         <BroadcastsTab
           currentUser={currentUser}
           store={store}
@@ -240,8 +209,43 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
         />
       )}
 
-      {activeTab === 'audit_logs' && <AuditLogsTab store={store} />}
+      {activeSection === 'support_inbox' && (
+        <SupportInboxTab
+          currentUser={currentUser}
+          store={store}
+          onNotice={handleNotice}
+          onError={handleError}
+        />
+      )}
+
+      {activeSection === 'past_questions' && (
+        <PastQuestionsManagerTab
+          currentUser={currentUser}
+          store={store}
+          onNotice={handleNotice}
+          onError={handleError}
+        />
+      )}
+
+      {activeSection === 'study_materials' && (
+        <StudyMaterialsManagerTab
+          currentUser={currentUser}
+          store={store}
+          onNotice={handleNotice}
+          onError={handleError}
+        />
+      )}
+
+      {activeSection === 'payments' && <PaymentsTab store={store} />}
+
+      {activeSection === 'settings' && (
+        <AdminSettingsTab
+          currentUser={currentUser}
+          store={store}
+          onNotice={handleNotice}
+          onError={handleError}
+        />
+      )}
     </div>
   );
 };
-

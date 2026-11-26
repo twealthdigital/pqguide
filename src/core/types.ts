@@ -10,11 +10,30 @@ export type AuthPortal = 'student' | 'school_admin' | 'super_admin';
 
 export type StudentLevel = '100L' | '200L' | '300L' | '400L' | '500L';
 
-export type AccountStatus = 'active' | 'suspended' | 'revoked';
+export type AccountStatus =
+  | 'active'
+  | 'restricted'
+  | 'suspended'
+  | 'banned'
+  | 'revoked';
 
 export type ContentStatus = 'published' | 'draft' | 'review';
 
 export type BroadcastAudience = 'all' | 'students' | 'admins';
+
+export type SuperAdminSectionId =
+  | 'overview'
+  | 'students'
+  | 'universities'
+  | 'administrators'
+  | 'activities'
+  | 'actions'
+  | 'announcements'
+  | 'support_inbox'
+  | 'past_questions'
+  | 'study_materials'
+  | 'payments'
+  | 'settings';
 
 export type AppScreen =
   | 'home'
@@ -118,6 +137,7 @@ export interface AppNotification {
   message: string;
   category: 'upload' | 'access' | 'system';
   audience?: BroadcastAudience;
+  targetUserId?: string;
   createdAt: string;
   isRead: boolean;
   targetDocId?: string;
@@ -194,7 +214,7 @@ export interface ManagedAccount {
   level?: StudentLevel;
   faculty?: string;
   department?: string;
-  subscriptionTier?: 'free' | 'standard' | 'pro_ai';
+  subscriptionTier?: 'free' | 'standard' | 'pro_ai' | 'infinity';
   sessionState?: 'logged_in' | 'logged_out';
   lastLoginAt?: string;
   lastLogoutAt?: string;
@@ -202,6 +222,101 @@ export interface ManagedAccount {
   createdBy?: string;
   createdAt?: string;
   matricNumber?: string;
+  warningsCount?: number;
+  moderationNote?: string;
+  lastModeratedAt?: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  senderUserId?: string;
+  senderRole: UserRole;
+  senderName: string;
+  senderEmail: string;
+  senderMatric?: string;
+  senderLevel?: StudentLevel;
+  kind: 'Question' | 'Missing Paper' | 'Report Issue';
+  message: string;
+  status: 'new' | 'reviewed' | 'resolved';
+  adminReply?: string;
+  repliedBy?: string;
+  repliedAt?: string;
+  createdAt: string;
+}
+
+export interface SiteCmsServiceItem {
+  title: string;
+  description: string;
+}
+
+export interface SiteCmsFaqItem {
+  question: string;
+  answer: string;
+}
+
+export interface SiteCmsConfig {
+  studentUi: {
+    homeHeroTitle: string;
+    homeSearchPlaceholder: string;
+    featuredHeading: string;
+    guideTitle: string;
+    guideStep1: string;
+    guideStep2: string;
+    guideStep3: string;
+    pastQuestionsHeading: string;
+    pastQuestionsTitle: string;
+    pastQuestionsSubtitle: string;
+    materialsTitle: string;
+    materialsSubtitle: string;
+    mockExamEyebrow: string;
+    mockExamHeadline: string;
+    mockExamDescription: string;
+  };
+  schoolAdminUi: {
+    deskLabel: string;
+    deskHeadline: string;
+    deskDescription: string;
+    uploadPanelTitle: string;
+    uploadPanelHint: string;
+  };
+  aboutPage: {
+    eyebrow: string;
+    heading: string;
+    lead: string;
+    card1Title: string;
+    card1Body: string;
+    card2Title: string;
+    card2Body: string;
+    card3Title: string;
+    card3Body: string;
+  };
+  servicesPage: {
+    eyebrow: string;
+    heading: string;
+    lead: string;
+    items: SiteCmsServiceItem[];
+  };
+  helpPage: {
+    eyebrow: string;
+    heading: string;
+    lead: string;
+    howItWorks: string[];
+    faqs: SiteCmsFaqItem[];
+  };
+  supportPage: {
+    eyebrow: string;
+    heading: string;
+    lead: string;
+    email: string;
+    whatsappNumber: string;
+    whatsappLabel: string;
+    phone: string;
+    hours: string;
+    formTitle: string;
+    formSubtitle: string;
+  };
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface ArchiveFilter {
@@ -230,6 +345,8 @@ export interface StudentAccount {
   needsPasswordSetup?: boolean;
   assignedSchoolId?: string;
   assignedSchoolCode?: string;
+  warningsCount?: number;
+  moderationNote?: string;
   passwordHash: string;
   passwordSalt: string;
   isEmailVerified: boolean;
@@ -262,7 +379,10 @@ export type AuditActionType =
   | 'admin_reactivated'
   | 'admin_revoked'
   | 'account_verified'
+  | 'account_warned'
+  | 'account_restricted'
   | 'account_suspended'
+  | 'account_banned'
   | 'account_reactivated'
   | 'role_changed'
   | 'university_created'
@@ -280,6 +400,8 @@ export type AuditActionType =
   | 'material_deleted'
   | 'broadcast_sent'
   | 'marquee_updated'
+  | 'support_replied'
+  | 'cms_updated'
   | 'payment_verified'
   | 'dev_data_reset';
 
@@ -298,6 +420,8 @@ export interface AuditLogEntry {
     | 'study_material'
     | 'broadcast'
     | 'payment'
+    | 'support'
+    | 'cms'
     | 'system';
   targetId: string;
   summary: string;

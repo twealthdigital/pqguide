@@ -1,7 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2, FileText, Lock, Sparkles } from 'lucide-react';
 import type { PastQuestionDoc } from '../core/types';
-import type { PaywallContext } from '../core/subscription';
+import {
+  subscriptionService,
+  useSubscription,
+  type PaywallContext,
+} from '../core/subscription';
 import { useArchiveSearch } from '../hooks/useArchiveSearch';
 import {
   DocumentListSkeleton,
@@ -24,6 +28,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenPaywall,
 }) => {
   const search = useArchiveSearch();
+  useSubscription();
+  const aiUnlocked = subscriptionService.hasAiAccess();
+  const [showAiAssistant, setShowAiAssistant] = useState(false);
   const {
     store,
     activeSchool,
@@ -45,6 +52,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     resetFilters,
   } = search;
 
+  const cms = store.siteCms.studentUi;
+
   // Focus search when user taps the raised center Quick Find button
   useEffect(() => {
     if (focusSearchSignal > 0 && searchInputRef.current) {
@@ -63,7 +72,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     <div className="space-y-6 page-enter">
       {/* Sculpted Dark Ash Header Banner + Morphing Search & Anchored Filter Dropdown */}
       <WaveHeader
-        title="Find past questions in seconds"
+        title={cms.homeHeroTitle}
+        placeholder={cms.homeSearchPlaceholder}
         searchValue={query}
         onSearchChange={handleSearchInputChange}
         onSearchSubmit={handleSearchSubmit}
@@ -79,7 +89,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       <section aria-label="Quick actions and featured past questions">
         <div className="flex items-center justify-between mb-3.5">
           <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-            Featured & Quick Actions
+            {cms.featuredHeading}
           </h2>
         </div>
 
@@ -166,48 +176,76 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           >
             <div>
               <h3 className="font-display text-base font-bold text-[#1A1B20]">
-                New here? 3-Step Guide
+                {cms.guideTitle}
               </h3>
               <ol className="mt-3 space-y-2 text-xs text-[#505460]">
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
-                  <span>Select your Academic Session & Semester above.</span>
+                  <span>{cms.guideStep1}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
-                  <span>Search any course code (e.g. GNS 101) or keyword.</span>
+                  <span>{cms.guideStep2}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Sparkles className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
-                  <span>
-                    Open a past question, then tap View answer under any question.
-                  </span>
+                  <span>{cms.guideStep3}</span>
                 </li>
               </ol>
             </div>
 
-            {onOpenPaywall && (
-              <button
-                type="button"
-                aria-disabled="true"
-                onClick={() =>
-                  onOpenPaywall({
-                    highlightTier: 'pro_ai',
-                    featureLabel: 'AI Study Assistant',
-                    reason:
-                      'Standard unlocks everything the core webapp can do. Tier 3 (AI Scholar) adds an AI Study Assistant for instant question breakdowns and smart topic predictions.',
-                  })
-                }
-                className="mt-4 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
-              >
-                <span className="flex items-center gap-2 min-w-0">
-                  <Sparkles className="h-4 w-4 shrink-0 text-[#505460]" />
-                  <span className="text-xs font-semibold text-[#3A3D47] truncate">
-                    AI Study Assistant (Tier 3)
+            {aiUnlocked ? (
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAiAssistant((v) => !v)}
+                  className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-[#1D1E23] px-3.5 py-2.5 text-left text-white transition-colors hover:bg-[#2B2D35]"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="h-4 w-4 shrink-0 text-[#4ADE80]" />
+                    <span className="text-xs font-semibold truncate">
+                      AI Study Assistant · Infinity Active
+                    </span>
                   </span>
-                </span>
-                <Lock className="h-3.5 w-3.5 shrink-0 text-[#686C78]" />
-              </button>
+                  <span className="font-mono-tabular text-[11px] font-semibold text-[#4ADE80] shrink-0">
+                    {showAiAssistant ? 'Hide' : 'Open'}
+                  </span>
+                </button>
+                {showAiAssistant && heroFeaturedDoc && (
+                  <div className="rounded-xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 text-xs text-[#3A3D47] space-y-1.5">
+                    <p className="font-bold text-[#1A1B20]">
+                      Focus Recommendation: {heroFeaturedDoc.courseCode}
+                    </p>
+                    <p className="leading-relaxed">
+                      Prioritize recurring questions from {heroFeaturedDoc.session} ({heroFeaturedDoc.questions.length} indexed items). Open the paper below to inspect AI Tutor breakdowns.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              onOpenPaywall && (
+                <button
+                  type="button"
+                  aria-disabled="true"
+                  onClick={() =>
+                    onOpenPaywall({
+                      highlightTier: 'pro_ai',
+                      featureLabel: 'AI Study Assistant',
+                      reason:
+                        'Standard unlocks everything the core webapp can do. Tier 3 (AI Scholar) adds an AI Study Assistant for instant question breakdowns and smart topic predictions.',
+                    })
+                  }
+                  className="mt-4 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="h-4 w-4 shrink-0 text-[#505460]" />
+                    <span className="text-xs font-semibold text-[#3A3D47] truncate">
+                      AI Study Assistant (Tier 3)
+                    </span>
+                  </span>
+                  <Lock className="h-3.5 w-3.5 shrink-0 text-[#686C78]" />
+                </button>
+              )
             )}
           </SurfaceCard>
         </div>
@@ -218,7 +256,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div className="flex items-center justify-between mb-3.5">
           <div>
             <h2 className="font-display text-lg font-bold text-[#1A1B20]">
-              Past Questions
+              {cms.pastQuestionsHeading}
             </h2>
             <p className="text-xs text-[#686C78] font-mono-tabular mt-0.5">
               Explore free past questions

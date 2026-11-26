@@ -3,6 +3,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Lock, Sparkles, X } from 'lucide-react';
 import type { QuestionSolution } from '../../core/types';
+import { subscriptionService, useSubscription } from '../../core/subscription';
 
 /**
  * Answer + explanation for a question: a bottom sheet on mobile/tablet and a
@@ -397,80 +398,124 @@ const AnswerBody: React.FC<{
   question: string;
   solution: QuestionSolution | null;
   onAskAi?: () => void;
-}> = ({ question, solution, onAskAi }) => (
-  <>
-    <p className="font-serif text-[16px] leading-[1.7] text-[#1A1B20]">
-      {question}
-    </p>
+}> = ({ question, solution, onAskAi }) => {
+  useSubscription();
+  const aiUnlocked = subscriptionService.hasAiAccess();
+  const [aiExpanded, setAiExpanded] = useState(false);
 
-    {solution ? (
-      <>
-        <div className="mt-5 rounded-3xl bg-[#1D1E23] px-5 py-4 text-white">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#A5AAB8]">
-            Answer
+  return (
+    <>
+      <p className="font-serif text-[16px] leading-[1.7] text-[#1A1B20]">
+        {question}
+      </p>
+
+      {solution ? (
+        <>
+          <div className="mt-5 rounded-3xl bg-[#1D1E23] px-5 py-4 text-white">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#A5AAB8]">
+              Answer
+            </p>
+            <p className="mt-1.5 whitespace-pre-line text-[15px] font-semibold leading-relaxed">
+              {solution.answer}
+            </p>
+          </div>
+
+          <h3 className="mt-6 font-display text-sm font-bold text-[#1A1B20]">
+            How we got it
+          </h3>
+          <ol className="mt-3 space-y-3.5">
+            {solution.explanation.map((step, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EFF1F5] font-mono-tabular text-[11px] font-semibold text-[#1A1B20]">
+                  {i + 1}
+                </span>
+                <p className="min-w-0 flex-1 whitespace-pre-line text-sm leading-6 text-[#3A3D47]">
+                  {step}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </>
+      ) : (
+        <div className="mt-5 rounded-3xl bg-[#F6F7F9] px-5 py-4">
+          <p className="text-sm font-semibold text-[#1A1B20]">
+            No answer yet
           </p>
-          <p className="mt-1.5 whitespace-pre-line text-[15px] font-semibold leading-relaxed">
-            {solution.answer}
+          <p className="mt-1 text-sm leading-6 text-[#5A5E6B]">
+            The answer and explanation for this question have not been added.
           </p>
         </div>
+      )}
 
-        <h3 className="mt-6 font-display text-sm font-bold text-[#1A1B20]">
-          How we got it
-        </h3>
-        <ol className="mt-3 space-y-3.5">
-          {solution.explanation.map((step, i) => (
-            <li key={i} className="flex gap-3">
-              <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EFF1F5] font-mono-tabular text-[11px] font-semibold text-[#1A1B20]">
-                {i + 1}
+      {aiUnlocked ? (
+        <div className="mt-6 border-t border-[#1A1B20]/[0.08] pt-4 space-y-2.5">
+          <button
+            type="button"
+            onClick={() => setAiExpanded((v) => !v)}
+            className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl bg-[#1D1E23] px-4 py-3 text-left text-white transition-colors hover:bg-[#2B2D35]"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15 text-[#4ADE80]">
+                <Sparkles className="h-4 w-4" />
               </span>
-              <p className="min-w-0 flex-1 whitespace-pre-line text-sm leading-6 text-[#3A3D47]">
-                {step}
-              </p>
-            </li>
-          ))}
-        </ol>
-      </>
-    ) : (
-      <div className="mt-5 rounded-3xl bg-[#F6F7F9] px-5 py-4">
-        <p className="text-sm font-semibold text-[#1A1B20]">
-          No answer yet
-        </p>
-        <p className="mt-1 text-sm leading-6 text-[#5A5E6B]">
-          The answer and explanation for this question have not been added.
-        </p>
-      </div>
-    )}
-
-    {onAskAi && (
-      <div className="mt-6 border-t border-[#1A1B20]/[0.08] pt-4">
-        <button
-          type="button"
-          onClick={onAskAi}
-          aria-disabled="true"
-          className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-4 py-3 text-left transition-colors hover:bg-[#ECEEF3]"
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23]/10 text-[#505460]">
-              <Sparkles className="h-4 w-4" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold">
+                  AI Tutor Breakdown · Infinity Active
+                </p>
+                <p className="text-[11px] text-[#C3C7D2] truncate">
+                  Tap to view quick exam strategy and concept cue
+                </p>
+              </div>
+            </div>
+            <span className="font-mono-tabular text-[11px] font-semibold text-[#4ADE80] shrink-0">
+              {aiExpanded ? 'Hide' : 'Open'}
             </span>
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-[#3A3D47]">
-                Ask AI Tutor to explain more
-              </p>
-              <p className="text-[11px] text-[#686C78] truncate">
-                Disabled on current plan · Included in Tier 3 (AI Scholar)
+          </button>
+
+          {aiExpanded && (
+            <div className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-4 space-y-2 text-xs text-[#3A3D47]">
+              <p className="font-bold text-[#1A1B20]">Exam Tip &amp; Key Concept</p>
+              <p className="leading-relaxed">
+                {solution
+                  ? `Focus on verifying "${solution.answer}" across ${solution.explanation.length} reasoning step${solution.explanation.length === 1 ? '' : 's'}. Watch for similar phrasing twists in objective papers.`
+                  : 'Break the prompt down by identifying the core definition requested, then outline two contrasting examples before concluding.'}
               </p>
             </div>
+          )}
+        </div>
+      ) : (
+        onAskAi && (
+          <div className="mt-6 border-t border-[#1A1B20]/[0.08] pt-4">
+            <button
+              type="button"
+              onClick={onAskAi}
+              aria-disabled="true"
+              className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-4 py-3 text-left transition-colors hover:bg-[#ECEEF3]"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23]/10 text-[#505460]">
+                  <Sparkles className="h-4 w-4" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-[#3A3D47]">
+                    Ask AI Tutor to explain more
+                  </p>
+                  <p className="text-[11px] text-[#686C78] truncate">
+                    Disabled on current plan · Included in Tier 3 (AI Scholar)
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex shrink-0 items-center gap-1 font-mono-tabular text-[11px] font-semibold text-[#686C78]">
+                <Lock className="h-3.5 w-3.5" />
+                AI
+              </span>
+            </button>
           </div>
-          <span className="inline-flex shrink-0 items-center gap-1 font-mono-tabular text-[11px] font-semibold text-[#686C78]">
-            <Lock className="h-3.5 w-3.5" />
-            AI
-          </span>
-        </button>
-      </div>
-    )}
-  </>
-);
+        )
+      )}
+    </>
+  );
+};
 
 const DESKTOP_QUERY = '(min-width: 1024px)';
 

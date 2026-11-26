@@ -129,7 +129,12 @@ function normalizeStoredAccount(raw: StudentAccount): StudentAccount {
   const role: UserRole =
     raw.role === 'school_admin' || raw.role === 'super_admin' ? raw.role : 'student';
   const status: AccountStatus =
-    raw.status === 'suspended' || raw.status === 'revoked' ? raw.status : 'active';
+    raw.status === 'restricted' ||
+    raw.status === 'suspended' ||
+    raw.status === 'banned' ||
+    raw.status === 'revoked'
+      ? raw.status
+      : 'active';
   return {
     ...raw,
     role,
@@ -137,6 +142,8 @@ function normalizeStoredAccount(raw: StudentAccount): StudentAccount {
     level: raw.level ?? (role === 'student' ? '100L' : undefined),
     adminVerified: raw.adminVerified ?? true,
     needsPasswordSetup: Boolean(raw.needsPasswordSetup),
+    warningsCount: raw.warningsCount ?? 0,
+    moderationNote: raw.moderationNote,
     assignedSchoolId:
       raw.assignedSchoolId ?? (role === 'student' ? 'sch-aaua' : undefined),
     assignedSchoolCode:
@@ -732,29 +739,24 @@ export const authService = {
       }
     }
 
-    if (account.status === 'suspended') {
-      return {
-        ok: false,
-        error: 'This account is suspended. Contact a Super Administrator.',
-      };
-    }
-    if (account.status === 'revoked') {
-      return {
-        ok: false,
-        error: 'Access for this account has been revoked.',
-      };
-    }
-
     const repoAcc = archiveRepository
       .getSnapshot()
       .accounts.find((a) => a.id === account.id || a.email.toLowerCase() === account.email);
-    if (repoAcc?.status === 'suspended') {
+    const resolvedStatus: AccountStatus = repoAcc?.status ?? account.status;
+
+    if (resolvedStatus === 'banned') {
+      return {
+        ok: false,
+        error: 'This account has been banned. Contact a Super Administrator.',
+      };
+    }
+    if (resolvedStatus === 'suspended') {
       return {
         ok: false,
         error: 'This account is suspended. Contact a Super Administrator.',
       };
     }
-    if (repoAcc?.status === 'revoked') {
+    if (resolvedStatus === 'revoked') {
       return {
         ok: false,
         error: 'Access for this account has been revoked.',
@@ -777,7 +779,12 @@ export const authService = {
     }
 
     const now = new Date().toISOString();
-    const publicUser = toAuthenticatedUser(account);
+    const publicUser: AuthenticatedUser = {
+      ...toAuthenticatedUser(account),
+      status: resolvedStatus,
+      warningsCount: repoAcc?.warningsCount ?? account.warningsCount ?? 0,
+      moderationNote: repoAcc?.moderationNote ?? account.moderationNote,
+    };
 
     archiveRepository.syncManagedAccount({
       id: publicUser.id,
@@ -793,6 +800,8 @@ export const authService = {
       status: publicUser.status,
       adminVerified: publicUser.adminVerified ?? true,
       needsPasswordSetup: false,
+      warningsCount: publicUser.warningsCount,
+      moderationNote: publicUser.moderationNote,
       sessionState: 'logged_in',
       lastLoginAt: now,
       lastActiveAt: now,
@@ -981,21 +990,29 @@ export const authService = {
       (a) => a.id === session.userId && a.isEmailVerified
     );
 
-    if (!matched || matched.status !== 'active' || matched.adminVerified === false) {
+    const isPermittedStatus = (s: AccountStatus) => s === 'active' || s === 'restricted';
+
+    if (!matched || !isPermittedStatus(matched.status) || matched.adminVerified === false) {
       sessionService.clearSession();
       return null;
     }
 
-    // Re-check repository account status in case account was suspended/revoked/unverified
+    // Re-check repository account status in case account was suspended/banned/revoked/unverified
     const repoAcc = archiveRepository
       .getSnapshot()
       .accounts.find((a) => a.id === matched.id || a.email === matched.email);
-    if (repoAcc && (repoAcc.status !== 'active' || repoAcc.adminVerified === false)) {
+    if (repoAcc && (!isPermittedStatus(repoAcc.status) || repoAcc.adminVerified === false)) {
       sessionService.clearSession();
       return null;
     }
 
-    return toAuthenticatedUser(matched);
+    const baseUser = toAuthenticatedUser(matched);
+    return {
+      ...baseUser,
+      status: repoAcc?.status ?? baseUser.status,
+      warningsCount: repoAcc?.warningsCount ?? baseUser.warningsCount ?? 0,
+      moderationNote: repoAcc?.moderationNote ?? baseUser.moderationNote,
+    };
   },
 
   clearActiveSession(actor?: AuthenticatedUser | null): void {
@@ -1337,6 +1354,134 @@ export const authService = {
         `${verb} ${target.role === 'school_admin' ? 'School Admin' : 'Student'} ${target.fullName} (${target.email})`
       );
     }
+
+    return { ok: true };
+  },
+
+  moderateAccount(
+    actor: AuthenticatedUser | null | undefined,
+    accountId: string,
+    mode: 'warn' | 'notify' | 'restrict' | 'suspend' | 'ban' | 'activate',
+    rawReason: string,
+    customTitle?: string
+  ): AuthActionResult {
+    if (!isActiveAccount(actor) || !hasPermission(actor, 'accounts:manage')) {
+      return { ok: false, error: 'Only Super Administrators can perform moderation actions.' };
+    }
+    if (actor.id === accountId) {
+      return { ok: false, error: 'You cannot moderate your own Super Admin account.' };
+    }
+
+    const repoAcc = archiveRepository
+      .getSnapshot()
+      .accounts.find((a) => a.id === accountId);
+    const dirAccounts = readAccounts();
+    const dirAcc = dirAccounts.find((a) => a.id === accountId);
+    const target =
+      repoAcc ?? (dirAcc ? { ...dirAcc, schoolCode: dirAcc.assignedSchoolCode ?? 'AAUA' } : null);
+
+    if (!target) {
+      return { ok: false, error: 'Account not found.' };
+    }
+    if (target.role === 'super_admin') {
+      return { ok: false, error: 'Super Admin accounts are protected from moderation.' };
+    }
+
+    const cleanReason = sanitizeSingleLine(rawReason, 260);
+    if (mode !== 'activate' && !cleanReason) {
+      return { ok: false, error: 'Enter a clear message or reason for this action.' };
+    }
+
+    if (mode === 'notify') {
+      try {
+        archiveRepository.sendDirectNotification(actor, {
+          targetUserId: accountId,
+          title: sanitizeSingleLine(customTitle || 'Direct Notice from Super Admin', 120),
+          message: cleanReason,
+          category: 'system',
+        });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'Unable to send notification.' };
+      }
+    }
+
+    const now = new Date().toISOString();
+    const nextWarningsCount =
+      mode === 'warn' ? (target.warningsCount ?? 0) + 1 : target.warningsCount ?? 0;
+
+    const nextStatus: AccountStatus =
+      mode === 'restrict'
+        ? 'restricted'
+        : mode === 'suspend'
+          ? 'suspended'
+          : mode === 'ban'
+            ? 'banned'
+            : mode === 'activate'
+              ? 'active'
+              : target.status;
+
+    const nextNote = mode === 'activate' ? cleanReason || '' : cleanReason;
+
+    if (dirAcc) {
+      writeAccounts(
+        dirAccounts.map((a) =>
+          a.id === accountId
+            ? {
+                ...a,
+                status: nextStatus,
+                warningsCount: nextWarningsCount,
+                moderationNote: nextNote || undefined,
+                updatedAt: now,
+              }
+            : a
+        )
+      );
+    }
+
+    if (mode === 'suspend' || mode === 'ban') {
+      archiveRepository.setAccountSessionState(accountId, 'logged_out');
+    }
+
+    const actionMap = {
+      warn: 'account_warned',
+      restrict: 'account_restricted',
+      suspend: target.role === 'school_admin' ? 'admin_suspended' : 'account_suspended',
+      ban: 'account_banned',
+      activate: target.role === 'school_admin' ? 'admin_reactivated' : 'account_reactivated',
+    } as const;
+
+    const summaryMap = {
+      warn: `Issued warning #${nextWarningsCount} to ${target.fullName} (${target.email}): ${cleanReason}`,
+      restrict: `Restricted ${target.fullName} (${target.email}): ${cleanReason}`,
+      suspend: `Suspended ${target.fullName} (${target.email}): ${cleanReason}`,
+      ban: `Banned ${target.fullName} (${target.email}): ${cleanReason}`,
+      activate: `Restored active status for ${target.fullName} (${target.email})${cleanReason ? `: ${cleanReason}` : ''}`,
+    };
+
+    const alertTitleMap = {
+      warn: customTitle || `Official Warning (#${nextWarningsCount})`,
+      restrict: customTitle || 'Account Restricted',
+      suspend: customTitle || 'Account Suspended',
+      ban: customTitle || 'Account Banned',
+      activate: customTitle || 'Account Restored to Active',
+    };
+
+    archiveRepository.recordModerationAction(
+      actor,
+      accountId,
+      {
+        status: nextStatus,
+        warningsCount: nextWarningsCount,
+        moderationNote: nextNote,
+      },
+      actionMap[mode],
+      summaryMap[mode],
+      {
+        title: alertTitleMap[mode],
+        message: cleanReason || 'Your account access has been restored.',
+      }
+    );
 
     return { ok: true };
   },

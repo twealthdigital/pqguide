@@ -13,6 +13,7 @@ import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 
 interface NotificationsScreenProps {
   workspaceMode?: WorkspaceViewMode;
+  userId?: string;
   restrictedAdminView?: boolean;
   onBack: () => void;
   onOpenDocument: (doc: PastQuestionDoc) => void;
@@ -20,6 +21,7 @@ interface NotificationsScreenProps {
 
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   workspaceMode = 'student',
+  userId,
   restrictedAdminView = false,
   onBack,
   onOpenDocument,
@@ -29,8 +31,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   const [openedId, setOpenedId] = useState<string | null>(null);
 
   const scopedNotifications = useMemo(
-    () => archiveRepository.getNotificationsForWorkspace(workspaceMode),
-    [store.notifications, workspaceMode]
+    () => archiveRepository.getNotificationsForWorkspace(workspaceMode, userId),
+    [store.notifications, workspaceMode, userId]
   );
 
   const unreadCount = useMemo(
@@ -77,7 +79,9 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
               variant="light"
               size="sm"
               icon={<CheckCheck className="w-4 h-4" />}
-              onClick={() => archiveRepository.markAllNotificationsReadForWorkspace(workspaceMode)}
+              onClick={() =>
+                archiveRepository.markAllNotificationsReadForWorkspace(workspaceMode, userId)
+              }
             >
               Mark all read
             </TactileButton>
@@ -120,7 +124,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             You are all caught up
           </p>
           <p className="text-xs text-[#686C78] mt-1">
-            New past question uploads and study material updates appear here.
+            New past question uploads, system notices, and direct replies appear here.
           </p>
         </SurfaceCard>
       ) : (
@@ -152,15 +156,19 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                 </div>
 
                 <div className="min-w-0">
-                  <div className="flex items-start gap-2">
+                  <div className="flex flex-wrap items-baseline gap-2">
                     <h2 className="font-display text-sm sm:text-base font-bold text-[#1A1B20]">
                       {notif.title}
                     </h2>
                     {!notif.isRead && (
-                      <span
-                        aria-label="Unread"
-                        className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[#1D1E23]"
-                      />
+                      <span className="font-mono-tabular text-[11px] font-semibold text-[#1D1E23]">
+                        · Unread
+                      </span>
+                    )}
+                    {notif.targetUserId && (
+                      <span className="font-mono-tabular text-[11px] font-medium text-[#505460]">
+                        · Direct message
+                      </span>
                     )}
                   </div>
                   <p className="text-sm text-[#505460] mt-1 leading-relaxed">
@@ -175,7 +183,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                   </p>
                 </div>
               </div>
-
             </button>
           ))}
         </div>
