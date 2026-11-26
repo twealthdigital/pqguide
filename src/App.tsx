@@ -4,6 +4,7 @@ import type {
   AuthenticatedUser,
   AuthPortal,
   PastQuestionDoc,
+  SchoolAdminSectionId,
   SettingsUiTarget,
   StudyMaterial,
   SuperAdminSectionId,
@@ -163,6 +164,7 @@ function AppContent() {
     () => authService.getActiveSession()?.role ?? 'student'
   );
   const [superAdminSection, setSuperAdminSection] = useState<SuperAdminSectionId>('overview');
+  const [schoolAdminSection, setSchoolAdminSection] = useState<SchoolAdminSectionId>('overview');
   const [settingsTarget, setSettingsTarget] = useState<SettingsUiTarget>('normal_website');
   const [superAdminPreviewSchoolId, setSuperAdminPreviewSchoolId] = useState('sch-aaua');
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
@@ -1272,6 +1274,9 @@ function AppContent() {
       runNavigationGuard(() => {
         workspaceModeRef.current = nextMode;
         setWorkspaceMode(nextMode);
+        if (nextMode === 'school_admin') {
+          setSchoolAdminSection('overview');
+        }
         const targetScreen = getDefaultScreenForRole('super_admin', nextMode);
         go(
           {
@@ -1299,6 +1304,32 @@ function AppContent() {
           go(
             {
               screen: 'super_admin',
+              docId: null,
+              materialId: null,
+              stack: [],
+            },
+            INITIAL_PERF
+          );
+        }
+      });
+    },
+    [go]
+  );
+
+  const handleSelectSchoolAdminSection = useCallback(
+    (section: SchoolAdminSectionId) => {
+      const actor = authRef.current;
+      if (!actor || (actor.role !== 'school_admin' && actor.role !== 'super_admin')) return;
+      runNavigationGuard(() => {
+        setSchoolAdminSection(section);
+        if (actor.role === 'super_admin') {
+          workspaceModeRef.current = 'school_admin';
+          setWorkspaceMode('school_admin');
+        }
+        if (navRef.current.screen !== 'school_admin') {
+          go(
+            {
+              screen: 'school_admin',
               docId: null,
               materialId: null,
               stack: [],
@@ -1350,6 +1381,7 @@ function AppContent() {
       subscriptionService.setRoleOverride(null);
       setAuthenticatedStudent(null);
       setSuperAdminSection('overview');
+      setSchoolAdminSection('overview');
       workspaceModeRef.current = 'student';
       setWorkspaceMode('student');
       navRef.current = INITIAL_NAV;
@@ -1465,6 +1497,13 @@ function AppContent() {
           ? handleSelectSuperAdminSection
           : undefined
       }
+      activeSchoolAdminSection={schoolAdminSection}
+      onSelectSchoolAdminSection={
+        authenticatedStudent.role === 'school_admin' ||
+        authenticatedStudent.role === 'super_admin'
+          ? handleSelectSchoolAdminSection
+          : undefined
+      }
       settingsTarget={settingsTarget}
       onSelectSettingsTarget={
         authenticatedStudent.role === 'super_admin'
@@ -1565,6 +1604,8 @@ function AppContent() {
           >
             <SchoolAdminScreen
               currentUser={authenticatedStudent}
+              activeSection={schoolAdminSection}
+              onSelectSection={handleSelectSchoolAdminSection}
               previewSchoolId={superAdminPreviewSchoolId}
               onPreviewSchoolChange={setSuperAdminPreviewSchoolId}
             />

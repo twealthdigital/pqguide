@@ -41,6 +41,7 @@ import type {
   AppScreen,
   AuthenticatedUser,
   HeaderMarqueeConfig,
+  SchoolAdminSectionId,
   SettingsUiTarget,
   SuperAdminSectionId,
   WorkspaceViewMode,
@@ -67,6 +68,8 @@ interface NavigationShellProps {
   onWorkspaceModeChange?: (mode: WorkspaceViewMode) => void;
   activeAdminSection?: SuperAdminSectionId;
   onSelectAdminSection?: (section: SuperAdminSectionId) => void;
+  activeSchoolAdminSection?: SchoolAdminSectionId;
+  onSelectSchoolAdminSection?: (section: SchoolAdminSectionId) => void;
   settingsTarget?: SettingsUiTarget;
   onSelectSettingsTarget?: (target: SettingsUiTarget) => void;
   openSupportCount?: number;
@@ -94,6 +97,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   onWorkspaceModeChange,
   activeAdminSection = 'overview',
   onSelectAdminSection,
+  activeSchoolAdminSection = 'overview',
+  onSelectSchoolAdminSection,
   settingsTarget = 'normal_website',
   onSelectSettingsTarget,
   openSupportCount = 0,
@@ -377,6 +382,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       : 'student';
   const isAdminWorkspace = effectiveWorkspace !== 'student';
   const isSuperAdminConsole = isSuperAdmin && effectiveWorkspace === 'super_admin';
+  const isSchoolAdminConsole = effectiveWorkspace === 'school_admin';
   const showStudentBottomBar = !isAdminWorkspace;
   const showSubscriptionCta = !isSchoolAdmin && (!isSuperAdmin || effectiveWorkspace === 'student');
 
@@ -406,7 +412,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     icon: React.ReactNode;
     badge?: number;
   }> = isSchoolAdmin
-    ? [{ id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> }]
+    ? []
     : isSuperAdmin
       ? effectiveWorkspace === 'student'
         ? [
@@ -416,9 +422,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
             { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
           ]
-        : effectiveWorkspace === 'school_admin'
-          ? [{ id: 'school_admin', label: 'School Admin Desk', icon: <UploadCloud className="w-5 h-5" /> }]
-          : []
+        : []
       : [
           { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
           { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
@@ -428,6 +432,19 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         ];
 
   const navItems = allNavItems.filter((item) => canAccessScreen(student, item.id));
+
+  // Dedicated School Admin pages inside the side panel
+  const schoolAdminPages: Array<{
+    id: SchoolAdminSectionId;
+    label: string;
+    icon: React.ReactNode;
+  }> = [
+    { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-[18px] h-[18px]" /> },
+    { id: 'students', label: 'Students', icon: <Users className="w-[18px] h-[18px]" /> },
+    { id: 'upload', label: 'Upload Documents', icon: <UploadCloud className="w-[18px] h-[18px]" /> },
+    { id: 'catalog', label: 'Past Questions', icon: <FileText className="w-[18px] h-[18px]" /> },
+    { id: 'notices', label: 'Student Notices', icon: <Bell className="w-[18px] h-[18px]" /> },
+  ];
 
   // Dedicated Super Admin console sections inside the rounded sidebar container
   const superAdminPages: Array<{
@@ -570,6 +587,27 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     }
   };
 
+  const handlePickSchoolAdminSection = (section: SchoolAdminSectionId) => {
+    if (onSelectSchoolAdminSection) {
+      onSelectSchoolAdminSection(section);
+    }
+    if (activeScreen !== 'school_admin') {
+      onNavigate('school_admin');
+    }
+  };
+
+  const handleLogoHomeClick = () => {
+    if (isSuperAdminConsole && onSelectAdminSection) {
+      handlePickSuperAdminSection('overview');
+      return;
+    }
+    if (isSchoolAdminConsole && onSelectSchoolAdminSection) {
+      handlePickSchoolAdminSection('overview');
+      return;
+    }
+    onNavigate(defaultScreen);
+  };
+
   const handlePickSettingsTarget = (target: SettingsUiTarget) => {
     if (onSelectSettingsTarget) {
       onSelectSettingsTarget(target);
@@ -618,12 +656,18 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </TooltipBubble>
         </div>
 
-        <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto space-y-3.5 pb-3">
+        <div
+          className={
+            isSuperAdminConsole || isSchoolAdminConsole
+              ? 'min-h-0 flex-1 flex flex-col gap-3.5 pb-3'
+              : 'no-scrollbar min-h-0 flex-1 overflow-y-auto space-y-3.5 pb-3'
+          }
+        >
           <button
             type="button"
-            onClick={() => onNavigate(defaultScreen)}
+            onClick={handleLogoHomeClick}
             aria-label="pqguide home"
-            className="block w-full text-left cursor-pointer group"
+            className="shrink-0 block w-full text-left cursor-pointer group"
           >
             <span className="relative block h-11 w-full overflow-hidden">
               <BrandLockup
@@ -661,7 +705,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
           {/* Active Workspace Dropdown (Desktop Sidebar) */}
           {isSuperAdmin && onWorkspaceModeChange && (
-            <div ref={workspaceDropdownRef} className="relative">
+            <div ref={workspaceDropdownRef} className="relative shrink-0">
               {!sidebarCollapsed && (
                 <p className="px-1 mb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
                   Active Workspace
@@ -800,70 +844,125 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             </nav>
           )}
 
+          {/* School Admin Pages inside Dark Rounded-Edge Container */}
+          {isSchoolAdminConsole && onSelectSchoolAdminSection && (
+            <nav
+              aria-label="School Admin pages"
+              className="min-h-0 flex flex-col overflow-hidden rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)] p-2"
+            >
+              {!sidebarCollapsed && (
+                <p className="shrink-0 px-2.5 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
+                  Admin Pages
+                </p>
+              )}
+              <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto scroll-smooth overscroll-contain space-y-1">
+                {schoolAdminPages.map((pg) => {
+                  const isActive =
+                    activeScreen === 'school_admin' && activeSchoolAdminSection === pg.id;
+                  return (
+                    <TooltipBubble
+                      key={pg.id}
+                      fullWidth
+                      content={pg.label}
+                      side="right"
+                      disabled={!sidebarCollapsed}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handlePickSchoolAdminSection(pg.id)}
+                        aria-label={pg.label}
+                        className={`relative w-full min-h-[40px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                          sidebarCollapsed ? 'justify-center px-0' : 'px-2.5 py-2'
+                        } ${
+                          isActive
+                            ? 'bg-white text-[#1D1E23] shadow-xs'
+                            : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
+                        }`}
+                      >
+                        <span className="shrink-0 flex items-center justify-center">{pg.icon}</span>
+                        <span
+                          className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                            sidebarCollapsed
+                              ? 'max-w-0 w-0 opacity-0 ml-0'
+                              : 'max-w-[150px] opacity-100 ml-2.5'
+                          }`}
+                        >
+                          {pg.label}
+                        </span>
+                      </button>
+                    </TooltipBubble>
+                  );
+                })}
+              </div>
+            </nav>
+          )}
+
           {/* Super Admin Pages inside Dark Rounded-Edge Container */}
           {isSuperAdminConsole && onSelectAdminSection && (
             <nav
               aria-label="Super Admin pages"
-              className="rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)] p-2 space-y-1"
+              className="min-h-0 flex flex-col overflow-hidden rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)] p-2"
             >
               {!sidebarCollapsed && (
-                <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
+                <p className="shrink-0 px-2.5 pt-1 pb-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
                   Console Pages
                 </p>
               )}
-              {superAdminPages.map((pg) => {
-                const isActive =
-                  activeScreen === 'super_admin' && activeAdminSection === pg.id;
-                return (
-                  <TooltipBubble
-                    key={pg.id}
-                    fullWidth
-                    content={pg.label}
-                    side="right"
-                    disabled={!sidebarCollapsed}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handlePickSuperAdminSection(pg.id)}
-                      aria-label={pg.label}
-                      className={`relative w-full min-h-[40px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
-                        sidebarCollapsed ? 'justify-center px-0' : 'px-2.5 py-2'
-                      } ${
-                        isActive
-                          ? 'bg-white text-[#1D1E23] shadow-xs'
-                          : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
-                      }`}
+              <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto scroll-smooth overscroll-contain space-y-1">
+                {superAdminPages.map((pg) => {
+                  const isActive =
+                    activeScreen === 'super_admin' && activeAdminSection === pg.id;
+                  return (
+                    <TooltipBubble
+                      key={pg.id}
+                      fullWidth
+                      content={pg.label}
+                      side="right"
+                      disabled={!sidebarCollapsed}
                     >
-                      <span className="shrink-0 flex items-center justify-center">{pg.icon}</span>
-                      <span
-                        className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
-                          sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
+                      <button
+                        type="button"
+                        onClick={() => handlePickSuperAdminSection(pg.id)}
+                        aria-label={pg.label}
+                        className={`relative w-full min-h-[40px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                          sidebarCollapsed ? 'justify-center px-0' : 'px-2.5 py-2'
+                        } ${
+                          isActive
+                            ? 'bg-white text-[#1D1E23] shadow-xs'
+                            : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                         }`}
                       >
-                        {pg.label}
-                      </span>
-                      {pg.badge !== undefined && pg.badge > 0 && !sidebarCollapsed && (
+                        <span className="shrink-0 flex items-center justify-center">{pg.icon}</span>
                         <span
-                          className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
-                            isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                          className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                            sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
                           }`}
                         >
-                          {pg.badge}
+                          {pg.label}
                         </span>
-                      )}
-                      {pg.badge !== undefined && pg.badge > 0 && sidebarCollapsed && (
-                        <span
-                          className={`absolute top-1 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
-                            isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
-                          }`}
-                        >
-                          {pg.badge > 9 ? '9+' : pg.badge}
-                        </span>
-                      )}
-                    </button>
-                  </TooltipBubble>
-                );
-              })}
+                        {pg.badge !== undefined && pg.badge > 0 && !sidebarCollapsed && (
+                          <span
+                            className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
+                              isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                            }`}
+                          >
+                            {pg.badge}
+                          </span>
+                        )}
+                        {pg.badge !== undefined && pg.badge > 0 && sidebarCollapsed && (
+                          <span
+                            className={`absolute top-1 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
+                              isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                            }`}
+                          >
+                            {pg.badge > 9 ? '9+' : pg.badge}
+                          </span>
+                        )}
+                      </button>
+                    </TooltipBubble>
+                  );
+                })}
+              </div>
             </nav>
           )}
 
@@ -1174,7 +1273,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         >
           <button
             type="button"
-            onClick={() => onNavigate(defaultScreen)}
+            onClick={handleLogoHomeClick}
             aria-label="pqguide home"
             className="min-h-[40px] min-w-[40px] flex items-center justify-start cursor-pointer transition-transform duration-150 active:scale-95"
           >
@@ -1459,7 +1558,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onNavigate(defaultScreen);
+                    handleLogoHomeClick();
                     setDrawerOpen(false);
                   }}
                   className="flex flex-col items-start gap-1.5 text-left cursor-pointer min-w-0"
@@ -1570,50 +1669,86 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 </nav>
               )}
 
-              {/* Super Admin Console Pages inside Dark Rounded Container (Mobile Drawer) */}
-              {isSuperAdminConsole && onSelectAdminSection && (
+              {/* School Admin Pages inside Dark Rounded Container (Mobile Drawer) */}
+              {isSchoolAdminConsole && onSelectSchoolAdminSection && (
                 <nav
-                  aria-label="Super Admin mobile console pages"
+                  aria-label="School Admin mobile pages"
                   className="rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white p-2 space-y-1 shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)]"
                 >
                   <p className="px-2 pt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
-                    Console Pages
+                    Admin Pages
                   </p>
-                  {superAdminPages.map((pg) => {
+                  {schoolAdminPages.map((pg) => {
                     const active =
-                      activeScreen === 'super_admin' && activeAdminSection === pg.id;
+                      activeScreen === 'school_admin' && activeSchoolAdminSection === pg.id;
                     return (
                       <button
                         key={pg.id}
                         type="button"
                         onClick={() => {
-                          handlePickSuperAdminSection(pg.id);
+                          handlePickSchoolAdminSection(pg.id);
                           setDrawerOpen(false);
                         }}
-                        className={`w-full min-h-[40px] px-3 rounded-xl flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors ${
+                        className={`w-full min-h-[40px] px-3 rounded-xl flex items-center gap-2.5 text-xs font-semibold cursor-pointer transition-colors ${
                           active
                             ? 'bg-white text-[#1D1E23] shadow-xs'
                             : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                         }`}
                       >
-                        <span className="flex items-center gap-2.5">
-                          {pg.icon}
-                          <span>{pg.label}</span>
-                        </span>
-                        {pg.badge !== undefined && pg.badge > 0 && (
-                          <span
-                            className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                              active ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
-                            }`}
-                          >
-                            {pg.badge}
-                          </span>
-                        )}
+                        {pg.icon}
+                        <span>{pg.label}</span>
                       </button>
                     );
                   })}
+                </nav>
+              )}
 
-                  <div className="pt-1.5 mt-1.5 border-t border-white/[0.1] space-y-1">
+              {/* Super Admin Console Pages inside Dark Rounded Container (Mobile Drawer) */}
+              {isSuperAdminConsole && onSelectAdminSection && (
+                <nav
+                  aria-label="Super Admin mobile console pages"
+                  className="max-h-[46dvh] flex flex-col overflow-hidden rounded-2xl bg-[#1D1E23] border border-[#1D1E23] text-white p-2 shadow-[0_12px_28px_-14px_rgba(18,19,24,0.65)]"
+                >
+                  <p className="shrink-0 px-2 pt-0.5 pb-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#A5AAB8]">
+                    Console Pages
+                  </p>
+                  <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto scroll-smooth overscroll-contain space-y-1">
+                    {superAdminPages.map((pg) => {
+                      const active =
+                        activeScreen === 'super_admin' && activeAdminSection === pg.id;
+                      return (
+                        <button
+                          key={pg.id}
+                          type="button"
+                          onClick={() => {
+                            handlePickSuperAdminSection(pg.id);
+                            setDrawerOpen(false);
+                          }}
+                          className={`w-full min-h-[40px] px-3 rounded-xl flex items-center justify-between text-xs font-semibold cursor-pointer transition-colors ${
+                            active
+                              ? 'bg-white text-[#1D1E23] shadow-xs'
+                              : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2.5">
+                            {pg.icon}
+                            <span>{pg.label}</span>
+                          </span>
+                          {pg.badge !== undefined && pg.badge > 0 && (
+                            <span
+                              className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                                active ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                              }`}
+                            >
+                              {pg.badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="shrink-0 pt-1.5 mt-1.5 border-t border-white/[0.1] space-y-1">
                     <button
                       type="button"
                       onClick={() => setMobileSettingsExpanded((prev) => !prev)}

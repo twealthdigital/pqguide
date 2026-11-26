@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  ArrowRight,
   Bell,
   CheckCircle2,
   ChevronRight,
@@ -22,6 +23,7 @@ import type {
   AuthenticatedUser,
   ManagedAccount,
   PastQuestionDoc,
+  SchoolAdminSectionId,
   SemesterType,
 } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
@@ -40,12 +42,24 @@ import {
 
 interface SchoolAdminScreenProps {
   currentUser: AuthenticatedUser;
+  activeSection?: SchoolAdminSectionId;
+  onSelectSection?: (section: SchoolAdminSectionId) => void;
   previewSchoolId?: string;
   onPreviewSchoolChange?: (schoolId: string) => void;
 }
 
+const SECTION_LABELS: Record<SchoolAdminSectionId, string> = {
+  overview: 'Overview',
+  students: 'Students',
+  upload: 'Upload Documents',
+  catalog: 'Past Questions',
+  notices: 'Student Notices',
+};
+
 export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
   currentUser,
+  activeSection = 'overview',
+  onSelectSection,
   previewSchoolId,
   onPreviewSchoolChange,
 }) => {
@@ -111,11 +125,22 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
   const [editNotifCategory, setEditNotifCategory] =
     useState<AppNotification['category']>('system');
 
+  const allSchoolDocs = useMemo(() => {
+    if (!assignedSchool) return [];
+    return store.documents.filter((doc) => doc.schoolId === assignedSchool.id);
+  }, [store.documents, assignedSchool]);
+
+  const publishedDocsCount = useMemo(
+    () => allSchoolDocs.filter((doc) => doc.status === 'published').length,
+    [allSchoolDocs]
+  );
+
+  const draftDocsCount = allSchoolDocs.length - publishedDocsCount;
+
   const schoolDocuments = useMemo(() => {
     if (!assignedSchool) return [];
     const q = searchQuery.trim().toLowerCase();
-    return store.documents.filter((doc) => {
-      if (doc.schoolId !== assignedSchool.id) return false;
+    return allSchoolDocs.filter((doc) => {
       if (historyFilter === 'published' && doc.status !== 'published') return false;
       if (historyFilter === 'draft' && doc.status === 'published') return false;
       if (!q) return true;
@@ -125,7 +150,7 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
         doc.session.toLowerCase().includes(q)
       );
     });
-  }, [store.documents, assignedSchool, historyFilter, searchQuery]);
+  }, [allSchoolDocs, assignedSchool, historyFilter, searchQuery]);
 
   const schoolStudents = useMemo(() => {
     if (!assignedSchool) return [];
@@ -186,6 +211,22 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
     if (!assignedSchool) return [];
     return store.notifications.filter((n) => n.schoolId === assignedSchool.id);
   }, [store.notifications, assignedSchool]);
+
+  const liveNoticesCount = useMemo(
+    () =>
+      schoolSubmittedNotifications.filter(
+        (n) => (n.approvalStatus ?? 'approved') === 'approved'
+      ).length,
+    [schoolSubmittedNotifications]
+  );
+
+  const pendingNoticesCount = useMemo(
+    () =>
+      schoolSubmittedNotifications.filter(
+        (n) => (n.approvalStatus ?? 'approved') === 'pending_verification'
+      ).length,
+    [schoolSubmittedNotifications]
+  );
 
   const selectedDoc = useMemo(
     () => schoolDocuments.find((d) => d.id === selectedDocId) ?? null,
@@ -403,14 +444,26 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                 {isSuperAdminPreview
                   ? `Super Admin View · ${assignedSchool.code} School Desk`
                   : `${adminCms.deskLabel} · ${assignedSchool.code}`}
+                {activeSection !== 'overview' ? ` · ${SECTION_LABELS[activeSection]}` : ''}
               </p>
               <h1 className="font-display text-2xl sm:text-3xl font-bold text-white mt-1.5">
-                {adminCms.deskHeadline.replace(/\{SCHOOL\}/g, assignedSchool.code)}
+                {activeSection === 'overview'
+                  ? adminCms.deskHeadline.replace(/\{SCHOOL\}/g, assignedSchool.code)
+                  : SECTION_LABELS[activeSection]}
               </h1>
               <p className="text-sm text-[#B8BCC8] mt-2 max-w-2xl">
-                {isSuperAdminPreview
-                  ? `Viewing ${assignedSchool.name} desk as Super Admin.`
-                  : adminCms.deskDescription}
+                {activeSection === 'overview'
+                  ? isSuperAdminPreview
+                    ? `Viewing ${assignedSchool.name} desk as Super Admin.`
+                    : adminCms.deskDescription
+                  : activeSection === 'students'
+                    ? `Track signed-in, active, and registered ${assignedSchool.code} student accounts.`
+                    : activeSection === 'upload'
+                      ? adminCms.uploadPanelHint ||
+                        `Upload scanned or typed past question documents for ${assignedSchool.code}.`
+                      : activeSection === 'catalog'
+                        ? `Search, preview, edit, publish, or remove ${assignedSchool.code} past question papers.`
+                        : `Submit and monitor ${assignedSchool.code} student announcements pending Super Admin verification.`}
               </p>
             </div>
 
@@ -469,11 +522,213 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-5">
+        {activeSection === 'overview' && (
+          <div className="space-y-6">
+            {/* Key University Indicators — Student Numbers Visible on Home Page */}
+            <section
+              aria-label="University overview indicators"
+              className="rounded-3xl bg-[#1D1E23] p-4 sm:p-6 space-y-4 shadow-[0_14px_34px_-14px_rgba(20,21,28,0.45)]"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-2.5">
+                  <span className="h-8 w-8 rounded-xl bg-white/10 text-white flex items-center justify-center shrink-0">
+                    <Users className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h2 className="font-display text-sm sm:text-base font-bold text-white">
+                      {assignedSchool.code} Student &amp; Archive Overview
+                    </h2>
+                    <p className="text-[11px] text-[#A5AAB8]">
+                      Live student numbers and content status for {assignedSchool.shortName}
+                    </p>
+                  </div>
+                </div>
+                <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-[#4ADE80]">
+                  Live
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
+                <div className="rounded-2xl bg-white p-4 sm:p-5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[#686C78]">
+                    <span className="text-xs font-medium">Registered Students</span>
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20]">
+                    {schoolStudents.length}
+                  </p>
+                  <p className="text-xs text-[#686C78] font-mono-tabular">
+                    {assignedSchool.code} student accounts
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white p-4 sm:p-5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[#686C78]">
+                    <span className="text-xs font-medium">Signed In Now</span>
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#16A34A]" aria-hidden="true" />
+                  </div>
+                  <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#15803D]">
+                    {signedInStudentsCount}
+                  </p>
+                  <p className="text-xs text-[#686C78] font-mono-tabular">
+                    Active sessions right now
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white p-4 sm:p-5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[#686C78]">
+                    <span className="text-xs font-medium">Active Students</span>
+                    <CheckCircle2 className="w-4 h-4 text-[#1D1E23]" />
+                  </div>
+                  <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20]">
+                    {activeStudentsCount}
+                  </p>
+                  <p className="text-xs text-[#686C78] font-mono-tabular">
+                    Verified student access
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white p-4 sm:p-5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[#686C78]">
+                    <span className="text-xs font-medium">Past Questions</span>
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <p className="font-display font-mono-tabular text-2xl sm:text-3xl font-extrabold text-[#1A1B20]">
+                    {allSchoolDocs.length}
+                  </p>
+                  <p className="text-xs text-[#686C78] font-mono-tabular">
+                    {publishedDocsCount} published · {draftDocsCount} drafts
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {/* Quick Navigation Cards to Dedicated Side Panel Pages */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <SurfaceCard tone="white" className="p-5 flex flex-col justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="h-10 w-10 rounded-2xl tactile-dark text-white flex items-center justify-center shrink-0">
+                    <UploadCloud className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="font-display text-base font-bold text-[#1A1B20]">
+                      Upload Documents
+                    </h2>
+                    <p className="text-xs text-[#505460] mt-1">
+                      Select PDF, DOCX, TXT, or scanned images to extract and publish past
+                      questions for {assignedSchool.code}.
+                    </p>
+                  </div>
+                </div>
+                <TactileButton
+                  type="button"
+                  variant="dark"
+                  size="md"
+                  onClick={() => onSelectSection?.('upload')}
+                  icon={<ArrowRight className="w-4 h-4" />}
+                >
+                  Go to Upload Documents
+                </TactileButton>
+              </SurfaceCard>
+
+              <SurfaceCard tone="white" className="p-5 flex flex-col justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="h-10 w-10 rounded-2xl bg-[#F2F4F7] text-[#1D1E23] flex items-center justify-center shrink-0">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="font-display text-base font-bold text-[#1A1B20]">
+                      Students Monitor
+                    </h2>
+                    <p className="text-xs text-[#505460] mt-1">
+                      Inspect all {schoolStudents.length} registered {assignedSchool.code} students,
+                      filter signed-in accounts, and check recent activity.
+                    </p>
+                  </div>
+                </div>
+                <TactileButton
+                  type="button"
+                  variant="light"
+                  size="md"
+                  onClick={() => onSelectSection?.('students')}
+                  icon={<ArrowRight className="w-4 h-4" />}
+                >
+                  Open Students ({schoolStudents.length})
+                </TactileButton>
+              </SurfaceCard>
+
+              <SurfaceCard tone="white" className="p-5 flex flex-col justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="h-10 w-10 rounded-2xl bg-[#F2F4F7] text-[#1D1E23] flex items-center justify-center shrink-0">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="font-display text-base font-bold text-[#1A1B20]">
+                      Past Questions Catalog
+                    </h2>
+                    <p className="text-xs text-[#505460] mt-1">
+                      Manage {publishedDocsCount} published papers and {draftDocsCount} saved drafts
+                      in the {assignedSchool.code} archive.
+                    </p>
+                  </div>
+                </div>
+                <TactileButton
+                  type="button"
+                  variant="light"
+                  size="md"
+                  onClick={() => onSelectSection?.('catalog')}
+                  icon={<ArrowRight className="w-4 h-4" />}
+                >
+                  View Catalog ({allSchoolDocs.length})
+                </TactileButton>
+              </SurfaceCard>
+
+              <SurfaceCard tone="white" className="p-5 flex flex-col justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="h-10 w-10 rounded-2xl bg-[#F2F4F7] text-[#1D1E23] flex items-center justify-center shrink-0">
+                    <Bell className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="font-display text-base font-bold text-[#1A1B20]">
+                      Student Notices
+                    </h2>
+                    <p className="text-xs text-[#505460] mt-1">
+                      {liveNoticesCount} live · {pendingNoticesCount} pending Super Admin
+                      verification for {assignedSchool.code} students.
+                    </p>
+                  </div>
+                </div>
+                <TactileButton
+                  type="button"
+                  variant="light"
+                  size="md"
+                  onClick={() => onSelectSection?.('notices')}
+                  icon={<ArrowRight className="w-4 h-4" />}
+                >
+                  Open Student Notices ({schoolSubmittedNotifications.length})
+                </TactileButton>
+              </SurfaceCard>
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'upload' && (
+          <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">
             <SectionHeadingBar
               icon={<UploadCloud className="w-4 h-4" />}
               title={adminCms.uploadPanelTitle}
+              right={
+                onSelectSection ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelectSection('catalog')}
+                    className="min-h-[34px] px-3 rounded-xl bg-white/12 hover:bg-white/20 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <span>View Catalog ({allSchoolDocs.length})</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                ) : undefined
+              }
             />
 
             <label
@@ -671,8 +926,10 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
               </div>
             )}
           </SurfaceCard>
+        )}
 
-          <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
+        {activeSection === 'catalog' && (
+          <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
             <SectionHeadingBar
               icon={<FileText className="w-4 h-4" />}
               title={adminCms.catalogPanelTitle.replace(/\{SCHOOL\}/g, assignedSchool.code)}
@@ -757,11 +1014,10 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
               )}
             </div>
           </SurfaceCard>
-        </div>
+        )}
 
-        {/* Logged-In & Active Students + Student Website Notifications */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
+        {activeSection === 'students' && (
+          <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
             <SectionHeadingBar
               icon={<Users className="w-4 h-4" />}
               title={`${assignedSchool.code} Students Monitor`}
@@ -883,8 +1139,10 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
               )}
             </div>
           </SurfaceCard>
+        )}
 
-          <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
+        {activeSection === 'notices' && (
+          <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">
             <SectionHeadingBar
               icon={<Bell className="w-4 h-4" />}
               title="Student Website Notifications"
@@ -1051,7 +1309,7 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
               </div>
             )}
           </SurfaceCard>
-        </div>
+        )}
       </div>
 
       <DetailDialog

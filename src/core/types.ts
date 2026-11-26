@@ -35,6 +35,13 @@ export type SuperAdminSectionId =
   | 'payments'
   | 'settings';
 
+export type SchoolAdminSectionId =
+  | 'overview'
+  | 'students'
+  | 'upload'
+  | 'catalog'
+  | 'notices';
+
 export type AppScreen =
   | 'home'
   | 'past_questions'
