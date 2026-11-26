@@ -7,6 +7,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import bannerAshWaves from '../../assets/images/banner_ash_waves.webp';
+import { useBackHandler } from '../../core/navGuard';
 
 export type SearchActionPhase = 'idle' | 'loading' | 'done';
 
@@ -43,6 +44,10 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
   }) => {
     const searchClusterRef = useRef<HTMLDivElement | null>(null);
     const isTyping = searchValue.trim().length > 0;
+
+    useBackHandler(Boolean(filterActive && onFilterClose), () => {
+      onFilterClose?.();
+    });
 
     let activeIconKey: 'sliders' | 'chevron' | 'search' | 'loading' | 'done' =
       'sliders';

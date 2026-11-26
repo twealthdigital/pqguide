@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
+import { useBackHandler } from '../../core/navGuard';
 
 export interface CustomSelectOption {
   value: string;
@@ -61,6 +62,11 @@ export const CustomSelect: React.FC<CustomSelectProps> = React.memo(
     const triggerRef = useRef<HTMLButtonElement | null>(null);
     const inputRef = useRef<HTMLInputElement | null>(null);
     const menuRef = useRef<HTMLDivElement | null>(null);
+
+    useBackHandler(isOpen, () => {
+      setHasTypedFilter(false);
+      setIsOpen(false);
+    });
 
     const selectedOption = options.find((opt) => opt.value === value);
     const inputDisplayValue =

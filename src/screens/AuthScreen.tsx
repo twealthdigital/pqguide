@@ -18,7 +18,7 @@ import { BrandLockup } from '../components/ui/BrandLockup';
 import { CreatableSelectInput } from '../components/ui/CreatableSelectInput';
 import { TactileButton } from '../components/ui/TactileButton';
 
-type AuthView =
+export type AuthView =
   | 'signin'
   | 'signup'
   | 'verify_signup'
@@ -36,6 +36,9 @@ type ButtonActionKey =
   | 'forgot_save';
 
 interface AuthScreenProps {
+  view?: AuthView;
+  onViewChange?: (next: AuthView, options?: { replace?: boolean }) => void;
+  onAuthBack?: (fallbackView: AuthView) => void;
   onAuthenticated: (account: StudentAccount) => void;
   onBackToOnboarding?: () => void;
 }
@@ -127,10 +130,14 @@ const OtpCodeInput: React.FC<OtpCodeInputProps> = ({
 };
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({
+  view: controlledView,
+  onViewChange,
+  onAuthBack,
   onAuthenticated,
   onBackToOnboarding,
 }) => {
-  const [view, setView] = useState<AuthView>('signin');
+  const [localView, setLocalView] = useState<AuthView>('signin');
+  const view = controlledView ?? localView;
   const [activeAction, setActiveAction] = useState<ButtonActionKey | null>(null);
   const [successAction, setSuccessAction] = useState<ButtonActionKey | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -169,25 +176,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
   const timersRef = useRef<number[]>([]);
   const mountedRef = useRef(true);
+  const keepNoticeRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
-    const onPop = (e: PopStateEvent) => {
-      const st = e.state as { __pqgOut?: string; __pqgAuthView?: AuthView } | null;
-      if (st?.__pqgOut === 'auth') {
-        setView(st.__pqgAuthView ?? 'signin');
-        setErrorMsg(null);
-        setInfoMsg(null);
-      }
-    };
-    window.addEventListener('popstate', onPop);
     return () => {
       mountedRef.current = false;
-      window.removeEventListener('popstate', onPop);
       timersRef.current.forEach((id) => window.clearTimeout(id));
       timersRef.current = [];
     };
   }, []);
+
+  useEffect(() => {
+    setErrorMsg(null);
+    if (keepNoticeRef.current) {
+      keepNoticeRef.current = false;
+    } else {
+      setInfoMsg(null);
+    }
+  }, [view]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -297,15 +304,29 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     });
   };
 
-  const switchView = (next: AuthView, keepNotices = false) => {
+  const switchView = (next: AuthView, keepNotices = false, replace = false) => {
     if (isBusy) return;
-    if (next !== view && typeof window !== 'undefined') {
-      window.history.pushState({ __pqgOut: 'auth', __pqgAuthView: next }, '');
-    }
-    setView(next);
+    keepNoticeRef.current = keepNotices;
     setErrorMsg(null);
     if (!keepNotices) {
       setInfoMsg(null);
+    }
+    if (onViewChange) {
+      onViewChange(next, { replace });
+    } else {
+      setLocalView(next);
+    }
+  };
+
+  const goBackAuth = (fallbackView: AuthView) => {
+    if (isBusy) return;
+    keepNoticeRef.current = false;
+    setErrorMsg(null);
+    setInfoMsg(null);
+    if (onAuthBack) {
+      onAuthBack(fallbackView);
+    } else {
+      setLocalView(fallbackView);
     }
   };
 
@@ -386,7 +407,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setOtpCode('');
     setResendCooldown(30);
     setInfoMsg(`Verification code sent to ${result.data.email}`);
-    setView('verify_signup');
+    switchView('verify_signup', true);
   };
 
   const handleVerifySignupSubmit = async (e: React.FormEvent) => {
@@ -473,7 +494,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setOtpCode('');
     setResendCooldown(30);
     setInfoMsg(`Reset code sent to ${result.data.email}`);
-    setView('forgot_verify');
+    switchView('forgot_verify', true);
   };
 
   const handleForgotVerifySubmit = async (e: React.FormEvent) => {
@@ -503,7 +524,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setNewPassword('');
     setConfirmNewPassword('');
     setInfoMsg('Code verified. Create your new password below.');
-    setView('forgot_reset');
+    switchView('forgot_reset', true);
   };
 
   const handleForgotResetSave = async (e: React.FormEvent) => {
@@ -539,7 +560,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setSigninPassword(result.data.newPassword);
     setShowSigninPassword(false);
     setInfoMsg('Password updated! Your matric & new password are ready — tap Sign In.');
-    setView('signin');
+    switchView('signin', true, true);
   };
 
   const handleCopyPreviewCode = () => {
@@ -606,11 +627,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
         {/* Top Utility Control */}
         <div className="relative z-10 flex items-center justify-between px-4 sm:px-8 pt-[calc(1rem+env(safe-area-inset-top))] sm:pt-[calc(1.75rem+env(safe-area-inset-top))] min-h-[52px]">
-          {onBackToOnboarding ? (
+          {(view !== 'signin' || onBackToOnboarding) ? (
             <button
               type="button"
               disabled={isBusy}
-              onClick={onBackToOnboarding}
+              onClick={() => {
+                if (view === 'verify_signup') goBackAuth('signup');
+                else if (view === 'forgot_reset') goBackAuth('forgot_verify');
+                else if (view === 'forgot_verify') goBackAuth('forgot_request');
+                else if (view === 'signup' || view === 'forgot_request') goBackAuth('signin');
+                else onBackToOnboarding?.();
+              }}
               aria-label="Go back"
               className="h-10 w-10 rounded-full bg-[#2B2E38] hover:bg-[#353946] text-white inline-flex items-center justify-center cursor-pointer transition-colors disabled:opacity-45"
             >
@@ -920,7 +947,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 <button
                   type="button"
                   disabled={isBusy}
-                  onClick={() => switchView('signin')}
+                  onClick={() => goBackAuth('signin')}
                   className="font-bold text-[#1D1E23] underline underline-offset-4 cursor-pointer disabled:opacity-45"
                 >
                   Log in
@@ -1033,7 +1060,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                   type="button"
                   disabled={isBusy}
                   onClick={() =>
-                    switchView(view === 'verify_signup' ? 'signup' : 'forgot_request')
+                    goBackAuth(view === 'verify_signup' ? 'signup' : 'forgot_request')
                   }
                   className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer disabled:opacity-45"
                 >
@@ -1089,7 +1116,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 <button
                   type="button"
                   disabled={isBusy}
-                  onClick={() => switchView('signin')}
+                  onClick={() => goBackAuth('signin')}
                   className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer disabled:opacity-45"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />

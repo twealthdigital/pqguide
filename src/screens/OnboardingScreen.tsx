@@ -17,6 +17,9 @@ import { ScanToPdfShowcase } from '../components/onboarding/ScanToPdfShowcase';
 import { AiAssistantShowcase } from '../components/onboarding/AiAssistantShowcase';
 
 interface OnboardingScreenProps {
+  step?: number;
+  onStepChange?: (step: number) => void;
+  onBackStep?: () => void;
   onComplete?: () => void;
 }
 
@@ -221,9 +224,20 @@ function useViewportTier(): 'mobile' | 'tablet' | 'desktop' {
 }
 
 export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
+  step: controlledStep,
+  onStepChange,
+  onBackStep,
   onComplete,
 }) => {
-  const [step, setStep] = useState(0);
+  const [localStep, setLocalStep] = useState(0);
+  const step = controlledStep ?? localStep;
+  const setStep = (next: number) => {
+    if (onStepChange) {
+      onStepChange(next);
+    } else {
+      setLocalStep(next);
+    }
+  };
   const viewportTier = useViewportTier();
   const isTablet = viewportTier === 'tablet';
   const isDesktop = viewportTier === 'desktop';
@@ -238,7 +252,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
         setStep(0);
       }
     } else {
-      setStep((s) => s + 1);
+      setStep(step + 1);
     }
   };
 
@@ -496,7 +510,7 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
                     size="lg"
                     className="rounded-full md:min-h-[58px] md:px-5"
                     icon={<ArrowLeft className="w-4 h-4 md:w-5 md:h-5" />}
-                    onClick={() => setStep((s) => Math.max(0, s - 1))}
+                    onClick={() => (onBackStep ? onBackStep() : setStep(Math.max(0, step - 1)))}
                     aria-label="Previous onboarding step"
                   />
                 )}

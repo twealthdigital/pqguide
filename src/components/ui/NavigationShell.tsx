@@ -323,6 +323,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const userPopoverVisible = sidebarCollapsed && userPopoverOpen;
 
+  useBackHandler(userPopoverVisible, () => setUserPopoverOpen(false));
+
   // Collapsed side panel: the avatar opens a pop-out with the user's details.
   useEffect(() => {
     if (!sidebarCollapsed) setUserPopoverOpen(false);

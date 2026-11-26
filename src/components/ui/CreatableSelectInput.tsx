@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Plus } from 'lucide-react';
+import { useBackHandler } from '../../core/navGuard';
 
 interface CreatableSelectInputProps {
   id: string;
@@ -54,6 +55,12 @@ export const CreatableSelectInput: React.FC<CreatableSelectInputProps> = ({
   }, [options, trimmedValue]);
 
   const showAddOption = trimmedValue.length >= 2 && !hasExactMatch;
+  const menuVisible = isOpen && (filteredOptions.length > 0 || showAddOption);
+
+  useBackHandler(menuVisible, () => {
+    setIsOpen(false);
+    setHasTyped(false);
+  });
 
   const updatePosition = useCallback(() => {
     const el = containerRef.current;
