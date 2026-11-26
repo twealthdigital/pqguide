@@ -50,9 +50,15 @@ export const OverviewPerformanceChart: React.FC<OverviewPerformanceChartProps> =
   const [yearGranularity, setYearGranularity] = useState<YearGranularity>('months');
   const [metricFocus, setMetricFocus] = useState<MetricFocus>('revenue');
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-  const [hoverBox, setHoverBox] = useState<{ leftPct: number; topPx: number } | null>(null);
+  const [hoverBox, setHoverBox] = useState<{
+    leftPx: number;
+    topPx: number;
+    above: boolean;
+  } | null>(null);
 
+  const chartAreaRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
 
   const buckets = useMemo<BucketPoint[]>(() => {
     const now = new Date();
@@ -248,12 +254,16 @@ export const OverviewPerformanceChart: React.FC<OverviewPerformanceChartProps> =
       (max, b) => Math.max(max, getValueForMetric(b, metricFocus)),
       0
     );
-    if (peak <= 0) return metricFocus === 'revenue' ? 10_000 : 10;
+    if (peak <= 0) return metricFocus === 'revenue' ? 10_000 : 4;
     const magnitude = Math.pow(10, Math.floor(Math.log10(peak)));
     const normalized = peak / magnitude;
     const nice =
       normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-    return nice * magnitude;
+    const scaled = nice * magnitude;
+    if (metricFocus !== 'revenue') {
+      return Math.max(4, Math.ceil(Math.max(peak, scaled) / 4) * 4);
+    }
+    return scaled;
   }, [buckets, metricFocus]);
 
   const yTicks = useMemo(
@@ -319,12 +329,30 @@ export const OverviewPerformanceChart: React.FC<OverviewPerformanceChartProps> =
 
   const activePoint = hoveredIdx !== null ? points[hoveredIdx] ?? null : null;
 
-  const handleColumnEnter = (idx: number, ptY: number) => {
+  const handleColumnEnter = (idx: number, ptX: number, ptY: number) => {
     setHoveredIdx(idx);
-    const pct = ((idx + 0.5) / Math.max(1, buckets.length)) * 100;
+    const areaEl = chartAreaRef.current;
+    const svgEl = svgRef.current;
+    if (!areaEl || !svgEl) return;
+
+    const areaRect = areaEl.getBoundingClientRect();
+    const svgRect = svgEl.getBoundingClientRect();
+    const rawCenterX = svgRect.left + ptX - areaRect.left;
+    const halfCardW = 104;
+    const minLeft = halfCardW + 8;
+    const maxLeft = Math.max(minLeft, areaRect.width - halfCardW - 8);
+    const clampedLeft = Math.max(minLeft, Math.min(maxLeft, rawCenterX));
+
+    // If the bar/point is tall (near top of SVG), bring the tooltip down into the visible chart area
+    const showAbove = ptY >= 124;
+    const topPx = showAbove
+      ? ptY - 10
+      : Math.max(12, Math.min(plotBottom - 108, ptY + 12));
+
     setHoverBox({
-      leftPct: Math.max(12, Math.min(88, pct)),
-      topPx: Math.max(12, ptY - 12),
+      leftPx: clampedLeft,
+      topPx,
+      above: showAbove,
     });
   };
 
@@ -442,6 +470,7 @@ export const OverviewPerformanceChart: React.FC<OverviewPerformanceChartProps> =
       </div>
 
       <div
+        ref={chartAreaRef}
         className="relative flex items-stretch gap-2"
         onMouseLeave={() => {
           setHoveredIdx(null);
@@ -471,10 +500,15 @@ export const OverviewPerformanceChart: React.FC<OverviewPerformanceChartProps> =
         {/* Scrollable Plot Area */}
         <div
           ref={scrollContainerRef}
+          onScroll={() => {
+            setHoveredIdx(null);
+            setHoverBox(null);
+          }}
           className="flex-1 overflow-x-auto scroll-smooth relative"
         >
           <div style={{ width: svgWidth, minWidth: '100%' }} className="relative">
             <svg
+              ref={svgRef}
               width={svgWidth}
               height={svgHeight}
               viewBox={`0 0 ${svgWidth} ${svgHeight}`}
@@ -599,52 +633,54 @@ export const OverviewPerformanceChart: React.FC<OverviewPerformanceChartProps> =
                       className="cursor-pointer"
                       tabIndex={0}
                       aria-label={`${pt.bucket.fullLabel}: ₦${pt.bucket.verifiedRevenue.toLocaleString()} verified revenue`}
-                      onMouseEnter={() => handleColumnEnter(pt.idx, pt.y)}
-                      onFocus={() => handleColumnEnter(pt.idx, pt.y)}
-                      onClick={() => handleColumnEnter(pt.idx, pt.y)}
+                      onMouseEnter={() => handleColumnEnter(pt.idx, pt.x, pt.y)}
+                      onFocus={() => handleColumnEnter(pt.idx, pt.x, pt.y)}
+                      onClick={() => handleColumnEnter(pt.idx, pt.x, pt.y)}
                     />
                   </g>
                 );
               })}
             </svg>
-
-            {activePoint && hoverBox && (
-              <div
-                style={{
-                  left: `${hoverBox.leftPct}%`,
-                  top: hoverBox.topPx,
-                }}
-                className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-2xl bg-[#1D1E23] text-white border border-white/12 px-3.5 py-2.5 shadow-[0_14px_32px_-8px_rgba(14,15,20,0.52)] min-w-[196px] space-y-1.5"
-              >
-                <p className="text-[11px] font-bold text-white border-b border-white/10 pb-1">
-                  {activePoint.bucket.fullLabel}
-                </p>
-                <div className="flex items-center justify-between gap-4 text-[11px] font-mono-tabular">
-                  <span className="text-[#C3C7D2]">Verified Revenue</span>
-                  <span className="font-bold text-[#4ADE80]">
-                    ₦{activePoint.bucket.verifiedRevenue.toLocaleString()}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5 pt-0.5 text-[10px] font-mono-tabular">
-                  <span className="text-[#4ADE80]">
-                    Ok: {activePoint.bucket.successCount}
-                  </span>
-                  <span className="text-[#FBBF24]">
-                    Pend: {activePoint.bucket.pendingCount}
-                  </span>
-                  <span className="text-[#F87171]">
-                    Decl: {activePoint.bucket.failedCount}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3 text-[10px] text-[#B8BCC8] font-mono-tabular pt-0.5 border-t border-white/10">
-                  <span>Exams: {activePoint.bucket.examCount}</span>
-                  <span>Signups: {activePoint.bucket.signupCount}</span>
-                  <span>Visits: {activePoint.bucket.visitCount}</span>
-                </div>
-              </div>
-            )}
           </div>
         </div>
+
+        {activePoint && hoverBox && (
+          <div
+            style={{
+              left: hoverBox.leftPx,
+              top: hoverBox.topPx,
+            }}
+            className={`pointer-events-none absolute z-30 -translate-x-1/2 ${
+              hoverBox.above ? '-translate-y-full' : ''
+            } rounded-2xl bg-[#1D1E23] text-white border border-white/12 px-3.5 py-2.5 shadow-[0_14px_32px_-8px_rgba(14,15,20,0.52)] min-w-[200px] space-y-1.5`}
+          >
+            <p className="text-[11px] font-bold text-white border-b border-white/10 pb-1">
+              {activePoint.bucket.fullLabel}
+            </p>
+            <div className="flex items-center justify-between gap-4 text-[11px] font-mono-tabular">
+              <span className="text-[#C3C7D2]">Verified Revenue</span>
+              <span className="font-bold text-[#4ADE80]">
+                ₦{activePoint.bucket.verifiedRevenue.toLocaleString()}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 pt-0.5 text-[10px] font-mono-tabular">
+              <span className="text-[#4ADE80]">
+                Ok: {activePoint.bucket.successCount}
+              </span>
+              <span className="text-[#FBBF24]">
+                Pend: {activePoint.bucket.pendingCount}
+              </span>
+              <span className="text-[#F87171]">
+                Decl: {activePoint.bucket.failedCount}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3 text-[10px] text-[#B8BCC8] font-mono-tabular pt-0.5 border-t border-white/10">
+              <span>Exams: {activePoint.bucket.examCount}</span>
+              <span>Signups: {activePoint.bucket.signupCount}</span>
+              <span>Visits: {activePoint.bucket.visitCount}</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
