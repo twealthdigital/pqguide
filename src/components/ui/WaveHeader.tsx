@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import bannerAshWaves from '../../assets/images/banner_ash_waves.webp';
 import { useBackHandler } from '../../core/navGuard';
+import { TooltipBubble } from './TooltipBubble';
 
 export type SearchActionPhase = 'idle' | 'loading' | 'done';
 
@@ -208,74 +209,76 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
                   aria-label={`Search ${noun}`}
                   className="w-full min-w-0 bg-transparent py-2.5 text-sm text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none"
                 />
-                <button
-                  type="button"
-                  onClick={handleActionClick}
-                  disabled={searchPhase === 'loading'}
-                  aria-label={actionAriaLabel}
-                  aria-expanded={!isTyping && searchPhase === 'idle' ? filterActive : undefined}
-                  className={`relative min-h-[42px] min-w-[42px] rounded-xl flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-95 cursor-pointer shrink-0 disabled:cursor-wait ${
-                    activeIconKey === 'chevron'
-                      ? 'bg-[#2C2F39] text-white'
-                      : 'bg-[#1D1E23] text-white hover:bg-[#2B2D35]'
-                  }`}
-                >
-                  {/* Smooth morphing icon stack (compositor opacity + scale transitions) */}
-                  <span
-                    aria-hidden="true"
-                    className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                      activeIconKey === 'sliders'
-                        ? 'opacity-100 scale-100 rotate-0'
-                        : 'opacity-0 scale-75 -rotate-45 pointer-events-none'
-                    }`}
-                  >
-                    <SlidersHorizontal className="w-4 h-4" />
-                  </span>
-
-                  <span
-                    aria-hidden="true"
-                    className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                <TooltipBubble label={actionAriaLabel} side="top">
+                  <button
+                    type="button"
+                    onClick={handleActionClick}
+                    disabled={searchPhase === 'loading'}
+                    aria-label={actionAriaLabel}
+                    aria-expanded={!isTyping && searchPhase === 'idle' ? filterActive : undefined}
+                    className={`relative min-h-[42px] min-w-[42px] rounded-xl flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] active:scale-95 cursor-pointer shrink-0 disabled:cursor-wait ${
                       activeIconKey === 'chevron'
-                        ? 'opacity-100 scale-100 rotate-0'
-                        : 'opacity-0 scale-75 rotate-45 pointer-events-none'
+                        ? 'bg-[#2C2F39] text-white'
+                        : 'bg-[#1D1E23] text-white hover:bg-[#2B2D35]'
                     }`}
                   >
-                    <ChevronUp className="w-[18px] h-[18px]" />
-                  </span>
+                    {/* Smooth morphing icon stack (compositor opacity + scale transitions) */}
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                        activeIconKey === 'sliders'
+                          ? 'opacity-100 scale-100 rotate-0'
+                          : 'opacity-0 scale-75 -rotate-45 pointer-events-none'
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                    </span>
 
-                  <span
-                    aria-hidden="true"
-                    className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                      activeIconKey === 'search'
-                        ? 'opacity-100 scale-100'
-                        : 'opacity-0 scale-75 pointer-events-none'
-                    }`}
-                  >
-                    <Search className="w-4 h-4" />
-                  </span>
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                        activeIconKey === 'chevron'
+                          ? 'opacity-100 scale-100 rotate-0'
+                          : 'opacity-0 scale-75 rotate-45 pointer-events-none'
+                      }`}
+                    >
+                      <ChevronUp className="w-[18px] h-[18px]" />
+                    </span>
 
-                  <span
-                    aria-hidden="true"
-                    className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                      activeIconKey === 'loading'
-                        ? 'opacity-100 scale-100'
-                        : 'opacity-0 scale-75 pointer-events-none'
-                    }`}
-                  >
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  </span>
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                        activeIconKey === 'search'
+                          ? 'opacity-100 scale-100'
+                          : 'opacity-0 scale-75 pointer-events-none'
+                      }`}
+                    >
+                      <Search className="w-4 h-4" />
+                    </span>
 
-                  <span
-                    aria-hidden="true"
-                    className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                      activeIconKey === 'done'
-                        ? 'opacity-100 scale-100'
-                        : 'opacity-0 scale-50 pointer-events-none'
-                    }`}
-                  >
-                    <Check className="w-4 h-4" strokeWidth={2.5} />
-                  </span>
-                </button>
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                        activeIconKey === 'loading'
+                          ? 'opacity-100 scale-100'
+                          : 'opacity-0 scale-75 pointer-events-none'
+                      }`}
+                    >
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    </span>
+
+                    <span
+                      aria-hidden="true"
+                      className={`absolute inset-0 flex items-center justify-center transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                        activeIconKey === 'done'
+                          ? 'opacity-100 scale-100'
+                          : 'opacity-0 scale-50 pointer-events-none'
+                      }`}
+                    >
+                      <Check className="w-4 h-4" strokeWidth={2.5} />
+                    </span>
+                  </button>
+                </TooltipBubble>
               </form>
 
               {filterActive && filterDropdown && (

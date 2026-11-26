@@ -2,6 +2,7 @@ export { BrandLogo } from './BrandLogo';
 export { BrandLockup } from './BrandLockup';
 export { BrandWordmark } from './BrandWordmark';
 export { CreatableSelectInput } from './CreatableSelectInput';
+export { CustomCalendar, parseDateKey, toLocalDateKey, type CalendarDayStat } from './CustomCalendar';
 export { CustomSelect, type CustomSelectOption } from './CustomSelect';
 export { NavigationShell } from './NavigationShell';
 export { DetailDialog } from './DetailDialog';
@@ -9,5 +10,6 @@ export { DocumentListSkeleton, HomeScreenSkeleton, SkeletonBox } from './Skeleto
 export { SectionHeadingBar } from './SectionHeadingBar';
 export { SurfaceCard } from './SurfaceCard';
 export { TactileButton, type TactileVariant } from './TactileButton';
+export { TooltipBubble, type TooltipSide } from './TooltipBubble';
 export { WaveHeader } from './WaveHeader';
 export { SearchField } from './SearchField';

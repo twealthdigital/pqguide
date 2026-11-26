@@ -130,6 +130,9 @@ function mergeSiteCms(raw?: Partial<SiteCmsConfig> | null): SiteCmsConfig {
   if (!raw || typeof raw !== 'object') return base;
   return {
     studentUi: { ...base.studentUi, ...(raw.studentUi ?? {}) },
+    performancePage: { ...base.performancePage, ...(raw.performancePage ?? {}) },
+    notificationsPage: { ...base.notificationsPage, ...(raw.notificationsPage ?? {}) },
+    subscriptionPage: { ...base.subscriptionPage, ...(raw.subscriptionPage ?? {}) },
     schoolAdminUi: { ...base.schoolAdminUi, ...(raw.schoolAdminUi ?? {}) },
     aboutPage: { ...base.aboutPage, ...(raw.aboutPage ?? {}) },
     servicesPage: {

@@ -24,6 +24,7 @@ import {
   Info,
   Layers,
   LayoutDashboard,
+  Lock,
   LogOut,
   Megaphone,
   MoreVertical,
@@ -40,6 +41,7 @@ import type {
   AppScreen,
   AuthenticatedUser,
   HeaderMarqueeConfig,
+  SettingsUiTarget,
   SuperAdminSectionId,
   WorkspaceViewMode,
 } from '../../core/types';
@@ -55,6 +57,7 @@ import { useBackHandler } from '../../core/navGuard';
 import { BrandLogo } from './BrandLogo';
 import { CustomSelect } from './CustomSelect';
 import { TactileButton } from './TactileButton';
+import { TooltipBubble } from './TooltipBubble';
 
 interface NavigationShellProps {
   activeScreen: AppScreen;
@@ -64,6 +67,8 @@ interface NavigationShellProps {
   onWorkspaceModeChange?: (mode: WorkspaceViewMode) => void;
   activeAdminSection?: SuperAdminSectionId;
   onSelectAdminSection?: (section: SuperAdminSectionId) => void;
+  settingsTarget?: SettingsUiTarget;
+  onSelectSettingsTarget?: (target: SettingsUiTarget) => void;
   openSupportCount?: number;
   marquee?: HeaderMarqueeConfig;
   onNavigate: (screen: AppScreen) => void;
@@ -89,6 +94,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   onWorkspaceModeChange,
   activeAdminSection = 'overview',
   onSelectAdminSection,
+  settingsTarget = 'normal_website',
+  onSelectSettingsTarget,
   openSupportCount = 0,
   marquee,
   onNavigate,
@@ -107,6 +114,11 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [userPopoverOpen, setUserPopoverOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [uiEditsExpanded, setUiEditsExpanded] = useState(true);
+  const [settingsPopoverOpen, setSettingsPopoverOpen] = useState(false);
+  const [mobileSettingsExpanded, setMobileSettingsExpanded] = useState(false);
+  const [mobileUiEditsExpanded, setMobileUiEditsExpanded] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem('pqguide:sidebar-collapsed') === '1';
@@ -125,6 +137,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceDropdownRef = useRef<HTMLDivElement | null>(null);
   const userPanelRef = useRef<HTMLDivElement | null>(null);
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
   const drawerPanelRef = useRef<HTMLElement | null>(null);
   const signOutTimerRef = useRef<number | null>(null);
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -393,15 +406,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     icon: React.ReactNode;
     badge?: number;
   }> = isSchoolAdmin
-    ? [
-        { id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> },
-        {
-          id: 'notifications',
-          label: 'Notifications',
-          icon: <Bell className="w-5 h-5" />,
-          badge: unreadCount,
-        },
-      ]
+    ? [{ id: 'school_admin', label: 'School Admin', icon: <UploadCloud className="w-5 h-5" /> }]
     : isSuperAdmin
       ? effectiveWorkspace === 'student'
         ? [
@@ -412,23 +417,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
           ]
         : effectiveWorkspace === 'school_admin'
-          ? [
-              { id: 'school_admin', label: 'School Admin Desk', icon: <UploadCloud className="w-5 h-5" /> },
-              {
-                id: 'notifications',
-                label: 'Notifications',
-                icon: <Bell className="w-5 h-5" />,
-                badge: unreadCount,
-              },
-            ]
-          : [
-              {
-                id: 'notifications',
-                label: 'Notifications',
-                icon: <Bell className="w-5 h-5" />,
-                badge: unreadCount,
-              },
-            ]
+          ? [{ id: 'school_admin', label: 'School Admin Desk', icon: <UploadCloud className="w-5 h-5" /> }]
+          : []
       : [
           { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
           { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
@@ -485,14 +475,42 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const activeWorkspaceOption =
     workspaceModes.find((m) => m.id === effectiveWorkspace) ?? workspaceModes[0];
 
+  const uiEditOptions: Array<{
+    id: SettingsUiTarget;
+    label: string;
+    icon: React.ReactNode;
+    locked?: boolean;
+  }> = [
+    { id: 'normal_website', label: 'Normal Website', icon: <Globe className="w-3.5 h-3.5 shrink-0" /> },
+    { id: 'uni_admins', label: 'Uni Administrators', icon: <UploadCloud className="w-3.5 h-3.5 shrink-0" /> },
+    {
+      id: 'company_admins',
+      label: 'Company Administrators',
+      icon: <Lock className="w-3.5 h-3.5 shrink-0" />,
+      locked: true,
+    },
+  ];
+
   const onBanner = false;
   const userPopoverVisible = sidebarCollapsed && userPopoverOpen;
+  const settingsPopoverVisible = sidebarCollapsed && settingsPopoverOpen;
 
   useBackHandler(userPopoverVisible, () => setUserPopoverOpen(false));
+  useBackHandler(settingsPopoverVisible, () => setSettingsPopoverOpen(false));
 
   useEffect(() => {
-    if (!sidebarCollapsed) setUserPopoverOpen(false);
+    if (!sidebarCollapsed) {
+      setUserPopoverOpen(false);
+      setSettingsPopoverOpen(false);
+    }
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (activeScreen === 'super_admin' && activeAdminSection === 'settings') {
+      setSettingsMenuOpen(true);
+      setMobileSettingsExpanded(true);
+    }
+  }, [activeScreen, activeAdminSection]);
 
   useEffect(() => {
     if (!userPopoverVisible) return;
@@ -511,6 +529,24 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [userPopoverVisible]);
+
+  useEffect(() => {
+    if (!settingsPopoverVisible) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && settingsPanelRef.current?.contains(target)) return;
+      setSettingsPopoverOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSettingsPopoverOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [settingsPopoverVisible]);
 
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
@@ -534,6 +570,18 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     }
   };
 
+  const handlePickSettingsTarget = (target: SettingsUiTarget) => {
+    if (onSelectSettingsTarget) {
+      onSelectSettingsTarget(target);
+    } else if (onSelectAdminSection) {
+      onSelectAdminSection('settings');
+    }
+    if (activeScreen !== 'super_admin') {
+      onNavigate('super_admin');
+    }
+    setSettingsPopoverOpen(false);
+  };
+
   const renderSubscriptionSubline = () => {
     if (activeTier === 'infinity') return 'Infinity Plan · All unlocked';
     if (activeTier === 'standard') return 'Standard · Upgrade to AI';
@@ -551,18 +599,24 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         }`}
       >
         {/* Edge toggle: collapse / expand the side panel */}
-        <button
-          type="button"
-          onClick={toggleSidebar}
-          aria-label={sidebarCollapsed ? 'Expand side panel' : 'Collapse side panel'}
-          aria-expanded={!sidebarCollapsed}
-          title={sidebarCollapsed ? 'Expand' : 'Collapse'}
-          className="absolute -right-3.5 top-[88px] z-50 h-7 w-7 rounded-full bg-white border border-[#1A1B20]/[0.1] text-[#1D1E23] shadow-[0_4px_12px_-4px_rgba(18,19,24,0.3)] flex items-center justify-center cursor-pointer hover:bg-[#1D1E23] hover:text-white active:scale-95 transition-colors duration-150"
-        >
-          <ChevronLeft
-            className={`w-4 h-4 transition-transform ${sbEase} ${sidebarCollapsed ? 'rotate-180' : ''}`}
-          />
-        </button>
+        <div className="absolute -right-3.5 top-[88px] z-50">
+          <TooltipBubble
+            content={sidebarCollapsed ? 'Expand side panel' : 'Collapse side panel'}
+            side="right"
+          >
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              aria-label={sidebarCollapsed ? 'Expand side panel' : 'Collapse side panel'}
+              aria-expanded={!sidebarCollapsed}
+              className="h-7 w-7 rounded-full bg-white border border-[#1A1B20]/[0.1] text-[#1D1E23] shadow-[0_4px_12px_-4px_rgba(18,19,24,0.3)] flex items-center justify-center cursor-pointer hover:bg-[#1D1E23] hover:text-white active:scale-95 transition-colors duration-150"
+            >
+              <ChevronLeft
+                className={`w-4 h-4 transition-transform ${sbEase} ${sidebarCollapsed ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </TooltipBubble>
+        </div>
 
         <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto space-y-3.5 pb-3">
           <button
@@ -613,30 +667,39 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   Active Workspace
                 </p>
               )}
-              <button
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded={workspaceDropdownOpen}
-                title={sidebarCollapsed ? `Workspace: ${activeWorkspaceOption.label}` : undefined}
-                onClick={() => setWorkspaceDropdownOpen((prev) => !prev)}
-                className={`w-full min-h-[44px] rounded-2xl bg-[#1D1E23] text-white text-xs font-semibold flex items-center cursor-pointer hover:bg-[#2B2D35] transition-colors ${
-                  sidebarCollapsed ? 'justify-center px-0' : 'justify-between px-3 gap-2'
-                }`}
+              <TooltipBubble
+                fullWidth
+                content={
+                  sidebarCollapsed
+                    ? `Workspace: ${activeWorkspaceOption.label}`
+                    : 'Switch active workspace view'
+                }
+                side="right"
               >
-                <span className="flex items-center gap-2 min-w-0">
-                  <span className="shrink-0">{activeWorkspaceOption.icon}</span>
+                <button
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded={workspaceDropdownOpen}
+                  onClick={() => setWorkspaceDropdownOpen((prev) => !prev)}
+                  className={`w-full min-h-[44px] rounded-2xl bg-[#1D1E23] text-white text-xs font-semibold flex items-center cursor-pointer hover:bg-[#2B2D35] transition-colors ${
+                    sidebarCollapsed ? 'justify-center px-0' : 'justify-between px-3 gap-2'
+                  }`}
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="shrink-0">{activeWorkspaceOption.icon}</span>
+                    {!sidebarCollapsed && (
+                      <span className="truncate">{activeWorkspaceOption.label}</span>
+                    )}
+                  </span>
                   {!sidebarCollapsed && (
-                    <span className="truncate">{activeWorkspaceOption.label}</span>
+                    <ChevronDown
+                      className={`w-4 h-4 shrink-0 text-[#C3C7D2] transition-transform duration-200 ${
+                        workspaceDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
                   )}
-                </span>
-                {!sidebarCollapsed && (
-                  <ChevronDown
-                    className={`w-4 h-4 shrink-0 text-[#C3C7D2] transition-transform duration-200 ${
-                      workspaceDropdownOpen ? 'rotate-180' : ''
-                    }`}
-                  />
-                )}
-              </button>
+                </button>
+              </TooltipBubble>
 
               {workspaceDropdownOpen && (
                 <div
@@ -680,54 +743,62 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           )}
 
           {/* Primary Navigation Items */}
-          <nav aria-label="Primary desktop navigation" className="space-y-1.5">
-            {navItems.map((item) => {
-              const isActive = tabScreen === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onNavigate(item.id)}
-                  title={sidebarCollapsed ? item.label : undefined}
-                  aria-label={item.label}
-                  className={`relative w-full min-h-[44px] rounded-2xl flex items-center text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
-                    sidebarCollapsed ? 'justify-center px-0' : 'px-3 py-2.5'
-                  } ${
-                    isActive
-                      ? 'tactile-dark text-white'
-                      : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
-                  }`}
-                >
-                  <span className="shrink-0 flex items-center justify-center">{item.icon}</span>
-                  <span
-                    className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
-                      sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-3'
-                    }`}
+          {navItems.length > 0 && (
+            <nav aria-label="Primary desktop navigation" className="space-y-1.5">
+              {navItems.map((item) => {
+                const isActive = tabScreen === item.id;
+                return (
+                  <TooltipBubble
+                    key={item.id}
+                    fullWidth
+                    content={item.label}
+                    side="right"
+                    disabled={!sidebarCollapsed}
                   >
-                    {item.label}
-                  </span>
-                  {item.badge !== undefined && item.badge > 0 && !sidebarCollapsed && (
-                    <span
-                      className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
-                        isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
+                    <button
+                      type="button"
+                      onClick={() => onNavigate(item.id)}
+                      aria-label={item.label}
+                      className={`relative w-full min-h-[44px] rounded-2xl flex items-center text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                        sidebarCollapsed ? 'justify-center px-0' : 'px-3 py-2.5'
+                      } ${
+                        isActive
+                          ? 'tactile-dark text-white'
+                          : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
                       }`}
                     >
-                      {item.badge}
-                    </span>
-                  )}
-                  {item.badge !== undefined && item.badge > 0 && sidebarCollapsed && (
-                    <span
-                      className={`absolute top-1.5 right-3 min-w-[16px] h-[16px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
-                        isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
-                      }`}
-                    >
-                      {item.badge > 9 ? '9+' : item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+                      <span className="shrink-0 flex items-center justify-center">{item.icon}</span>
+                      <span
+                        className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                          sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-3'
+                        }`}
+                      >
+                        {item.label}
+                      </span>
+                      {item.badge !== undefined && item.badge > 0 && !sidebarCollapsed && (
+                        <span
+                          className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
+                            isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                      {item.badge !== undefined && item.badge > 0 && sidebarCollapsed && (
+                        <span
+                          className={`absolute top-1.5 right-3 min-w-[16px] h-[16px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
+                            isActive ? 'bg-white text-[#1D1E23]' : 'bg-[#1D1E23] text-white'
+                          }`}
+                        >
+                          {item.badge > 9 ? '9+' : item.badge}
+                        </span>
+                      )}
+                    </button>
+                  </TooltipBubble>
+                );
+              })}
+            </nav>
+          )}
 
           {/* Super Admin Pages inside Dark Rounded-Edge Container */}
           {isSuperAdminConsole && onSelectAdminSection && (
@@ -744,47 +815,53 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 const isActive =
                   activeScreen === 'super_admin' && activeAdminSection === pg.id;
                 return (
-                  <button
+                  <TooltipBubble
                     key={pg.id}
-                    type="button"
-                    onClick={() => handlePickSuperAdminSection(pg.id)}
-                    title={sidebarCollapsed ? pg.label : undefined}
-                    aria-label={pg.label}
-                    className={`relative w-full min-h-[40px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
-                      sidebarCollapsed ? 'justify-center px-0' : 'px-2.5 py-2'
-                    } ${
-                      isActive
-                        ? 'bg-white text-[#1D1E23] shadow-xs'
-                        : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
-                    }`}
+                    fullWidth
+                    content={pg.label}
+                    side="right"
+                    disabled={!sidebarCollapsed}
                   >
-                    <span className="shrink-0 flex items-center justify-center">{pg.icon}</span>
-                    <span
-                      className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
-                        sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
+                    <button
+                      type="button"
+                      onClick={() => handlePickSuperAdminSection(pg.id)}
+                      aria-label={pg.label}
+                      className={`relative w-full min-h-[40px] rounded-xl flex items-center text-xs font-semibold transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                        sidebarCollapsed ? 'justify-center px-0' : 'px-2.5 py-2'
+                      } ${
+                        isActive
+                          ? 'bg-white text-[#1D1E23] shadow-xs'
+                          : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                       }`}
                     >
-                      {pg.label}
-                    </span>
-                    {pg.badge !== undefined && pg.badge > 0 && !sidebarCollapsed && (
+                      <span className="shrink-0 flex items-center justify-center">{pg.icon}</span>
                       <span
-                        className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
-                          isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                        className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                          sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-2.5'
                         }`}
                       >
-                        {pg.badge}
+                        {pg.label}
                       </span>
-                    )}
-                    {pg.badge !== undefined && pg.badge > 0 && sidebarCollapsed && (
-                      <span
-                        className={`absolute top-1 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
-                          isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
-                        }`}
-                      >
-                        {pg.badge > 9 ? '9+' : pg.badge}
-                      </span>
-                    )}
-                  </button>
+                      {pg.badge !== undefined && pg.badge > 0 && !sidebarCollapsed && (
+                        <span
+                          className={`font-mono-tabular text-[10px] font-bold px-1.5 py-0.5 rounded-md ml-auto transition-opacity ${sbEase} ${
+                            isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                          }`}
+                        >
+                          {pg.badge}
+                        </span>
+                      )}
+                      {pg.badge !== undefined && pg.badge > 0 && sidebarCollapsed && (
+                        <span
+                          className={`absolute top-1 right-1.5 min-w-[15px] h-[15px] px-1 rounded-full font-mono-tabular text-[9px] font-bold flex items-center justify-center ${
+                            isActive ? 'bg-[#1D1E23] text-white' : 'bg-white text-[#1D1E23]'
+                          }`}
+                        >
+                          {pg.badge > 9 ? '9+' : pg.badge}
+                        </span>
+                      )}
+                    </button>
+                  </TooltipBubble>
                 );
               })}
             </nav>
@@ -792,64 +869,204 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
           {/* Prominent Solid Subscription CTA (Hidden on isolated Admin Views) */}
           {showSubscriptionCta && (
-            <button
-              type="button"
-              onClick={() => onOpenPaywall()}
-              title={sidebarCollapsed ? 'Subscription Plans' : undefined}
-              aria-label="Open subscription plans"
-              className={`w-full rounded-2xl bg-[#1D1E23] text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer ${
-                sidebarCollapsed
-                  ? 'min-h-[44px] px-3 py-2.5 flex items-center justify-center'
-                  : 'p-3.5 text-left'
-              }`}
+            <TooltipBubble
+              fullWidth
+              content="View subscription plans and benefits"
+              side="right"
+              disabled={!sidebarCollapsed}
             >
-              <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between gap-2.5'}`}>
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
-                    <Crown className="h-4 w-4" />
-                  </span>
-                  {!sidebarCollapsed && (
-                    <div className="min-w-0">
-                      <p className="font-display text-xs font-bold text-white truncate">
-                        Subscription Plans
-                      </p>
-                      <p className="text-[11px] text-[#C3C7D2] truncate">
-                        {renderSubscriptionSubline()}
-                      </p>
-                    </div>
-                  )}
+              <button
+                type="button"
+                onClick={() => onOpenPaywall()}
+                aria-label="Open subscription plans"
+                className={`w-full rounded-2xl bg-[#1D1E23] text-white shadow-[0_10px_22px_-10px_rgba(18,19,24,0.55)] transition-all duration-150 hover:bg-[#2B2D35] active:scale-[0.98] cursor-pointer ${
+                  sidebarCollapsed
+                    ? 'min-h-[44px] px-3 py-2.5 flex items-center justify-center'
+                    : 'p-3.5 text-left'
+                }`}
+              >
+                <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between gap-2.5'}`}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-[#1D1E23]">
+                      <Crown className="h-4 w-4" />
+                    </span>
+                    {!sidebarCollapsed && (
+                      <div className="min-w-0">
+                        <p className="font-display text-xs font-bold text-white truncate">
+                          Subscription Plans
+                        </p>
+                        <p className="text-[11px] text-[#C3C7D2] truncate">
+                          {renderSubscriptionSubline()}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  {!sidebarCollapsed && <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />}
                 </div>
-                {!sidebarCollapsed && <ArrowUpRight className="h-4 w-4 shrink-0 text-[#C3C7D2]" />}
-              </div>
-            </button>
+              </button>
+            </TooltipBubble>
           )}
         </div>
 
         {/* Bottom Settings + Verified Account Card & Sign Out */}
         <div className="shrink-0 space-y-2.5 pt-3 border-t border-[#1A1B20]/[0.07]">
           {isSuperAdminConsole && onSelectAdminSection && (
-            <button
-              type="button"
-              onClick={() => handlePickSuperAdminSection('settings')}
-              title={sidebarCollapsed ? 'Settings (Live UI Editor)' : undefined}
-              aria-label="Settings"
-              className={`w-full min-h-[44px] rounded-2xl flex items-center text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                sidebarCollapsed ? 'justify-center px-0' : 'px-3'
-              } ${
-                activeScreen === 'super_admin' && activeAdminSection === 'settings'
-                  ? 'bg-[#1D1E23] text-white'
-                  : 'bg-[#F6F7F9] text-[#1A1B20] hover:bg-[#ECEEF3]'
-              }`}
-            >
-              <Settings className="w-[18px] h-[18px] shrink-0" />
-              <span
-                className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
-                  sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[160px] opacity-100 ml-2.5'
-                }`}
+            <div ref={settingsPanelRef} className="relative">
+              <TooltipBubble
+                fullWidth
+                content="Settings & UI Edits"
+                side="right"
+                disabled={!sidebarCollapsed}
               >
-                Settings (Website UIs)
-              </span>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (sidebarCollapsed) {
+                      setSettingsPopoverOpen((prev) => !prev);
+                    } else {
+                      setSettingsMenuOpen((prev) => !prev);
+                      if (activeScreen !== 'super_admin' || activeAdminSection !== 'settings') {
+                        handlePickSuperAdminSection('settings');
+                      }
+                    }
+                  }}
+                  aria-expanded={sidebarCollapsed ? settingsPopoverVisible : settingsMenuOpen}
+                  aria-label="Settings"
+                  className={`w-full min-h-[44px] rounded-2xl flex items-center text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                    sidebarCollapsed ? 'justify-center px-0' : 'justify-between px-3'
+                  } ${
+                    activeScreen === 'super_admin' && activeAdminSection === 'settings'
+                      ? 'bg-[#1D1E23] text-white'
+                      : 'bg-[#F6F7F9] text-[#1A1B20] hover:bg-[#ECEEF3]'
+                  }`}
+                >
+                  <span className="flex items-center min-w-0">
+                    <Settings className="w-[18px] h-[18px] shrink-0" />
+                    <span
+                      className={`overflow-hidden transition-[max-width,opacity,margin] ${sbEase} ${
+                        sidebarCollapsed ? 'max-w-0 w-0 opacity-0 ml-0' : 'max-w-[140px] opacity-100 ml-2.5'
+                      }`}
+                    >
+                      Settings
+                    </span>
+                  </span>
+                  {!sidebarCollapsed && (
+                    <ChevronDown
+                      className={`w-4 h-4 shrink-0 transition-transform duration-200 ${
+                        settingsMenuOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  )}
+                </button>
+              </TooltipBubble>
+
+              {/* Expanded sidebar nested Settings -> UI Edits dropdown */}
+              {!sidebarCollapsed && settingsMenuOpen && (
+                <div className="mt-1.5 rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] p-2 space-y-1.5 page-enter">
+                  <button
+                    type="button"
+                    onClick={() => setUiEditsExpanded((prev) => !prev)}
+                    aria-expanded={uiEditsExpanded}
+                    className="w-full min-h-[34px] px-2.5 rounded-xl flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.06em] text-[#505460] hover:bg-white cursor-pointer transition-colors"
+                  >
+                    <span>UI Edits</span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                        uiEditsExpanded ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {uiEditsExpanded && (
+                    <div className="space-y-1 pl-1">
+                      {uiEditOptions.map((opt) => {
+                        const isSelected =
+                          activeScreen === 'super_admin' &&
+                          activeAdminSection === 'settings' &&
+                          settingsTarget === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => handlePickSettingsTarget(opt.id)}
+                            className={`w-full min-h-[36px] px-2.5 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                              isSelected
+                                ? 'bg-[#1D1E23] text-white'
+                                : 'text-[#3A3D47] hover:bg-white hover:text-[#1A1B20]'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              {opt.icon}
+                              <span className="truncate">{opt.label}</span>
+                            </span>
+                            {opt.locked && (
+                              <span
+                                className={`text-[10px] font-mono-tabular px-1.5 py-0.5 rounded-md shrink-0 ${
+                                  isSelected
+                                    ? 'bg-white/15 text-white'
+                                    : 'bg-[#ECEEF3] text-[#686C78]'
+                                }`}
+                              >
+                                Locked
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Collapsed sidebar pop-out for Settings -> UI Edits */}
+              {settingsPopoverVisible && (
+                <div
+                  role="dialog"
+                  aria-label="Settings UI Edits"
+                  className="absolute bottom-0 left-full ml-[30px] w-64 rounded-2xl bg-white border border-[#1A1B20]/[0.1] shadow-[0_18px_40px_-14px_rgba(18,19,24,0.38)] p-3 space-y-2 z-50 page-enter"
+                >
+                  <p className="px-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[#686C78]">
+                    Settings · UI Edits
+                  </p>
+                  <div className="space-y-1">
+                    {uiEditOptions.map((opt) => {
+                      const isSelected =
+                        activeScreen === 'super_admin' &&
+                        activeAdminSection === 'settings' &&
+                        settingsTarget === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => handlePickSettingsTarget(opt.id)}
+                          className={`w-full min-h-[38px] px-2.5 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-[#1D1E23] text-white'
+                              : 'text-[#3A3D47] hover:bg-[#F6F7F9] hover:text-[#1A1B20]'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2 min-w-0">
+                            {opt.icon}
+                            <span className="truncate">{opt.label}</span>
+                          </span>
+                          {opt.locked && (
+                            <span
+                              className={`text-[10px] font-mono-tabular px-1.5 py-0.5 rounded-md shrink-0 ${
+                                isSelected
+                                  ? 'bg-white/15 text-white'
+                                  : 'bg-[#ECEEF3] text-[#686C78]'
+                              }`}
+                            >
+                              Locked
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           <div ref={userPanelRef} className="relative">
@@ -965,46 +1182,53 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </button>
 
           <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => onNavigate('notifications')}
-              aria-label={`Open notifications (${unreadCount} unread)`}
-              className={`relative h-10 w-10 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
-                hasBanner || isScrolled
-                  ? 'text-white'
-                  : 'text-[#1D1E23]'
-              }`}
+            <TooltipBubble
+              content={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
+              side="bottom"
             >
-              <span className="relative inline-flex items-center justify-center">
-                <Bell className="w-[21px] h-[21px]" strokeWidth={2} />
-                {unreadCount > 0 && (
-                  <span
-                    className={`absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold font-mono-tabular flex items-center justify-center ${
-                      hasBanner || isScrolled
-                        ? 'bg-white text-[#1D1E23]'
-                        : 'bg-[#1D1E23] text-white'
-                    }`}
-                  >
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
-              </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('notifications')}
+                aria-label={`Open notifications (${unreadCount} unread)`}
+                className={`relative h-10 w-10 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
+                  hasBanner || isScrolled
+                    ? 'text-white'
+                    : 'text-[#1D1E23]'
+                }`}
+              >
+                <span className="relative inline-flex items-center justify-center">
+                  <Bell className="w-[21px] h-[21px]" strokeWidth={2} />
+                  {unreadCount > 0 && (
+                    <span
+                      className={`absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold font-mono-tabular flex items-center justify-center ${
+                        hasBanner || isScrolled
+                          ? 'bg-white text-[#1D1E23]'
+                          : 'bg-[#1D1E23] text-white'
+                      }`}
+                    >
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </span>
+              </button>
+            </TooltipBubble>
 
-            <button
-              type="button"
-              aria-label="Open navigation menu"
-              aria-expanded={drawerOpen}
-              aria-controls="mobile-slide-drawer"
-              onClick={() => setDrawerOpen(true)}
-              className={`h-10 w-10 -mr-1.5 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
-                hasBanner || isScrolled
-                  ? 'text-white'
-                  : 'text-[#1D1E23]'
-              }`}
-            >
-              <MoreVertical className="w-[21px] h-[21px]" strokeWidth={2} />
-            </button>
+            <TooltipBubble content="Open menu" side="bottom">
+              <button
+                type="button"
+                aria-label="Open navigation menu"
+                aria-expanded={drawerOpen}
+                aria-controls="mobile-slide-drawer"
+                onClick={() => setDrawerOpen(true)}
+                className={`h-10 w-10 -mr-1.5 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
+                  hasBanner || isScrolled
+                    ? 'text-white'
+                    : 'text-[#1D1E23]'
+                }`}
+              >
+                <MoreVertical className="w-[21px] h-[21px]" strokeWidth={2} />
+              </button>
+            </TooltipBubble>
           </div>
         </header>
 
@@ -1038,52 +1262,64 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </nav>
 
           <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => onNavigate('notifications')}
-              aria-label={`Open notifications (${unreadCount} unread)`}
-              className={`relative min-h-[40px] min-w-[40px] rounded-xl flex items-center justify-center border transition-transform duration-150 active:scale-95 cursor-pointer ${
-                activeScreen === 'notifications'
-                  ? 'tactile-dark text-white border-transparent'
-                  : onBanner
-                    ? 'bg-white/10 hover:bg-white/20 text-white border-white/20'
-                    : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
-              }`}
+            <TooltipBubble
+              content={
+                unreadCount > 0
+                  ? `View notifications (${unreadCount} unread)`
+                  : 'Open notifications feed'
+              }
+              side="bottom"
             >
-              <Bell className="w-4 h-4" />
-              {unreadCount > 0 && (
-                <span
-                  className={`absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full text-[10px] font-bold font-mono-tabular flex items-center justify-center ${
-                    activeScreen === 'notifications'
-                      ? 'bg-white text-[#1D1E23]'
-                      : 'bg-[#1D1E23] text-white'
-                  }`}
-                >
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('notifications')}
+                aria-label={`Open notifications (${unreadCount} unread)`}
+                className={`relative min-h-[40px] px-3 rounded-xl flex items-center gap-2 border text-xs font-semibold transition-transform duration-150 active:scale-95 cursor-pointer ${
+                  activeScreen === 'notifications'
+                    ? 'tactile-dark text-white border-transparent'
+                    : onBanner
+                      ? 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+                      : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
+                }`}
+              >
+                <Bell className="w-4 h-4 shrink-0" />
+                <span>Notifications</span>
+                {unreadCount > 0 && (
+                  <span
+                    className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold font-mono-tabular flex items-center justify-center ${
+                      activeScreen === 'notifications'
+                        ? 'bg-white text-[#1D1E23]'
+                        : 'bg-[#1D1E23] text-white'
+                    }`}
+                  >
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            </TooltipBubble>
 
-            <button
-              ref={desktopTriggerRef}
-              type="button"
-              aria-haspopup="menu"
-              aria-expanded={accountMenuOpen}
-              aria-label="Open account menu"
-              onClick={() => setAccountMenuOpen((prev) => !prev)}
-              className={`min-h-[40px] px-2.5 rounded-xl flex items-center gap-2 border transition-colors cursor-pointer ${
-                accountMenuOpen
-                  ? 'tactile-dark text-white border-transparent'
-                  : onBanner
-                    ? 'bg-white/10 hover:bg-white/20 text-white border-white/20'
-                    : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
-              }`}
-            >
-              <User className="w-4 h-4 shrink-0" />
-              <span className="text-xs font-semibold max-w-[110px] truncate">
-                {student.fullName.split(' ')[0]}
-              </span>
-            </button>
+            <TooltipBubble content="Open account details and sign out" side="bottom">
+              <button
+                ref={desktopTriggerRef}
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={accountMenuOpen}
+                aria-label="Open account menu"
+                onClick={() => setAccountMenuOpen((prev) => !prev)}
+                className={`min-h-[40px] px-2.5 rounded-xl flex items-center gap-2 border transition-colors cursor-pointer ${
+                  accountMenuOpen
+                    ? 'tactile-dark text-white border-transparent'
+                    : onBanner
+                      ? 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+                      : 'bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1D1E23] border-[#1A1B20]/[0.08]'
+                }`}
+              >
+                <User className="w-4 h-4 shrink-0" />
+                <span className="text-xs font-semibold max-w-[110px] truncate">
+                  {student.fullName.split(' ')[0]}
+                </span>
+              </button>
+            </TooltipBubble>
           </div>
         </header>
 
@@ -1238,14 +1474,16 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   </span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => setDrawerOpen(false)}
-                  aria-label="Close navigation menu"
-                  className="min-h-[44px] min-w-[44px] rounded-2xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1A1B20] flex items-center justify-center shrink-0 cursor-pointer transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                <TooltipBubble content="Close menu" side="left">
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen(false)}
+                    aria-label="Close navigation menu"
+                    className="min-h-[44px] min-w-[44px] rounded-2xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1A1B20] flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </TooltipBubble>
               </div>
 
               {/* Account Card */}
@@ -1293,42 +1531,44 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               )}
 
               {/* Primary Navigation Links */}
-              <nav aria-label="Mobile drawer navigation" className="space-y-1">
-                {navItems.map((item) => {
-                  const isActive = tabScreen === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        onNavigate(item.id);
-                        setDrawerOpen(false);
-                      }}
-                      className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-2xl flex items-center justify-between text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
-                        isActive
-                          ? 'tactile-dark text-white'
-                          : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
-                      }`}
-                    >
-                      <span className="flex items-center gap-3">
-                        {item.icon}
-                        <span>{item.label}</span>
-                      </span>
-                      {item.badge !== undefined && item.badge > 0 && (
-                        <span
-                          className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${
-                            isActive
-                              ? 'bg-white text-[#1D1E23]'
-                              : 'bg-[#1D1E23] text-white'
-                          }`}
-                        >
-                          {item.badge}
+              {navItems.length > 0 && (
+                <nav aria-label="Mobile drawer navigation" className="space-y-1">
+                  {navItems.map((item) => {
+                    const isActive = tabScreen === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          onNavigate(item.id);
+                          setDrawerOpen(false);
+                        }}
+                        className={`w-full min-h-[44px] px-3.5 py-2.5 rounded-2xl flex items-center justify-between text-sm font-medium transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                          isActive
+                            ? 'tactile-dark text-white'
+                            : 'text-[#505460] hover:bg-[#F2F4F7] hover:text-[#1A1B20]'
+                        }`}
+                      >
+                        <span className="flex items-center gap-3">
+                          {item.icon}
+                          <span>{item.label}</span>
                         </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </nav>
+                        {item.badge !== undefined && item.badge > 0 && (
+                          <span
+                            className={`font-mono-tabular text-[11px] font-semibold px-1.5 py-0.5 rounded-md ${
+                              isActive
+                                ? 'bg-white text-[#1D1E23]'
+                                : 'bg-[#1D1E23] text-white'
+                            }`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </nav>
+              )}
 
               {/* Super Admin Console Pages inside Dark Rounded Container (Mobile Drawer) */}
               {isSuperAdminConsole && onSelectAdminSection && (
@@ -1373,22 +1613,84 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     );
                   })}
 
-                  <div className="pt-1.5 mt-1.5 border-t border-white/[0.1]">
+                  <div className="pt-1.5 mt-1.5 border-t border-white/[0.1] space-y-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        handlePickSuperAdminSection('settings');
-                        setDrawerOpen(false);
-                      }}
-                      className={`w-full min-h-[40px] px-3 rounded-xl flex items-center gap-2.5 text-xs font-semibold cursor-pointer transition-colors ${
+                      onClick={() => setMobileSettingsExpanded((prev) => !prev)}
+                      aria-expanded={mobileSettingsExpanded}
+                      className={`w-full min-h-[40px] px-3 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
                         activeScreen === 'super_admin' && activeAdminSection === 'settings'
                           ? 'bg-white text-[#1D1E23] shadow-xs'
                           : 'text-[#C3C7D2] hover:bg-white/[0.12] hover:text-white'
                       }`}
                     >
-                      <Settings className="w-4 h-4" />
-                      <span>Settings (Website UIs)</span>
+                      <span className="flex items-center gap-2.5">
+                        <Settings className="w-4 h-4" />
+                        <span>Settings</span>
+                      </span>
+                      <ChevronDown
+                        className={`w-4 h-4 transition-transform duration-200 ${
+                          mobileSettingsExpanded ? 'rotate-180' : ''
+                        }`}
+                      />
                     </button>
+
+                    {mobileSettingsExpanded && (
+                      <div className="rounded-xl bg-white/[0.06] p-1.5 space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => setMobileUiEditsExpanded((prev) => !prev)}
+                          aria-expanded={mobileUiEditsExpanded}
+                          className="w-full min-h-[32px] px-2 rounded-lg flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.06em] text-[#A5AAB8] hover:bg-white/[0.08] cursor-pointer"
+                        >
+                          <span>UI Edits</span>
+                          <ChevronDown
+                            className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                              mobileUiEditsExpanded ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+
+                        {mobileUiEditsExpanded &&
+                          uiEditOptions.map((opt) => {
+                            const isSelected =
+                              activeScreen === 'super_admin' &&
+                              activeAdminSection === 'settings' &&
+                              settingsTarget === opt.id;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => {
+                                  handlePickSettingsTarget(opt.id);
+                                  setDrawerOpen(false);
+                                }}
+                                className={`w-full min-h-[36px] px-2.5 rounded-lg flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'bg-white text-[#1D1E23]'
+                                    : 'text-[#D6DAE4] hover:bg-white/[0.1] hover:text-white'
+                                }`}
+                              >
+                                <span className="flex items-center gap-2 min-w-0">
+                                  {opt.icon}
+                                  <span className="truncate">{opt.label}</span>
+                                </span>
+                                {opt.locked && (
+                                  <span
+                                    className={`text-[10px] font-mono-tabular px-1.5 py-0.5 rounded shrink-0 ${
+                                      isSelected
+                                        ? 'bg-[#ECEEF3] text-[#505460]'
+                                        : 'bg-white/10 text-[#C3C7D2]'
+                                    }`}
+                                  >
+                                    Locked
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
                 </nav>
               )}

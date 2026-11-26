@@ -543,7 +543,7 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
           <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
             <SectionHeadingBar
               icon={<FileText className="w-4 h-4" />}
-              title={`${assignedSchool.code} Past Questions`}
+              title={adminCms.catalogPanelTitle.replace(/\{SCHOOL\}/g, assignedSchool.code)}
               right={
                 <span className="font-mono-tabular text-xs font-semibold text-[#C3C7D2]">
                   {schoolDocuments.length} shown
@@ -576,6 +576,12 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                 ))}
               </div>
             </div>
+
+            {historyFilter === 'draft' && adminCms.draftNotice && (
+              <p className="rounded-xl bg-[#F6F7F9] px-3 py-2 text-xs text-[#505460]">
+                {adminCms.draftNotice}
+              </p>
+            )}
 
             <div className="divide-y divide-[#1A1B20]/[0.06]">
               {schoolDocuments.length === 0 ? (

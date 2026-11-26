@@ -4,6 +4,7 @@ import type {
   AuthenticatedUser,
   AuthPortal,
   PastQuestionDoc,
+  SettingsUiTarget,
   StudyMaterial,
   SuperAdminSectionId,
   WorkspaceViewMode,
@@ -158,6 +159,7 @@ function AppContent() {
     () => authService.getActiveSession()?.role ?? 'student'
   );
   const [superAdminSection, setSuperAdminSection] = useState<SuperAdminSectionId>('overview');
+  const [settingsTarget, setSettingsTarget] = useState<SettingsUiTarget>('normal_website');
   const [superAdminPreviewSchoolId, setSuperAdminPreviewSchoolId] = useState('sch-aaua');
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
     () => authService.hasCompletedOnboarding() || authService.getActiveSession() !== null
@@ -1205,6 +1207,31 @@ function AppContent() {
     [go]
   );
 
+  const handleSelectSettingsTarget = useCallback(
+    (target: SettingsUiTarget) => {
+      const actor = authRef.current;
+      if (!actor || actor.role !== 'super_admin') return;
+      runNavigationGuard(() => {
+        setSettingsTarget(target);
+        setSuperAdminSection('settings');
+        workspaceModeRef.current = 'super_admin';
+        setWorkspaceMode('super_admin');
+        if (navRef.current.screen !== 'super_admin') {
+          go(
+            {
+              screen: 'super_admin',
+              docId: null,
+              materialId: null,
+              stack: [],
+            },
+            INITIAL_PERF
+          );
+        }
+      });
+    },
+    [go]
+  );
+
   const handleSignOut = useCallback(() => {
     runNavigationGuard(() => {
       const current = authRef.current;
@@ -1294,6 +1321,12 @@ function AppContent() {
       onSelectAdminSection={
         authenticatedStudent.role === 'super_admin'
           ? handleSelectSuperAdminSection
+          : undefined
+      }
+      settingsTarget={settingsTarget}
+      onSelectSettingsTarget={
+        authenticatedStudent.role === 'super_admin'
+          ? handleSelectSettingsTarget
           : undefined
       }
       openSupportCount={openSupportCount}
@@ -1407,6 +1440,8 @@ function AppContent() {
               currentUser={authenticatedStudent}
               activeSection={superAdminSection}
               onSelectSection={handleSelectSuperAdminSection}
+              settingsTarget={settingsTarget}
+              onSelectSettingsTarget={setSettingsTarget}
               onSignedOutReset={handleSignOut}
             />
           </ProtectedRoute>

@@ -20,6 +20,7 @@ import {
 } from '../core/performanceStore';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { TactileButton } from '../components/ui/TactileButton';
+import { useArchiveStore } from '../hooks/useArchiveStore';
 
 export type PerformanceSubView = 'list' | 'detail' | 'overall';
 
@@ -78,6 +79,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   onBackView,
   onViewList,
 }) => {
+  const { siteCms } = useArchiveStore();
+  const perfCms = siteCms.performancePage;
   const records = useExamPerformances();
   const [localView, setLocalView] = useState<SubView>('list');
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(initialAttemptId);
@@ -148,10 +151,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             Back
           </TactileButton>
           <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
-            Overall rating
+            {perfCms.overallHeading}
           </h1>
           <p className="mt-1.5 text-xs text-[#C3C7D2]">
-            Combined score out of 100% across all graded questions
+            {perfCms.overallSubtitle}
           </p>
         </DarkHeaderCard>
 
@@ -654,7 +657,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       <DarkHeaderCard>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">Performance</h1>
+            <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">
+              {perfCms.heading}
+            </h1>
             <p className="mt-1.5 text-xs text-[#C3C7D2]">
               {records.length === 0
                 ? 'Your completed practice exams and scores will appear here'
@@ -673,10 +678,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             <ClipboardCheck className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-base font-bold text-[#1A1B20]">No exam performances yet</p>
+            <p className="text-base font-bold text-[#1A1B20]">{perfCms.emptyTitle}</p>
             <p className="mt-1 text-sm text-[#505460] max-w-md mx-auto leading-relaxed">
-              Take a practice exam (OBJ, Theory, True/False, or CBT) and submit it to inspect your
-              missed answers and overall rating out of 100%.
+              {perfCms.emptyBody}
             </p>
           </div>
           <TactileButton variant="dark" onClick={onStartExam}>
@@ -688,7 +692,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           <div className={`${card} flex flex-col sm:flex-row sm:items-center justify-between gap-3`}>
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#686C78]">
-                Combined progress
+                {perfCms.combinedLabel}
               </p>
               <p className="mt-0.5 text-sm font-bold text-[#1A1B20]">
                 {overall.gradedExams > 0

@@ -30,6 +30,28 @@ export function createDefaultSiteCms(): SiteCmsConfig {
       mockExamDescription:
         'Practice under real exam timing with questions drawn from past papers and course guides. Pick your course, format, and question count to start.',
     },
+    performancePage: {
+      heading: 'Performance',
+      emptyTitle: 'No exam performances yet',
+      emptyBody:
+        'Take a practice exam (OBJ, Theory, True/False, or CBT) and submit it to inspect your missed answers and overall rating out of 100%.',
+      combinedLabel: 'Combined progress',
+      overallHeading: 'Overall rating',
+      overallSubtitle: 'Combined score out of 100% across all graded questions',
+    },
+    notificationsPage: {
+      heading: 'Notifications',
+      emptyTitle: 'You are all caught up',
+      emptyBody: 'New past question uploads, system notices, and direct replies appear here.',
+    },
+    subscriptionPage: {
+      heading: 'Choose your plan',
+      subtitle: 'Select a billing cycle, then tap a plan below.',
+      freeTierName: 'Free Starter',
+      standardTierName: 'Standard Pass',
+      aiTierName: 'AI Scholar',
+      checkoutNote: 'Verified automatically on callback and logged for Super Admin reconciliation.',
+    },
     schoolAdminUi: {
       deskLabel: 'School Admin Panel · Ingestion Desk',
       deskHeadline: 'Upload & Manage {SCHOOL} Past Questions',
@@ -38,6 +60,8 @@ export function createDefaultSiteCms(): SiteCmsConfig {
       uploadPanelTitle: '1. Upload Past Question File',
       uploadPanelHint:
         'Accepts JPG, PNG, WEBP, PDF, DOCX, DOC, TXT, MD, CSV (max 10 MB; SVG/HTML/executables blocked)',
+      catalogPanelTitle: '{SCHOOL} Past Questions',
+      draftNotice: 'Draft papers stay private inside your university desk until published.',
     },
     aboutPage: {
       eyebrow: 'About pqguide',

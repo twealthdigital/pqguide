@@ -26,6 +26,8 @@ import {
   type SubscriptionTierId,
 } from '../core/subscription';
 import { archiveRepository } from '../services/archiveRepository';
+import { useArchiveStore } from '../hooks/useArchiveStore';
+import { TooltipBubble } from '../components/ui/TooltipBubble';
 
 interface SubscriptionScreenProps {
   currentUser?: AuthenticatedUser | null;
@@ -40,6 +42,8 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
   onBack,
   onClose,
 }) => {
+  const { siteCms } = useArchiveStore();
+  const subCms = siteCms.subscriptionPage;
   const { activeTier, billingPeriod } = useSubscription();
   const [selectedNoticeTier, setSelectedNoticeTier] = useState<SubscriptionTierId | null>(null);
   const [checkoutTier, setCheckoutTier] = useState<'standard' | null>(null);
@@ -146,23 +150,27 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
     <div className="min-h-[100dvh] bg-[#F6F7F9] text-[#1A1B20] page-enter">
       {/* Top Bar: Back icon (left) and Close icon (right) */}
       <div className="mx-auto flex max-w-5xl items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2 sm:px-6 lg:px-8">
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label="Go back"
-          className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-[#1A1B20]/[0.08] bg-white text-[#1A1B20] shadow-[0_2px_8px_-4px_rgba(24,25,30,0.14)] transition-transform duration-150 hover:bg-[#ECEEF3] active:scale-95"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
+        <TooltipBubble content="Return to previous page" side="right">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Go back"
+            className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-[#1A1B20]/[0.08] bg-white text-[#1A1B20] shadow-[0_2px_8px_-4px_rgba(24,25,30,0.14)] transition-transform duration-150 hover:bg-[#ECEEF3] active:scale-95"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+        </TooltipBubble>
 
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close subscription page"
-          className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-[#1A1B20]/[0.08] bg-white text-[#1A1B20] shadow-[0_2px_8px_-4px_rgba(24,25,30,0.14)] transition-transform duration-150 hover:bg-[#ECEEF3] active:scale-95"
-        >
-          <X className="h-5 w-5" />
-        </button>
+        <TooltipBubble content="Close subscription plans" side="left">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close subscription page"
+            className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-[#1A1B20]/[0.08] bg-white text-[#1A1B20] shadow-[0_2px_8px_-4px_rgba(24,25,30,0.14)] transition-transform duration-150 hover:bg-[#ECEEF3] active:scale-95"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </TooltipBubble>
       </div>
 
       <main className="mx-auto max-w-5xl px-4 pt-3 pb-12 sm:px-6 lg:px-8">
@@ -174,17 +182,17 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
               : paywallContext?.blockedByPaywall
                 ? 'Pick a plan to continue'
                 : isAiTrigger
-                  ? 'Unlock AI Scholar'
-                  : 'Choose your plan'}
+                  ? `Unlock ${subCms.aiTierName}`
+                  : subCms.heading}
           </h1>
           <p className="mt-1.5 text-sm text-[#5A5E6B]">
             {activeTier === 'infinity'
               ? 'Every control across Standard Pass and Tier 3 AI Scholar is unlocked for your Super Admin account.'
               : paywallContext?.blockedByPaywall
-                ? 'Free access has ended. Pick Standard or AI Scholar below.'
+                ? `Free access has ended. Pick ${subCms.standardTierName} or ${subCms.aiTierName} below.`
                 : isAiTrigger
-                  ? `${paywallContext?.featureLabel ?? 'This tool'} is part of AI Scholar (coming soon).`
-                  : 'Select a billing cycle, then tap a plan below.'}
+                  ? `${paywallContext?.featureLabel ?? 'This tool'} is part of ${subCms.aiTierName} (coming soon).`
+                  : subCms.subtitle}
           </p>
         </div>
 
@@ -276,12 +284,18 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
             const useDarkCard = isTier2;
             const isHighlightedOutline = isTier3 && isAiTrigger;
             const showPreviewNotice = selectedNoticeTier === tier.id;
+            const displayName =
+              tier.id === 'free'
+                ? subCms.freeTierName
+                : tier.id === 'standard'
+                  ? subCms.standardTierName
+                  : subCms.aiTierName;
 
             return (
               <section
                 key={tier.id}
                 ref={isTier3 ? tier3Ref : undefined}
-                aria-label={`${tier.name} plan`}
+                aria-label={`${displayName} plan`}
                 className={`relative flex flex-col justify-between rounded-3xl p-5 transition-all duration-200 sm:p-6 ${
                   useDarkCard
                     ? 'border-2 border-[#141519] bg-[#16171C] bg-gradient-to-b from-[#23252C] to-[#141519] text-white shadow-[0_22px_44px_-14px_rgba(14,15,20,0.68)]'
@@ -321,7 +335,7 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
                   </div>
 
                   {/* Plan Name */}
-                  <h2 className="mt-2 font-display text-xl font-bold">{tier.name}</h2>
+                  <h2 className="mt-2 font-display text-xl font-bold">{displayName}</h2>
 
                   {/* Price */}
                   <div
@@ -417,7 +431,7 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
                     >
                       {isTier3 && !AI_INTEGRATION_ENABLED
                         ? `Preview · ${subscriptionService.formatNaira(price.amountNaira)}`
-                        : `Choose ${tier.name.split(' ')[0]} · ${subscriptionService.formatNaira(price.amountNaira)}`}
+                        : `Choose ${displayName.split(' ')[0]} · ${subscriptionService.formatNaira(price.amountNaira)}`}
                     </button>
                   )}
 
@@ -462,14 +476,16 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
                   ({activePeriodMeta.label})
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => setCheckoutTier(null)}
-                aria-label="Close checkout"
-                className="h-9 w-9 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1A1B20] flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <TooltipBubble content="Close payment form" side="left">
+                <button
+                  type="button"
+                  onClick={() => setCheckoutTier(null)}
+                  aria-label="Close checkout"
+                  className="h-9 w-9 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] text-[#1A1B20] flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </TooltipBubble>
             </div>
 
             {checkoutError && (
@@ -510,7 +526,7 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
               <p className="text-[11px] text-[#686C78]">
-                Verified automatically on callback and logged for Super Admin reconciliation.
+                {subCms.checkoutNote}
               </p>
               <button
                 type="button"

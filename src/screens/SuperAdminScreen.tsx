@@ -3,6 +3,7 @@ import { CheckCircle2, ShieldAlert } from 'lucide-react';
 import { canAccessScreen } from '../core/permissions';
 import type {
   AuthenticatedUser,
+  SettingsUiTarget,
   SuperAdminSectionId,
 } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
@@ -24,6 +25,8 @@ interface SuperAdminScreenProps {
   currentUser: AuthenticatedUser;
   activeSection: SuperAdminSectionId;
   onSelectSection: (section: SuperAdminSectionId) => void;
+  settingsTarget: SettingsUiTarget;
+  onSelectSettingsTarget: (target: SettingsUiTarget) => void;
   onSignedOutReset: () => void;
 }
 
@@ -33,7 +36,7 @@ const SECTION_META: Record<
 > = {
   overview: {
     title: 'Overview',
-    subtitle: 'Key platform numbers, priority alerts, and starter dataset controls.',
+    subtitle: 'Live platform metrics, rolling payment windows, daily calendar status, and performance charts.',
   },
   students: {
     title: 'Students',
@@ -76,8 +79,8 @@ const SECTION_META: Record<
     subtitle: 'Auto-verified Paystack and Flutterwave receipts with tier breakdown.',
   },
   settings: {
-    title: 'Website UI & Pages Settings',
-    subtitle: 'Edit live Student UI, School Admin UI, About, Services, Help, and Customer Support.',
+    title: 'UI Edits & Content Settings',
+    subtitle: 'Select Normal Website, Uni Administrators, or Company Administrators to update live page content.',
   },
 };
 
@@ -85,6 +88,8 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
   currentUser,
   activeSection,
   onSelectSection,
+  settingsTarget,
+  onSelectSettingsTarget,
   onSignedOutReset,
 }) => {
   const store = useArchiveStore();
@@ -153,11 +158,7 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
 
       {activeSection === 'overview' && (
         <SuperAdminOverviewTab
-          currentUser={currentUser}
           store={store}
-          onNotice={handleNotice}
-          onError={handleError}
-          onSignedOutReset={onSignedOutReset}
           onNavigateSection={onSelectSection}
         />
       )}
@@ -242,8 +243,11 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
         <AdminSettingsTab
           currentUser={currentUser}
           store={store}
+          selectedTarget={settingsTarget}
+          onSelectTarget={onSelectSettingsTarget}
           onNotice={handleNotice}
           onError={handleError}
+          onSignedOutReset={onSignedOutReset}
         />
       )}
     </div>

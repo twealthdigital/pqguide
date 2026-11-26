@@ -29,6 +29,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   onOpenDocument,
 }) => {
   const store = useArchiveStore();
+  const notifCms = store.siteCms.notificationsPage;
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const [openedId, setOpenedId] = useState<string | null>(null);
   const [selectedGovernanceNotif, setSelectedGovernanceNotif] =
@@ -138,7 +139,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         </div>
 
         <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
-          {isSuperAdminFeed ? 'Platform Activity Alerts' : 'Notifications'}
+          {isSuperAdminFeed ? 'Platform Activity Alerts' : notifCms.heading}
         </h1>
 
         <div className="mt-3.5 grid grid-cols-2 gap-1 rounded-xl bg-white/10 p-1">
@@ -170,12 +171,12 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             <Bell className="w-5 h-5" />
           </div>
           <p className="font-display text-base font-bold text-[#1A1B20]">
-            You are all caught up
+            {notifCms.emptyTitle}
           </p>
           <p className="text-xs text-[#686C78] mt-1">
             {isSuperAdminFeed
               ? 'Admin actions, university updates, uploads, signups, and support messages show here.'
-              : 'New past question uploads, system notices, and direct replies appear here.'}
+              : notifCms.emptyBody}
           </p>
         </SurfaceCard>
       ) : isSuperAdminFeed ? (

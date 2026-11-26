@@ -267,6 +267,8 @@ export interface SiteCmsFaqItem {
   answer: string;
 }
 
+export type SettingsUiTarget = 'normal_website' | 'uni_admins' | 'company_admins';
+
 export interface SiteCmsConfig {
   studentUi: {
     homeHeroTitle: string;
@@ -285,12 +287,35 @@ export interface SiteCmsConfig {
     mockExamHeadline: string;
     mockExamDescription: string;
   };
+  performancePage: {
+    heading: string;
+    emptyTitle: string;
+    emptyBody: string;
+    combinedLabel: string;
+    overallHeading: string;
+    overallSubtitle: string;
+  };
+  notificationsPage: {
+    heading: string;
+    emptyTitle: string;
+    emptyBody: string;
+  };
+  subscriptionPage: {
+    heading: string;
+    subtitle: string;
+    freeTierName: string;
+    standardTierName: string;
+    aiTierName: string;
+    checkoutNote: string;
+  };
   schoolAdminUi: {
     deskLabel: string;
     deskHeadline: string;
     deskDescription: string;
     uploadPanelTitle: string;
     uploadPanelHint: string;
+    catalogPanelTitle: string;
+    draftNotice: string;
   };
   aboutPage: {
     eyebrow: string;
