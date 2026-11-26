@@ -21,7 +21,7 @@ interface AuthScreenProps {
 /**
  * Isolated Authentication Portal Dispatcher.
  * Renders three strictly separated portal experiences with zero shared role switchers:
- *  - 'student'      -> StudentAuthPortal (sign-in, validated registration, Google OAuth, OTP, recovery)
+ *  - 'student'      -> StudentAuthPortal (matric sign-in, validated registration, human-verification email OTP, recovery)
  *  - 'school_admin' -> SchoolAdminAuthPortal (approved email login, email activation, recovery)
  *  - 'super_admin'  -> SuperAdminAuthPortal (restricted console login, dev-only bootstrap, recovery)
  */

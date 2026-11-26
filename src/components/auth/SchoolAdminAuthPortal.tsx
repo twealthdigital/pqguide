@@ -71,6 +71,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
   // OTP & Recovery state
   const [pendingEmail, setPendingEmail] = useState('');
   const [pendingCodePreview, setPendingCodePreview] = useState('');
+  const [pendingDeliveryMode, setPendingDeliveryMode] = useState<'email' | 'preview'>('email');
   const [otpCode, setOtpCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
 
@@ -195,7 +196,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(400);
     if (!mountedRef.current) return;
 
-    const result = authService.startSchoolAdminActivation(activateEmail);
+    const result = await authService.startSchoolAdminActivation(activateEmail);
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -208,6 +209,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     setPendingEmail(result.data.email);
     setActivatedSchoolCode(result.data.schoolCode);
     setActivatedFullName(result.data.fullName);
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setActivatePassword('');
@@ -261,7 +263,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(380);
     if (!mountedRef.current) return;
 
-    const result = authService.resendCode(pendingEmail, purpose);
+    const result = await authService.resendCode(pendingEmail, purpose);
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -272,6 +274,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     setActiveAction(null);
     setSuccessAction('resend_code');
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setResendCooldown(30);
@@ -292,7 +295,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(420);
     if (!mountedRef.current) return;
 
-    const result = authService.requestPasswordReset(forgotEmail, 'school_admin');
+    const result = await authService.requestPasswordReset(forgotEmail, 'school_admin');
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -308,6 +311,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     setSuccessAction(null);
     setPendingEmail(result.data.email);
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setResendCooldown(30);
@@ -324,7 +328,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(400);
     if (!mountedRef.current) return;
 
-    const result = authService.verifyResetCode(pendingEmail, otpCode);
+    const result = await authService.verifyResetCode(pendingEmail, otpCode);
     if (!mountedRef.current) return;
 
     if (!result.ok) {
@@ -591,6 +595,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
             otpCode={otpCode}
             onOtpChange={setOtpCode}
             previewCode={pendingCodePreview}
+            deliveryMode={pendingDeliveryMode}
             disabled={isBusy}
             hasError={Boolean(errorMsg)}
             changeEmailLabel="Change email"
@@ -758,6 +763,7 @@ export const SchoolAdminAuthPortal: React.FC<PortalAuthProps> = ({
             otpCode={otpCode}
             onOtpChange={setOtpCode}
             previewCode={pendingCodePreview}
+            deliveryMode={pendingDeliveryMode}
             disabled={isBusy}
             hasError={Boolean(errorMsg)}
             changeEmailLabel="Change email"

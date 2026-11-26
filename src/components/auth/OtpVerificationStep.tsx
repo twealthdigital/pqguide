@@ -8,6 +8,7 @@ interface OtpVerificationStepProps {
   otpCode: string;
   onOtpChange: (next: string) => void;
   previewCode?: string;
+  deliveryMode?: 'email' | 'preview';
   disabled?: boolean;
   hasError?: boolean;
   onChangeEmail?: () => void;
@@ -19,6 +20,7 @@ export const OtpVerificationStep: React.FC<OtpVerificationStepProps> = ({
   otpCode,
   onOtpChange,
   previewCode,
+  deliveryMode,
   disabled = false,
   hasError = false,
   onChangeEmail,
@@ -51,7 +53,9 @@ export const OtpVerificationStep: React.FC<OtpVerificationStepProps> = ({
           </span>
           <div className="min-w-0">
             <p className="text-[11px] font-medium text-[#686C78]">
-              Verification sent to
+              {deliveryMode === 'email'
+                ? 'Human-verification email sent to'
+                : 'Verification target'}
             </p>
             <p className="text-xs font-bold text-[#1A1B20] truncate">
               {email}
@@ -71,12 +75,12 @@ export const OtpVerificationStep: React.FC<OtpVerificationStepProps> = ({
         )}
       </div>
 
-      {/* Development-Only OTP Inbox Preview — strictly hidden outside local dev builds */}
+      {/* Development-Only OTP Inbox Preview — shown only when RESEND_API_KEY is not set in local dev */}
       {import.meta.env.DEV && IS_DEV_BOOTSTRAP_ENV && Boolean(previewCode) && (
         <div className="rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] p-3 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.06em] text-[#92400E]">
-              Dev Inbox Preview (Non-Production Only)
+              Preview Code (Add RESEND_API_KEY for Real Inbox Delivery)
             </p>
             <p className="font-mono-tabular text-sm font-bold text-[#78350F] truncate mt-0.5">
               Code: {previewCode}

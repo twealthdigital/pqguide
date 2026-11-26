@@ -18,7 +18,6 @@ import { CreatableSelectInput } from '../ui/CreatableSelectInput';
 import { CustomSelect } from '../ui/CustomSelect';
 import { TactileButton } from '../ui/TactileButton';
 import { AuthPortalShell } from './AuthPortalShell';
-import { GoogleAuthButton } from './GoogleAuthButton';
 import { OtpVerificationStep } from './OtpVerificationStep';
 import { PasswordField } from './PasswordField';
 import { PasswordStrengthMeter } from './PasswordStrengthMeter';
@@ -31,8 +30,7 @@ type StudentActionKey =
   | 'resend_code'
   | 'forgot_request'
   | 'forgot_verify'
-  | 'forgot_save'
-  | 'google_auth';
+  | 'forgot_save';
 
 const STUDENT_LEVELS: StudentLevel[] = ['100L', '200L', '300L', '400L', '500L'];
 
@@ -69,12 +67,6 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
   const [signinPassword, setSigninPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
 
-  // Google Auth state (strictly Student Portal)
-  const [googleStatus, setGoogleStatus] = useState<{
-    tone: 'error' | 'warning' | 'success';
-    text: string;
-  } | null>(null);
-
   // Sign-Up state
   const [fullName, setFullName] = useState('');
   const [signupMatric, setSignupMatric] = useState('');
@@ -94,6 +86,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
   const [pendingEmail, setPendingEmail] = useState('');
   const [pendingMatric, setPendingMatric] = useState('');
   const [pendingCodePreview, setPendingCodePreview] = useState('');
+  const [pendingDeliveryMode, setPendingDeliveryMode] = useState<'email' | 'preview'>('email');
   const [otpCode, setOtpCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
 
@@ -124,7 +117,6 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
   useEffect(() => {
     setErrorMsg(null);
-    setGoogleStatus(null);
     if (keepNoticeRef.current) {
       keepNoticeRef.current = false;
     } else {
@@ -338,7 +330,6 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     if (isBusy) return;
     setErrorMsg(null);
     setInfoMsg(null);
-    setGoogleStatus(null);
     setActiveAction('signin');
 
     await scheduleDelay(380);
@@ -365,56 +356,6 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
     setSuccessAction(null);
     onAuthenticated(result.data.account, rememberMe);
-  };
-
-  const handleGoogleContinue = async () => {
-    if (isBusy) return;
-    setErrorMsg(null);
-    setInfoMsg(null);
-    setGoogleStatus(null);
-    setActiveAction('google_auth');
-
-    const result = await authService.authenticateStudentWithGoogle(rememberMe);
-    if (!mountedRef.current) return;
-
-    if (!result.ok || !result.data) {
-      setActiveAction(null);
-      setGoogleStatus({
-        tone: result.notConfigured ? 'warning' : 'error',
-        text: result.error ?? 'Unable to continue with Google.',
-      });
-      return;
-    }
-
-    if (result.data.account) {
-      setActiveAction(null);
-      setSuccessAction('google_auth');
-      setGoogleStatus({
-        tone: 'success',
-        text: 'Google account verified. Redirecting to your Student Dashboard...',
-      });
-      await scheduleDelay(450);
-      if (!mountedRef.current) return;
-      setSuccessAction(null);
-      onAuthenticated(result.data.account, rememberMe);
-      return;
-    }
-
-    if (result.data.needsProfileCompletion && result.data.googleIdentity) {
-      const id = result.data.googleIdentity;
-      setActiveAction(null);
-      setFullName((prev) => prev || id.fullName);
-      setSignupEmail(id.email);
-      setInfoMsg(
-        `Verified Google email (${id.email}). Complete your matric number and department details below.`
-      );
-      if (view !== 'signup') {
-        navigateView('signup', true);
-      }
-      return;
-    }
-
-    setActiveAction(null);
   };
 
   const handleSignUpSubmit = async (e: React.FormEvent) => {
@@ -454,6 +395,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     setSuccessAction('signup');
     setPendingEmail(result.data.email);
     setPendingMatric(result.data.matricNumber);
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setResendCooldown(30);
@@ -474,7 +416,8 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(400);
     if (!mountedRef.current) return;
 
-    const result = authService.verifySignupCode(pendingEmail, otpCode, rememberMe);
+    const result = await authService.verifySignupCode(pendingEmail, otpCode, rememberMe);
+    if (!mountedRef.current) return;
     if (!result.ok || !result.data) {
       setActiveAction(null);
       setErrorMsg(result.error ?? 'Verification failed.');
@@ -498,7 +441,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(380);
     if (!mountedRef.current) return;
 
-    const result = authService.resendCode(pendingEmail, purpose);
+    const result = await authService.resendCode(pendingEmail, purpose);
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -509,10 +452,15 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
 
     setActiveAction(null);
     setSuccessAction('resend_code');
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setResendCooldown(30);
-    setInfoMsg(`A new 6-digit verification code has been issued to ${pendingEmail}.`);
+    setInfoMsg(
+      result.data.deliveryMode === 'email'
+        ? `A new 6-digit verification code was emailed to ${pendingEmail}.`
+        : `A new 6-digit verification code is ready for ${pendingEmail}.`
+    );
 
     await scheduleDelay(550);
     if (!mountedRef.current) return;
@@ -529,7 +477,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(420);
     if (!mountedRef.current) return;
 
-    const result = authService.requestPasswordReset(forgotIdentifier, 'student');
+    const result = await authService.requestPasswordReset(forgotIdentifier, 'student');
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -546,10 +494,15 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     setSuccessAction(null);
     setPendingEmail(result.data.email);
     setPendingMatric(result.data.matricNumber);
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setResendCooldown(30);
-    setInfoMsg(`Reset code dispatched to ${result.data.email}.`);
+    setInfoMsg(
+      result.data.deliveryMode === 'email'
+        ? `Reset code emailed to ${result.data.email}.`
+        : `Reset code generated for ${result.data.email}.`
+    );
     navigateView('forgot_verify', true);
   };
 
@@ -562,7 +515,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(400);
     if (!mountedRef.current) return;
 
-    const result = authService.verifyResetCode(pendingEmail, otpCode);
+    const result = await authService.verifyResetCode(pendingEmail, otpCode);
     if (!mountedRef.current) return;
 
     if (!result.ok) {
@@ -620,8 +573,8 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
   const headingMap: Record<string, string> = {
     signin: 'Student Sign In',
     signup: 'Create Student Account',
-    signup_success: 'Registration Created',
-    verify_signup: 'Verify Your Email',
+    signup_success: 'Matric Profile Registered',
+    verify_signup: 'Confirm You Are Human',
     forgot_request: 'Reset Student Password',
     forgot_verify: 'Enter Reset Code',
     forgot_reset: 'Set New Password',
@@ -629,11 +582,11 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
   };
 
   const subheadingMap: Record<string, string> = {
-    signin: 'Access AAUA past questions, study guides, and CBT practice exams.',
-    signup: 'Register once using your 9-digit matriculation number and academic details.',
-    signup_success: 'One quick step left — verify your email address to unlock your dashboard.',
-    verify_signup: `Confirm the 6-digit verification code for ${pendingEmail}.`,
-    forgot_request: 'Enter your matric number or registered email to receive a reset code.',
+    signin: 'Sign in with your verified 9-digit matric number.',
+    signup: 'Your matric number is your primary student ID. We only use your email for human verification.',
+    signup_success: 'One quick step left — enter the 6-digit email code to prove you are human.',
+    verify_signup: `Confirm the 6-digit code sent to ${pendingEmail} for matric ${pendingMatric}.`,
+    forgot_request: 'Enter your matric number or verified email to receive a reset code.',
     forgot_verify: `Enter the 6-digit code sent to ${pendingEmail}.`,
     forgot_reset: 'Create a strong new password for your student account.',
     forgot_success: 'Your student account password has been changed successfully.',
@@ -677,19 +630,23 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
                 htmlFor="student-signin-id"
                 className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
               >
-                Matric Number or Registered Email
+                Matric Number
               </label>
               <input
                 id="student-signin-id"
                 type="text"
+                inputMode="numeric"
+                maxLength={9}
                 autoCapitalize="none"
                 autoCorrect="off"
                 autoComplete="username"
                 disabled={isBusy}
                 value={signinIdentifier}
-                onChange={(e) => setSigninIdentifier(e.target.value)}
-                placeholder="e.g. 230404001 or student@aaua.edu.ng"
-                className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
+                onChange={(e) =>
+                  setSigninIdentifier(e.target.value.replace(/\D/g, '').slice(0, 9))
+                }
+                placeholder="e.g. 230404001"
+                className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 font-mono-tabular text-sm text-[#1A1B20] placeholder:text-[#9AA0AE] focus:border-[#1D1E23] transition-colors disabled:opacity-60"
               />
             </div>
 
@@ -740,19 +697,10 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
                 successLabel="Signed in!"
                 disabled={isBusy}
               >
-                Login to Student Portal
+                Login with Matric Number
               </TactileButton>
             </div>
           </form>
-
-          <GoogleAuthButton
-            mode="signin"
-            loading={activeAction === 'google_auth'}
-            success={successAction === 'google_auth'}
-            disabled={isBusy}
-            statusMessage={googleStatus}
-            onClick={handleGoogleContinue}
-          />
 
           <p className="text-center text-xs text-[#686C78] pt-1">
             New student here?{' '}
@@ -882,7 +830,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
                 htmlFor="signup-email"
                 className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
               >
-                Email Address
+                Email Address <span className="font-normal text-[#686C78]">(human verification)</span>
               </label>
               <input
                 id="signup-email"
@@ -891,7 +839,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
                 disabled={isBusy}
                 value={signupEmail}
                 onChange={(e) => setSignupEmail(e.target.value)}
-                placeholder="you@aaua.edu.ng"
+                placeholder="you@example.com"
                 aria-invalid={Boolean(
                   signupValidation.emailFeedback && !signupValidation.emailFeedback.valid
                 )}
@@ -901,9 +849,13 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
                     : 'border-[#1A1B20]/15 focus:border-[#1D1E23]'
                 }`}
               />
-              {signupValidation.emailFeedback && (
+              {signupValidation.emailFeedback ? (
                 <p className="mt-1 pl-2 text-[11px] font-medium text-[#B91C1C]">
                   {signupValidation.emailFeedback.text}
+                </p>
+              ) : (
+                <p className="mt-1 pl-2 text-[11px] text-[#686C78]">
+                  Only used to send a 6-digit code confirming you are human and for password recovery.
                 </p>
               )}
             </div>
@@ -947,15 +899,6 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
               </TactileButton>
             </div>
           </form>
-
-          <GoogleAuthButton
-            mode="signup"
-            loading={activeAction === 'google_auth'}
-            success={successAction === 'google_auth'}
-            disabled={isBusy}
-            statusMessage={googleStatus}
-            onClick={handleGoogleContinue}
-          />
 
           <p className="text-center text-xs text-[#686C78] pt-1">
             Already registered?{' '}
@@ -1035,6 +978,7 @@ export const StudentAuthPortal: React.FC<PortalAuthProps> = ({
             otpCode={otpCode}
             onOtpChange={setOtpCode}
             previewCode={pendingCodePreview}
+            deliveryMode={pendingDeliveryMode}
             disabled={isBusy}
             hasError={Boolean(errorMsg)}
             changeEmailLabel={view === 'verify_signup' ? 'Edit details' : 'Change account'}

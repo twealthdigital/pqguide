@@ -79,6 +79,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
   // Recovery state
   const [pendingEmail, setPendingEmail] = useState('');
   const [pendingCodePreview, setPendingCodePreview] = useState('');
+  const [pendingDeliveryMode, setPendingDeliveryMode] = useState<'email' | 'preview'>('email');
   const [otpCode, setOtpCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [forgotEmail, setForgotEmail] = useState('');
@@ -268,7 +269,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(420);
     if (!mountedRef.current) return;
 
-    const result = authService.requestPasswordReset(forgotEmail, 'super_admin');
+    const result = await authService.requestPasswordReset(forgotEmail, 'super_admin');
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -284,6 +285,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     setSuccessAction(null);
     setPendingEmail(result.data.email);
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setResendCooldown(30);
@@ -300,7 +302,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(400);
     if (!mountedRef.current) return;
 
-    const result = authService.verifyResetCode(pendingEmail, otpCode);
+    const result = await authService.verifyResetCode(pendingEmail, otpCode);
     if (!mountedRef.current) return;
 
     if (!result.ok) {
@@ -362,7 +364,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(380);
     if (!mountedRef.current) return;
 
-    const result = authService.resendCode(pendingEmail, 'reset');
+    const result = await authService.resendCode(pendingEmail, 'reset');
     if (!mountedRef.current) return;
 
     if (!result.ok || !result.data) {
@@ -373,6 +375,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
     setActiveAction(null);
     setSuccessAction('resend_code');
+    setPendingDeliveryMode(result.data.deliveryMode);
     setPendingCodePreview(result.data.verificationCode ?? '');
     setOtpCode('');
     setResendCooldown(30);
@@ -770,6 +773,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
             otpCode={otpCode}
             onOtpChange={setOtpCode}
             previewCode={pendingCodePreview}
+            deliveryMode={pendingDeliveryMode}
             disabled={isBusy}
             hasError={Boolean(errorMsg)}
             changeEmailLabel="Change email"

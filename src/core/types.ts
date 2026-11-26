@@ -410,7 +410,7 @@ export interface StudentAccount {
   passwordHash: string;
   passwordSalt: string;
   isEmailVerified: boolean;
-  authProvider?: 'local' | 'google';
+  authProvider?: 'local';
   createdAt: string;
   createdBy?: string;
   updatedAt?: string;

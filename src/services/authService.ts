@@ -10,11 +10,6 @@ import type {
 } from '../core/types';
 import { archiveRepository } from './archiveRepository';
 import {
-  getGoogleOAuthConfigStatus,
-  googleAuthService,
-  type VerifiedGoogleStudentIdentity,
-} from './auth/googleAuthService';
-import {
   evaluatePasswordStrength,
   validatePasswordForRole,
 } from './auth/passwordPolicy';
@@ -22,11 +17,10 @@ import { sessionService } from './auth/sessionService';
 import { localStore } from './storage/localStore';
 
 const ACCOUNTS_KEY = 'pqguide_student_accounts_v1';
-const OTP_KEY = 'pqguide_student_otp_v1';
 const ONBOARDING_KEY = 'pqguide_onboarding_done_v1';
 const BOOTSTRAP_LOCK_KEY = 'pqguide_dev_bootstrap_lock_v1';
 
-export { evaluatePasswordStrength, getGoogleOAuthConfigStatus, validatePasswordForRole };
+export { evaluatePasswordStrength, validatePasswordForRole };
 
 export const IS_DEV_BOOTSTRAP_ENV: boolean = import.meta.env.DEV;
 
@@ -125,12 +119,8 @@ export function validateEmailAddress(raw: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 }
 
-interface PendingOtpRecord {
-  email: string;
-  purpose: 'signup' | 'reset' | 'admin_activate';
-  code: string;
-  expiresAt: number;
-}
+type OtpPurpose = 'signup' | 'reset' | 'admin_activate';
+export type OtpDeliveryMode = 'email' | 'preview';
 
 function normalizeStoredAccount(raw: StudentAccount): StudentAccount {
   const role: UserRole =
@@ -173,15 +163,6 @@ function writeAccounts(accounts: StudentAccount[]): void {
   localStore.setJson(ACCOUNTS_KEY, accounts);
 }
 
-function readOtpRecords(): PendingOtpRecord[] {
-  const parsed = localStore.getJson<PendingOtpRecord[]>(OTP_KEY);
-  return Array.isArray(parsed) ? parsed : [];
-}
-
-function writeOtpRecords(records: PendingOtpRecord[]): void {
-  localStore.setJson(OTP_KEY, records);
-}
-
 function generateSalt(): string {
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     const bytes = new Uint8Array(16);
@@ -189,15 +170,6 @@ function generateSalt(): string {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   }
   return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 14)}`;
-}
-
-function generateSixDigitCode(): string {
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    const buf = new Uint32Array(1);
-    crypto.getRandomValues(buf);
-    return String(100000 + (buf[0] % 900000));
-  }
-  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 async function legacySha256Hash(password: string, salt: string): Promise<string> {
@@ -260,23 +232,87 @@ async function verifyPassword(password: string, salt: string, storedHash: string
   return candidateLegacy === storedHash;
 }
 
-function issueOtp(
+async function dispatchServerEmailOtp(
   email: string,
-  purpose: 'signup' | 'reset' | 'admin_activate'
-): string {
-  const normalizedEmail = email.trim().toLowerCase();
-  const code = generateSixDigitCode();
-  const next: PendingOtpRecord = {
-    email: normalizedEmail,
-    purpose,
-    code,
-    expiresAt: Date.now() + 10 * 60 * 1000,
-  };
-  const filtered = readOtpRecords().filter(
-    (r) => !(r.email === normalizedEmail && r.purpose === purpose)
-  );
-  writeOtpRecords([next, ...filtered]);
-  return code;
+  purpose: OtpPurpose,
+  matricNumber?: string
+): Promise<
+  | { ok: true; deliveryMode: OtpDeliveryMode; previewCode?: string }
+  | { ok: false; error: string }
+> {
+  try {
+    const response = await fetch('/api/auth/email-otp/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        purpose,
+        matricNumber,
+      }),
+    });
+    const payload = (await response.json()) as {
+      ok?: boolean;
+      error?: string;
+      deliveryMode?: OtpDeliveryMode;
+      previewCode?: string;
+    };
+    if (!response.ok || !payload.ok) {
+      return {
+        ok: false,
+        error: payload.error || 'Could not send email verification code.',
+      };
+    }
+    const deliveryMode: OtpDeliveryMode =
+      payload.deliveryMode === 'email' ? 'email' : 'preview';
+    return {
+      ok: true,
+      deliveryMode,
+      previewCode:
+        deliveryMode === 'preview' && IS_DEV_BOOTSTRAP_ENV
+          ? payload.previewCode
+          : undefined,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach verification server. Please try again.',
+    };
+  }
+}
+
+async function verifyServerEmailOtp(
+  email: string,
+  purpose: OtpPurpose,
+  rawCode: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const code = rawCode.replace(/\s+/g, '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return { ok: false, error: 'Enter the 6-digit code sent to your email.' };
+  }
+  try {
+    const response = await fetch('/api/auth/email-otp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        purpose,
+        code,
+      }),
+    });
+    const payload = (await response.json()) as { ok?: boolean; error?: string };
+    if (!response.ok || !payload.ok) {
+      return {
+        ok: false,
+        error: payload.error || 'Incorrect or expired verification code.',
+      };
+    }
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach verification server. Please try again.',
+    };
+  }
 }
 
 export interface SignupInput {
@@ -466,7 +502,6 @@ export const authService = {
     }
 
     localStore.removeItem(ACCOUNTS_KEY);
-    localStore.removeItem(OTP_KEY);
     localStore.removeItem(BOOTSTRAP_LOCK_KEY);
     sessionService.clearSession();
     archiveRepository.resetAllForDev();
@@ -510,7 +545,14 @@ export const authService = {
 
   async startSignup(
     input: SignupInput
-  ): Promise<AuthActionResult<{ email: string; matricNumber: string; verificationCode?: string }>> {
+  ): Promise<
+    AuthActionResult<{
+      email: string;
+      matricNumber: string;
+      deliveryMode: OtpDeliveryMode;
+      verificationCode?: string;
+    }>
+  > {
     const fullName = sanitizeSingleLine(input.fullName, 120);
     const faculty = sanitizeSingleLine(input.faculty, 120);
     const department = sanitizeSingleLine(input.department, 120);
@@ -561,6 +603,11 @@ export const authService = {
       };
     }
 
+    const otpSend = await dispatchServerEmailOtp(email, 'signup', matricCheck.normalized);
+    if (!otpSend.ok) {
+      return { ok: false, error: otpSend.error };
+    }
+
     const accounts = readAccounts();
     const salt = generateSalt();
     const passwordHash = await hashPassword(input.password, salt);
@@ -600,21 +647,21 @@ export const authService = {
     );
     writeAccounts([pendingAccount, ...cleaned]);
 
-    const verificationCode = issueOtp(email, 'signup');
     return {
       ok: true,
       data: {
         email,
         matricNumber: matricCheck.normalized,
-        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
+        deliveryMode: otpSend.deliveryMode,
+        verificationCode: otpSend.previewCode,
       },
     };
   },
 
-  resendCode(
+  async resendCode(
     email: string,
-    purpose: 'signup' | 'reset' | 'admin_activate'
-  ): AuthActionResult<{ verificationCode?: string }> {
+    purpose: OtpPurpose
+  ): Promise<AuthActionResult<{ deliveryMode: OtpDeliveryMode; verificationCode?: string }>> {
     const normalizedEmail = email.trim().toLowerCase();
     const accounts = readAccounts();
     const matched = accounts.find((a) => a.email === normalizedEmail);
@@ -624,35 +671,34 @@ export const authService = {
     if (purpose === 'admin_activate' && matched.role !== 'school_admin') {
       return { ok: false, error: 'This email is not approved for School Admin activation.' };
     }
-    const verificationCode = issueOtp(normalizedEmail, purpose);
+
+    const otpSend = await dispatchServerEmailOtp(
+      normalizedEmail,
+      purpose,
+      matched.role === 'student' ? matched.matricNumber : undefined
+    );
+    if (!otpSend.ok) {
+      return { ok: false, error: otpSend.error };
+    }
+
     return {
       ok: true,
       data: {
-        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
+        deliveryMode: otpSend.deliveryMode,
+        verificationCode: otpSend.previewCode,
       },
     };
   },
 
-  verifySignupCode(
+  async verifySignupCode(
     email: string,
     rawCode: string,
     rememberMe = true
-  ): AuthActionResult<{ account: AuthenticatedUser }> {
+  ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
     const normalizedEmail = email.trim().toLowerCase();
-    const code = rawCode.replace(/\s+/g, '').trim();
-    if (code.length !== 6) {
-      return { ok: false, error: 'Enter the 6-digit code sent to your email.' };
-    }
-
-    const records = readOtpRecords();
-    const record = records.find(
-      (r) => r.email === normalizedEmail && r.purpose === 'signup'
-    );
-    if (!record || Date.now() > record.expiresAt) {
-      return { ok: false, error: 'Verification code expired. Tap Resend code.' };
-    }
-    if (record.code !== code) {
-      return { ok: false, error: 'Incorrect verification code. Check and try again.' };
+    const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'signup', rawCode);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
     }
 
     const accounts = readAccounts();
@@ -672,9 +718,6 @@ export const authService = {
     };
     writeAccounts(
       accounts.map((a) => (a.email === normalizedEmail ? verifiedAccount : a))
-    );
-    writeOtpRecords(
-      records.filter((r) => !(r.email === normalizedEmail && r.purpose === 'signup'))
     );
 
     const publicUser = toAuthenticatedUser(verifiedAccount);
@@ -713,141 +756,6 @@ export const authService = {
   },
 
   // -------------------------------------------------------------------------
-  // Student Google OAuth Integration (Strictly Student Portal Only)
-  // -------------------------------------------------------------------------
-
-  async authenticateStudentWithGoogle(
-    rememberMe = true
-  ): Promise<
-    AuthActionResult<{
-      account?: AuthenticatedUser;
-      needsProfileCompletion?: boolean;
-      googleIdentity?: VerifiedGoogleStudentIdentity;
-    }>
-  > {
-    const gisResult = await googleAuthService.authenticateStudent();
-    if (!gisResult.ok || !gisResult.identity) {
-      return {
-        ok: false,
-        notConfigured: gisResult.notConfigured,
-        error: gisResult.error ?? 'Google authentication could not be completed.',
-      };
-    }
-
-    const identity = gisResult.identity;
-    const email = identity.email.trim().toLowerCase();
-    const accounts = readAccounts();
-    const repoAccounts = archiveRepository.getSnapshot().accounts;
-
-    // Never allow Google Auth to grant or log into School Admin or Super Admin accounts
-    const adminConflict =
-      accounts.find((a) => a.email === email && a.role !== 'student') ||
-      repoAccounts.find((a) => a.email.toLowerCase() === email && a.role !== 'student');
-    if (adminConflict) {
-      return {
-        ok: false,
-        error:
-          'This Google email is associated with an administrator account. Google Sign-In is disabled for administrator access; use your designated admin login portal.',
-      };
-    }
-
-    const existingStudent = accounts.find(
-      (a) => a.email === email && a.role === 'student' && a.isEmailVerified
-    );
-    if (!existingStudent) {
-      return {
-        ok: true,
-        data: {
-          needsProfileCompletion: true,
-          googleIdentity: identity,
-        },
-      };
-    }
-
-    const repoAcc = repoAccounts.find(
-      (a) => a.id === existingStudent.id || a.email.toLowerCase() === email
-    );
-    const resolvedStatus: AccountStatus = repoAcc?.status ?? existingStudent.status;
-
-    if (resolvedStatus === 'banned') {
-      return {
-        ok: false,
-        error: 'This account has been banned. Contact a Super Administrator.',
-      };
-    }
-    if (resolvedStatus === 'suspended') {
-      return {
-        ok: false,
-        error: 'This account is suspended. Contact a Super Administrator.',
-      };
-    }
-    if (resolvedStatus === 'revoked') {
-      return {
-        ok: false,
-        error: 'Access for this account has been revoked.',
-      };
-    }
-    if (existingStudent.adminVerified === false || repoAcc?.adminVerified === false) {
-      return {
-        ok: false,
-        error: 'Login is pending Super Admin verification.',
-      };
-    }
-
-    const now = new Date().toISOString();
-    const updatedRecord: StudentAccount = {
-      ...existingStudent,
-      authProvider: 'google',
-      updatedAt: now,
-    };
-    writeAccounts(accounts.map((a) => (a.id === updatedRecord.id ? updatedRecord : a)));
-
-    const publicUser: AuthenticatedUser = {
-      ...toAuthenticatedUser(updatedRecord),
-      status: resolvedStatus,
-      warningsCount: repoAcc?.warningsCount ?? updatedRecord.warningsCount ?? 0,
-      moderationNote: repoAcc?.moderationNote ?? updatedRecord.moderationNote,
-    };
-
-    archiveRepository.syncManagedAccount({
-      id: publicUser.id,
-      fullName: publicUser.fullName,
-      email: publicUser.email,
-      matricNumber: publicUser.matricNumber,
-      level: publicUser.level,
-      faculty: publicUser.faculty,
-      department: publicUser.department,
-      role: 'student',
-      schoolId: publicUser.assignedSchoolId,
-      schoolCode: publicUser.assignedSchoolCode ?? 'AAUA',
-      status: publicUser.status,
-      adminVerified: publicUser.adminVerified ?? true,
-      needsPasswordSetup: false,
-      warningsCount: publicUser.warningsCount,
-      moderationNote: publicUser.moderationNote,
-      sessionState: 'logged_in',
-      lastLoginAt: now,
-      lastActiveAt: now,
-      createdAt: publicUser.createdAt,
-      createdBy: publicUser.createdBy,
-    });
-    archiveRepository.setAccountSessionState(publicUser.id, 'logged_in');
-    archiveRepository.recordUserActivity({
-      userId: publicUser.id,
-      userName: publicUser.fullName,
-      userEmail: publicUser.email,
-      userRole: 'student',
-      matricNumber: publicUser.matricNumber,
-      level: publicUser.level,
-      type: 'login',
-      detail: 'Signed in on student portal via Google',
-    });
-
-    this.saveActiveSession(publicUser, rememberMe);
-    return { ok: true, data: { account: publicUser } };
-  },
-
-  // -------------------------------------------------------------------------
   // Portal-Isolated Sign-In & School Admin Email Activation
   // -------------------------------------------------------------------------
 
@@ -863,7 +771,7 @@ export const authService = {
         ok: false,
         error:
           portal === 'student'
-            ? 'Enter your matric number or email address.'
+            ? 'Enter your 9-digit matric number.'
             : 'Enter your approved administrator email address.',
       };
     }
@@ -872,7 +780,6 @@ export const authService = {
     }
 
     const accounts = readAccounts();
-    const isEmailInput = trimmed.includes('@');
     let account: StudentAccount | undefined;
 
     if (portal !== 'student') {
@@ -900,20 +807,6 @@ export const authService = {
             'Your email access is approved for first-time setup. Tap "Activate approved email" below to verify and create your password.',
         };
       }
-    } else if (isEmailInput) {
-      const normalizedEmail = trimmed.toLowerCase();
-      if (!validateEmailAddress(normalizedEmail)) {
-        return { ok: false, error: 'Enter a valid email address.' };
-      }
-      account = accounts.find(
-        (a) => a.email === normalizedEmail && a.role === 'student' && a.isEmailVerified
-      );
-      if (!account) {
-        return {
-          ok: false,
-          error: 'No verified student account matches this email address.',
-        };
-      }
     } else {
       const matricCheck = validateMatricNumber(trimmed);
       if (!matricCheck.valid) {
@@ -928,7 +821,7 @@ export const authService = {
       if (!account) {
         return {
           ok: false,
-          error: 'No verified account found for this matric number. Create one first.',
+          error: 'No verified student account found for this matric number. Create one first.',
         };
       }
     }
@@ -1018,9 +911,17 @@ export const authService = {
     return { ok: true, data: { account: publicUser } };
   },
 
-  startSchoolAdminActivation(
+  async startSchoolAdminActivation(
     rawEmail: string
-  ): AuthActionResult<{ email: string; fullName: string; schoolCode: string; verificationCode?: string }> {
+  ): Promise<
+    AuthActionResult<{
+      email: string;
+      fullName: string;
+      schoolCode: string;
+      deliveryMode: OtpDeliveryMode;
+      verificationCode?: string;
+    }>
+  > {
     const email = sanitizeSingleLine(rawEmail, 160).toLowerCase();
     if (!validateEmailAddress(email)) {
       return { ok: false, error: 'Enter a valid email address.' };
@@ -1049,14 +950,19 @@ export const authService = {
       };
     }
 
-    const verificationCode = issueOtp(email, 'admin_activate');
+    const otpSend = await dispatchServerEmailOtp(email, 'admin_activate');
+    if (!otpSend.ok) {
+      return { ok: false, error: otpSend.error };
+    }
+
     return {
       ok: true,
       data: {
         email,
         fullName: target.fullName,
         schoolCode: target.assignedSchoolCode ?? 'AAUA',
-        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
+        deliveryMode: otpSend.deliveryMode,
+        verificationCode: otpSend.previewCode,
       },
     };
   },
@@ -1069,20 +975,9 @@ export const authService = {
     rememberMe = true
   ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
     const normalizedEmail = sanitizeSingleLine(rawEmail, 160).toLowerCase();
-    const code = rawCode.replace(/\s+/g, '').trim();
-    if (code.length !== 6) {
-      return { ok: false, error: 'Enter the 6-digit verification code.' };
-    }
-
-    const records = readOtpRecords();
-    const record = records.find(
-      (r) => r.email === normalizedEmail && r.purpose === 'admin_activate'
-    );
-    if (!record || Date.now() > record.expiresAt) {
-      return { ok: false, error: 'Activation code expired. Request a new code.' };
-    }
-    if (record.code !== code) {
-      return { ok: false, error: 'Incorrect activation code. Check and try again.' };
+    const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'admin_activate', rawCode);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
     }
 
     const pwError = validatePasswordForRole(newPassword, 'school_admin');
@@ -1116,9 +1011,6 @@ export const authService = {
     };
 
     writeAccounts(accounts.map((a) => (a.id === target.id ? updated : a)));
-    writeOtpRecords(
-      records.filter((r) => !(r.email === normalizedEmail && r.purpose === 'admin_activate'))
-    );
 
     const publicUser = toAuthenticatedUser(updated);
     archiveRepository.syncManagedAccount({
@@ -1761,26 +1653,28 @@ export const authService = {
           : a
       )
     );
-    writeOtpRecords(
-      readOtpRecords().filter(
-        (r) => !(r.email === target.email && (r.purpose === 'reset' || r.purpose === 'admin_activate'))
-      )
-    );
 
     return { ok: true };
   },
 
-  requestPasswordReset(
+  async requestPasswordReset(
     rawMatricOrEmail: string,
     portal: AuthPortal = 'student'
-  ): AuthActionResult<{ email: string; matricNumber: string; verificationCode?: string }> {
+  ): Promise<
+    AuthActionResult<{
+      email: string;
+      matricNumber: string;
+      deliveryMode: OtpDeliveryMode;
+      verificationCode?: string;
+    }>
+  > {
     const trimmed = sanitizeIdentifier(rawMatricOrEmail, 160);
     if (!trimmed) {
       return {
         ok: false,
         error:
           portal === 'student'
-            ? 'Enter your matric number or registered email.'
+            ? 'Enter your matric number or verified email.'
             : 'Enter your registered administrator email.',
       };
     }
@@ -1809,35 +1703,32 @@ export const authService = {
       };
     }
 
-    const verificationCode = issueOtp(account.email, 'reset');
+    const otpSend = await dispatchServerEmailOtp(
+      account.email,
+      'reset',
+      portal === 'student' ? account.matricNumber : undefined
+    );
+    if (!otpSend.ok) {
+      return { ok: false, error: otpSend.error };
+    }
+
     return {
       ok: true,
       data: {
         email: account.email,
         matricNumber: account.matricNumber,
-        verificationCode: IS_DEV_BOOTSTRAP_ENV ? verificationCode : undefined,
+        deliveryMode: otpSend.deliveryMode,
+        verificationCode: otpSend.previewCode,
       },
     };
   },
 
-  verifyResetCode(email: string, rawCode: string): AuthActionResult {
+  async verifyResetCode(email: string, rawCode: string): Promise<AuthActionResult> {
     const normalizedEmail = email.trim().toLowerCase();
-    const code = rawCode.replace(/\s+/g, '').trim();
-    if (code.length !== 6) {
-      return { ok: false, error: 'Enter the 6-digit code sent to your email.' };
+    const verifyResult = await verifyServerEmailOtp(normalizedEmail, 'reset', rawCode);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
     }
-
-    const records = readOtpRecords();
-    const record = records.find(
-      (r) => r.email === normalizedEmail && r.purpose === 'reset'
-    );
-    if (!record || Date.now() > record.expiresAt) {
-      return { ok: false, error: 'Reset code expired. Tap Resend code.' };
-    }
-    if (record.code !== code) {
-      return { ok: false, error: 'Incorrect reset code. Check and try again.' };
-    }
-
     return { ok: true };
   },
 
@@ -1879,12 +1770,6 @@ export const authService = {
               updatedAt: now,
             }
           : a
-      )
-    );
-
-    writeOtpRecords(
-      readOtpRecords().filter(
-        (r) => !(r.email === normalizedEmail && r.purpose === 'reset')
       )
     );
 
