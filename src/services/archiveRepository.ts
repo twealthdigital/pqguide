@@ -2,6 +2,7 @@ import {
   canManageSchoolDocument,
   hasPermission,
   isActiveAccount,
+  isRestrictedAccount,
 } from '../core/permissions';
 import {
   sanitizeIdentifier,
@@ -365,6 +366,17 @@ class ArchiveRepository {
   private state: AppStoreState = loadState();
   private listeners: Set<Listener> = new Set();
 
+  constructor() {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (event) => {
+        if (event.key === STORAGE_KEY) {
+          this.state = loadState();
+          this.listeners.forEach((l) => l());
+        }
+      });
+    }
+  }
+
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
     return () => {
@@ -447,6 +459,9 @@ class ArchiveRepository {
 
   getNotificationsForWorkspace(workspace: WorkspaceViewMode, userId?: string): AppNotification[] {
     return this.state.notifications.filter((n) => {
+      if ((n.approvalStatus ?? 'approved') !== 'approved') {
+        return false;
+      }
       if (n.targetUserId) {
         if (workspace === 'super_admin') return true;
         return Boolean(userId && n.targetUserId === userId);
@@ -455,6 +470,14 @@ class ArchiveRepository {
       if (audience === 'all') return true;
       return workspace === 'student' ? audience === 'students' : audience === 'admins';
     });
+  }
+
+  getPendingNotifications(): AppNotification[] {
+    return this.state.notifications.filter((n) => n.approvalStatus === 'pending_verification');
+  }
+
+  getSchoolSubmittedNotifications(schoolId: string): AppNotification[] {
+    return this.state.notifications.filter((n) => n.schoolId === schoolId);
   }
 
   markNotificationRead(notifId: string): void {
@@ -469,7 +492,9 @@ class ArchiveRepository {
   markAllNotificationsRead(): void {
     this.update((prev) => ({
       ...prev,
-      notifications: prev.notifications.map((n) => ({ ...n, isRead: true })),
+      notifications: prev.notifications.map((n) =>
+        (n.approvalStatus ?? 'approved') === 'approved' ? { ...n, isRead: true } : n
+      ),
     }));
   }
 
@@ -477,6 +502,7 @@ class ArchiveRepository {
     this.update((prev) => ({
       ...prev,
       notifications: prev.notifications.map((n) => {
+        if ((n.approvalStatus ?? 'approved') !== 'approved') return n;
         if (n.targetUserId) {
           const matchesTarget =
             workspace === 'super_admin' || Boolean(userId && n.targetUserId === userId);
@@ -1564,6 +1590,7 @@ class ArchiveRepository {
       createdAt: new Date().toISOString(),
       isRead: false,
       createdBy: sanitizeSingleLine(actor.fullName, 120),
+      approvalStatus: 'approved',
     };
 
     this.update((prev) => ({
@@ -1582,6 +1609,200 @@ class ArchiveRepository {
     }));
 
     return notif;
+  }
+
+  submitSchoolAdminNotification(
+    actor: AuthenticatedUser | null | undefined,
+    payload: {
+      schoolId: string;
+      schoolCode?: string;
+      title: string;
+      message: string;
+      category?: AppNotification['category'];
+    }
+  ): AppNotification {
+    if (!isActiveAccount(actor) || isRestrictedAccount(actor)) {
+      throw new Error('Your account is currently restricted or inactive.');
+    }
+    const canAll = hasPermission(actor, 'broadcasts:manage');
+    const canSchool = hasPermission(actor, 'pq:upload_school');
+    if (!canAll && !canSchool) {
+      throw new Error('Only verified School Administrators can submit student notifications.');
+    }
+    const targetSchoolId = canAll ? payload.schoolId : actor.assignedSchoolId;
+    if (!targetSchoolId || (!canAll && payload.schoolId !== targetSchoolId)) {
+      throw new Error('You can only submit notifications for your assigned university.');
+    }
+    const school = this.state.schools.find((s) => s.id === targetSchoolId);
+    if (!school) {
+      throw new Error('Assigned university not found.');
+    }
+
+    const title = sanitizeSingleLine(payload.title, 120);
+    const message = sanitizePlainText(payload.message, 600).trim();
+    if (!title || !message) {
+      throw new Error('Enter both a notification title and message.');
+    }
+
+    const now = new Date().toISOString();
+    const notif: AppNotification = {
+      id: `notif-sch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title,
+      message,
+      category: payload.category ?? 'system',
+      audience: 'students',
+      createdAt: now,
+      isRead: false,
+      createdBy: sanitizeSingleLine(actor.fullName, 120),
+      approvalStatus: 'pending_verification',
+      schoolId: school.id,
+      schoolCode: school.code,
+      submittedById: actor.id,
+      submittedByName: sanitizeSingleLine(actor.fullName, 120),
+      submittedByRole: actor.role,
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      notifications: [notif, ...prev.notifications],
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'notification_submitted',
+          'broadcast',
+          notif.id,
+          `Submitted student notification "${notif.title}" (${school.code}) for Super Admin verification`,
+          school.id
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return notif;
+  }
+
+  verifySchoolAdminNotification(
+    actor: AuthenticatedUser | null | undefined,
+    notifId: string,
+    decision: 'approve' | 'reject',
+    reviewNote?: string
+  ): AppNotification {
+    this.requirePermission(
+      actor,
+      'broadcasts:manage',
+      'Only Super Administrators can verify or decline School Admin notifications.'
+    );
+    const existing = this.state.notifications.find((n) => n.id === notifId);
+    if (!existing) {
+      throw new Error('Notification submission not found.');
+    }
+
+    const now = new Date().toISOString();
+    const reviewer = sanitizeSingleLine(actor.fullName, 120);
+    const cleanNote = reviewNote ? sanitizeSingleLine(reviewNote, 240) : undefined;
+
+    const updated: AppNotification =
+      decision === 'approve'
+        ? {
+            ...existing,
+            approvalStatus: 'approved',
+            createdAt: now,
+            updatedAt: now,
+            isRead: false,
+            reviewedBy: reviewer,
+            reviewedAt: now,
+            reviewNote: cleanNote,
+          }
+        : {
+            ...existing,
+            approvalStatus: 'rejected',
+            reviewedBy: reviewer,
+            reviewedAt: now,
+            reviewNote: cleanNote || 'Declined by Super Admin',
+          };
+
+    this.update((prev) => ({
+      ...prev,
+      notifications: prev.notifications.map((n) => (n.id === notifId ? updated : n)),
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          decision === 'approve' ? 'notification_verified' : 'notification_rejected',
+          'broadcast',
+          notifId,
+          decision === 'approve'
+            ? `Verified & published "${updated.title}"${updated.schoolCode ? ` (${updated.schoolCode})` : ''} to student website`
+            : `Declined student notification "${updated.title}"${updated.schoolCode ? ` (${updated.schoolCode})` : ''}`,
+          updated.schoolId
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return updated;
+  }
+
+  updateNotification(
+    actor: AuthenticatedUser | null | undefined,
+    notifId: string,
+    patch: {
+      title: string;
+      message: string;
+      category?: AppNotification['category'];
+      audience?: BroadcastAudience;
+    }
+  ): AppNotification {
+    if (!isActiveAccount(actor) || isRestrictedAccount(actor)) {
+      throw new Error('Your account does not have permission to edit notifications.');
+    }
+    const existing = this.state.notifications.find((n) => n.id === notifId);
+    if (!existing) {
+      throw new Error('Notification not found.');
+    }
+    const isSuper = hasPermission(actor, 'broadcasts:manage');
+    const isOwnPendingSchool =
+      hasPermission(actor, 'pq:upload_school') &&
+      existing.approvalStatus === 'pending_verification' &&
+      Boolean(actor.assignedSchoolId && existing.schoolId === actor.assignedSchoolId);
+
+    if (!isSuper && !isOwnPendingSchool) {
+      throw new Error('You can only edit pending notifications submitted by your university.');
+    }
+
+    const title = sanitizeSingleLine(patch.title, 120);
+    const message = sanitizePlainText(patch.message, 600).trim();
+    if (!title || !message) {
+      throw new Error('Notification title and message cannot be empty.');
+    }
+
+    const now = new Date().toISOString();
+    const updated: AppNotification = {
+      ...existing,
+      title,
+      message,
+      category: patch.category ?? existing.category,
+      audience: isSuper ? (patch.audience ?? existing.audience) : existing.audience,
+      updatedAt: now,
+      isRead: false,
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      notifications: prev.notifications.map((n) => (n.id === notifId ? updated : n)),
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'notification_updated',
+          'broadcast',
+          notifId,
+          `Updated notification "${updated.title}"${updated.schoolCode ? ` (${updated.schoolCode})` : ''}`,
+          updated.schoolId
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return updated;
   }
 
   sendDirectNotification(
@@ -1619,6 +1840,7 @@ class ArchiveRepository {
       createdAt: new Date().toISOString(),
       isRead: false,
       createdBy: sanitizeSingleLine(actor.fullName, 120),
+      approvalStatus: 'approved',
     };
 
     this.update((prev) => ({

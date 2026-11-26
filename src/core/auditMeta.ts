@@ -157,6 +157,26 @@ export const AUDIT_ACTION_META: Record<AuditActionType, AuditActionMeta> = {
     whatItDoes: 'Delivered a notice to student or admin notification feeds.',
     verb: 'sent a notification',
   },
+  notification_submitted: {
+    label: 'School Notification Pending Review',
+    whatItDoes: 'Submitted a student notification from a university desk awaiting Super Admin verification.',
+    verb: 'submitted a student notification for verification',
+  },
+  notification_verified: {
+    label: 'Student Notification Verified & Published',
+    whatItDoes: 'Approved a School Admin notification so it appears live on the student website.',
+    verb: 'verified and published a school notification',
+  },
+  notification_rejected: {
+    label: 'School Notification Declined',
+    whatItDoes: 'Declined a pending School Admin student notification request.',
+    verb: 'declined a school notification request',
+  },
+  notification_updated: {
+    label: 'Notification Updated',
+    whatItDoes: 'Edited the title, message, or target details of a notification.',
+    verb: 'updated a notification',
+  },
   marquee_updated: {
     label: 'Header Marquee Updated',
     whatItDoes: 'Updated or toggled the scrolling announcement bar at the top of the app.',

@@ -13,3 +13,7 @@ export { TactileButton, type TactileVariant } from './TactileButton';
 export { TooltipBubble, type TooltipSide } from './TooltipBubble';
 export { WaveHeader } from './WaveHeader';
 export { SearchField } from './SearchField';
+export {
+  TopDropInNotification,
+  type DropInNotificationItem,
+} from './TopDropInNotification';

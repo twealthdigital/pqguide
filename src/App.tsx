@@ -29,7 +29,11 @@ import {
   subscriptionService,
   type PaywallContext,
 } from './core/subscription';
-import { NavigationShell } from './components/ui/NavigationShell';
+import {
+  NavigationShell,
+  TopDropInNotification,
+  type DropInNotificationItem,
+} from './components/ui';
 import { HomeScreenSkeleton } from './components/ui/Skeleton';
 import { LoadingScreen } from './screens/LoadingScreen';
 import { HomeScreen } from './screens/HomeScreen';
@@ -170,6 +174,9 @@ function AppContent() {
   const [perf, setPerf] = useState<PerfNavState>(INITIAL_PERF);
   const [paywallContext, setPaywallContext] = useState<PaywallContext | null>(null);
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
+  const [activeDropIn, setActiveDropIn] = useState<DropInNotificationItem | null>(null);
+  const sessionBootMsRef = useRef<number>(Date.now());
+  const seenNotifSignaturesRef = useRef<Map<string, Map<string, string>>>(new Map());
 
   const authRef = useRef(authenticatedStudent);
   authRef.current = authenticatedStudent;
@@ -251,6 +258,103 @@ function AppContent() {
   useEffect(() => {
     subscriptionService.setRoleOverride(authenticatedStudent?.role ?? null);
   }, [authenticatedStudent?.role]);
+
+  // Watch workspace notification feed for new or updated alerts during the active session
+  useEffect(() => {
+    if (!authenticatedStudent) {
+      setActiveDropIn(null);
+      return;
+    }
+
+    const wsKey = `${effectiveWorkspace}:${authenticatedStudent.id}`;
+    let seenMap = seenNotifSignaturesRef.current.get(wsKey);
+    const isFirstInit = !seenMap;
+    if (!seenMap) {
+      seenMap = new Map<string, string>();
+      seenNotifSignaturesRef.current.set(wsKey, seenMap);
+    }
+
+    const feed =
+      effectiveWorkspace === 'super_admin'
+        ? archiveRepository.getSuperAdminGovernanceNotifications().map((n) => ({
+            id: n.id,
+            signature: n.createdAt,
+            title: n.title,
+            message: n.message,
+            category: 'governance' as const,
+            createdAt: n.createdAt,
+            hasExplicitUpdate: false,
+            targetDocId: undefined,
+            isGovernance: true,
+          }))
+        : archiveRepository
+            .getNotificationsForWorkspace(effectiveWorkspace, authenticatedStudent.id)
+            .map((n) => ({
+              id: n.id,
+              signature: n.updatedAt ?? n.reviewedAt ?? n.createdAt,
+              title: n.title,
+              message: n.message,
+              category: n.category,
+              createdAt: n.createdAt,
+              hasExplicitUpdate: Boolean(n.updatedAt && n.updatedAt !== n.createdAt),
+              targetDocId: n.targetDocId,
+              isGovernance: false,
+            }));
+
+    let candidate: DropInNotificationItem | null = null;
+
+    if (isFirstInit) {
+      for (const entry of feed) {
+        const ts = Date.parse(entry.signature);
+        if (!Number.isNaN(ts) && ts >= sessionBootMsRef.current && !candidate) {
+          candidate = {
+            id: entry.id,
+            versionKey: `${entry.id}::${entry.signature}`,
+            title: entry.title,
+            message: entry.message,
+            category: entry.category,
+            createdAt: entry.createdAt,
+            updated: entry.hasExplicitUpdate,
+            targetDocId: entry.targetDocId,
+            isGovernance: entry.isGovernance,
+          };
+        }
+        seenMap.set(entry.id, entry.signature);
+      }
+    } else {
+      for (const entry of feed) {
+        const prevSig = seenMap.get(entry.id);
+        if (prevSig !== entry.signature) {
+          if (!candidate) {
+            candidate = {
+              id: entry.id,
+              versionKey: `${entry.id}::${entry.signature}`,
+              title: entry.title,
+              message: entry.message,
+              category: entry.category,
+              createdAt: entry.createdAt,
+              updated: prevSig !== undefined || entry.hasExplicitUpdate,
+              targetDocId: entry.targetDocId,
+              isGovernance: entry.isGovernance,
+            };
+          }
+          seenMap.set(entry.id, entry.signature);
+        }
+      }
+    }
+
+    if (candidate) {
+      setActiveDropIn(candidate);
+    }
+  }, [
+    authenticatedStudent,
+    effectiveWorkspace,
+    store.notifications,
+    store.auditLogs,
+    store.userActivities,
+    store.supportTickets,
+    store.documents,
+  ]);
 
   const selectedDoc = useMemo(
     () => store.documents.find((d) => d.id === selectedDocId) ?? null,
@@ -1265,6 +1369,31 @@ function AppContent() {
     });
   }, []);
 
+  const handleDismissDropIn = useCallback(() => {
+    setActiveDropIn(null);
+  }, []);
+
+  const handleViewDropIn = useCallback(
+    (item: DropInNotificationItem) => {
+      if (item.isGovernance) {
+        archiveRepository.markSuperAdminNotificationRead(item.id);
+      } else {
+        archiveRepository.markNotificationRead(item.id);
+      }
+      setActiveDropIn(null);
+
+      if (!item.isGovernance && !isRestrictedAdmin && item.targetDocId) {
+        const doc = store.documents.find((d) => d.id === item.targetDocId);
+        if (doc) {
+          handleOpenDocument(doc);
+          return;
+        }
+      }
+      handleNavigate('notifications');
+    },
+    [handleNavigate, handleOpenDocument, isRestrictedAdmin, store.documents]
+  );
+
   if (!hasCompletedOnboarding && portal === 'student' && !authenticatedStudent) {
     return (
       <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
@@ -1298,19 +1427,32 @@ function AppContent() {
 
   if (activeScreen === 'subscription' && authenticatedStudent.role !== 'school_admin') {
     return (
-      <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
-        <SubscriptionScreen
-          currentUser={authenticatedStudent}
-          paywallContext={paywallContext}
-          onBack={handleBack}
-          onClose={handleBack}
+      <>
+        <TopDropInNotification
+          item={activeDropIn}
+          onView={handleViewDropIn}
+          onDismiss={handleDismissDropIn}
         />
-      </Suspense>
+        <Suspense fallback={<div className="min-h-screen bg-[#F6F7F9]" />}>
+          <SubscriptionScreen
+            currentUser={authenticatedStudent}
+            paywallContext={paywallContext}
+            onBack={handleBack}
+            onClose={handleBack}
+          />
+        </Suspense>
+      </>
     );
   }
 
   return (
-    <NavigationShell
+    <>
+      <TopDropInNotification
+        item={activeDropIn}
+        onView={handleViewDropIn}
+        onDismiss={handleDismissDropIn}
+      />
+      <NavigationShell
       activeScreen={activeScreen}
       parentScreen={parentScreen}
       workspaceMode={effectiveWorkspace}
@@ -1448,6 +1590,7 @@ function AppContent() {
         )}
       </Suspense>
     </NavigationShell>
+    </>
   );
 }
 

@@ -131,6 +131,11 @@ export interface PastQuestionDoc {
   status: ContentStatus;
 }
 
+export type NotificationApprovalStatus =
+  | 'approved'
+  | 'pending_verification'
+  | 'rejected';
+
 export interface AppNotification {
   id: string;
   title: string;
@@ -139,9 +144,19 @@ export interface AppNotification {
   audience?: BroadcastAudience;
   targetUserId?: string;
   createdAt: string;
+  updatedAt?: string;
   isRead: boolean;
   targetDocId?: string;
   createdBy?: string;
+  approvalStatus?: NotificationApprovalStatus;
+  schoolId?: string;
+  schoolCode?: string;
+  submittedById?: string;
+  submittedByName?: string;
+  submittedByRole?: UserRole;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
 }
 
 export interface SuperAdminNotification {
@@ -437,6 +452,10 @@ export type AuditActionType =
   | 'material_unpublished'
   | 'material_deleted'
   | 'broadcast_sent'
+  | 'notification_submitted'
+  | 'notification_verified'
+  | 'notification_rejected'
+  | 'notification_updated'
   | 'marquee_updated'
   | 'support_replied'
   | 'cms_updated'

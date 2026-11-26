@@ -1,18 +1,29 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Bell,
   CheckCircle2,
   ChevronRight,
+  Clock,
   Edit3,
   Eye,
   FileText,
   Lock,
   ScanLine,
+  Send,
+  ShieldCheck,
   Trash2,
   UploadCloud,
+  Users,
 } from 'lucide-react';
 import { canAccessScreen, isRestrictedAccount } from '../core/permissions';
 import { sanitizeSafeUrl } from '../core/security';
-import type { AuthenticatedUser, PastQuestionDoc, SemesterType } from '../core/types';
+import type {
+  AppNotification,
+  AuthenticatedUser,
+  ManagedAccount,
+  PastQuestionDoc,
+  SemesterType,
+} from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { archiveRepository } from '../services/archiveRepository';
 import {
@@ -85,6 +96,21 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
   const [editLevel, setEditLevel] = useState<PastQuestionDoc['level']>('100L');
   const [editQuestionsText, setEditQuestionsText] = useState('');
 
+  // Logged-In & Active Students Monitor
+  const [studentFilter, setStudentFilter] = useState<'signed_in' | 'active' | 'all'>('signed_in');
+  const [studentSearch, setStudentSearch] = useState('');
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+
+  // Student Website Notification Submission (Super Admin Verification Required)
+  const [notifTitle, setNotifTitle] = useState('');
+  const [notifMessage, setNotifMessage] = useState('');
+  const [notifCategory, setNotifCategory] = useState<AppNotification['category']>('system');
+  const [editingNotifId, setEditingNotifId] = useState<string | null>(null);
+  const [editNotifTitle, setEditNotifTitle] = useState('');
+  const [editNotifMessage, setEditNotifMessage] = useState('');
+  const [editNotifCategory, setEditNotifCategory] =
+    useState<AppNotification['category']>('system');
+
   const schoolDocuments = useMemo(() => {
     if (!assignedSchool) return [];
     const q = searchQuery.trim().toLowerCase();
@@ -100,6 +126,66 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
       );
     });
   }, [store.documents, assignedSchool, historyFilter, searchQuery]);
+
+  const schoolStudents = useMemo(() => {
+    if (!assignedSchool) return [];
+    const codeUpper = assignedSchool.code.toUpperCase();
+    return store.accounts.filter(
+      (acc) =>
+        acc.role === 'student' &&
+        (acc.schoolId === assignedSchool.id ||
+          (!acc.schoolId && acc.schoolCode.toUpperCase() === codeUpper))
+    );
+  }, [store.accounts, assignedSchool]);
+
+  const signedInStudentsCount = useMemo(
+    () => schoolStudents.filter((acc) => acc.sessionState === 'logged_in').length,
+    [schoolStudents]
+  );
+
+  const activeStudentsCount = useMemo(
+    () => schoolStudents.filter((acc) => acc.status === 'active').length,
+    [schoolStudents]
+  );
+
+  const filteredStudents = useMemo(() => {
+    const q = studentSearch.trim().toLowerCase();
+    return schoolStudents
+      .filter((acc) => {
+        if (studentFilter === 'signed_in' && acc.sessionState !== 'logged_in') return false;
+        if (studentFilter === 'active' && acc.status !== 'active') return false;
+        if (!q) return true;
+        return (
+          acc.fullName.toLowerCase().includes(q) ||
+          acc.email.toLowerCase().includes(q) ||
+          (acc.matricNumber ?? '').toLowerCase().includes(q) ||
+          (acc.department ?? '').toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        const aIn = a.sessionState === 'logged_in' ? 1 : 0;
+        const bIn = b.sessionState === 'logged_in' ? 1 : 0;
+        if (aIn !== bIn) return bIn - aIn;
+        return (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? '');
+      });
+  }, [schoolStudents, studentFilter, studentSearch]);
+
+  const selectedStudent: ManagedAccount | null = useMemo(
+    () => schoolStudents.find((s) => s.id === selectedStudentId) ?? null,
+    [schoolStudents, selectedStudentId]
+  );
+
+  const selectedStudentActivities = useMemo(() => {
+    if (!selectedStudent) return [];
+    return store.userActivities
+      .filter((act) => act.userId === selectedStudent.id)
+      .slice(0, 8);
+  }, [store.userActivities, selectedStudent]);
+
+  const schoolSubmittedNotifications = useMemo(() => {
+    if (!assignedSchool) return [];
+    return store.notifications.filter((n) => n.schoolId === assignedSchool.id);
+  }, [store.notifications, assignedSchool]);
 
   const selectedDoc = useMemo(
     () => schoolDocuments.find((d) => d.id === selectedDocId) ?? null,
@@ -258,6 +344,52 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
       setPublishNotice(`Deleted ${doc.courseCode} (${doc.session}).`);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Could not delete past question.');
+    }
+  };
+
+  const handleSubmitNotification = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setPublishNotice(null);
+    try {
+      const created = archiveRepository.submitSchoolAdminNotification(currentUser, {
+        schoolId: assignedSchool.id,
+        schoolCode: assignedSchool.code,
+        title: notifTitle,
+        message: notifMessage,
+        category: notifCategory,
+      });
+      setNotifTitle('');
+      setNotifMessage('');
+      setPublishNotice(
+        `Submitted "${created.title}" for Super Admin verification before going live to students.`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not submit notification.');
+    }
+  };
+
+  const startEditPendingNotif = (notif: AppNotification) => {
+    setEditingNotifId(notif.id);
+    setEditNotifTitle(notif.title);
+    setEditNotifMessage(notif.message);
+    setEditNotifCategory(notif.category);
+  };
+
+  const handleSaveNotifEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingNotifId) return;
+    setErrorMsg(null);
+    try {
+      const updated = archiveRepository.updateNotification(currentUser, editingNotifId, {
+        title: editNotifTitle,
+        message: editNotifMessage,
+        category: editNotifCategory,
+      });
+      setEditingNotifId(null);
+      setPublishNotice(`Updated pending notification "${updated.title}".`);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not update notification.');
     }
   };
 
@@ -626,6 +758,300 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
             </div>
           </SurfaceCard>
         </div>
+
+        {/* Logged-In & Active Students + Student Website Notifications */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
+            <SectionHeadingBar
+              icon={<Users className="w-4 h-4" />}
+              title={`${assignedSchool.code} Students Monitor`}
+              right={
+                <span className="font-mono-tabular text-xs font-semibold text-[#C3C7D2]">
+                  {signedInStudentsCount} signed in
+                </span>
+              }
+            />
+
+            <div className="grid grid-cols-3 gap-2.5">
+              <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.06] p-3">
+                <p className="text-[11px] font-medium text-[#686C78]">Signed In Now</p>
+                <p className="font-display text-xl font-bold text-[#15803D] font-mono-tabular mt-0.5">
+                  {signedInStudentsCount}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.06] p-3">
+                <p className="text-[11px] font-medium text-[#686C78]">Active Students</p>
+                <p className="font-display text-xl font-bold text-[#1A1B20] font-mono-tabular mt-0.5">
+                  {activeStudentsCount}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.06] p-3">
+                <p className="text-[11px] font-medium text-[#686C78]">Registered</p>
+                <p className="font-display text-xl font-bold text-[#1A1B20] font-mono-tabular mt-0.5">
+                  {schoolStudents.length}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={studentSearch}
+                onChange={(e) => setStudentSearch(e.target.value)}
+                placeholder="Search name, matric, or email..."
+                className="flex-1 min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs font-medium text-[#1A1B20]"
+              />
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    { id: 'signed_in', label: 'Signed In' },
+                    { id: 'active', label: 'Active' },
+                    { id: 'all', label: 'All' },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setStudentFilter(tab.id)}
+                    className={`min-h-[42px] px-3 rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
+                      studentFilter === tab.id
+                        ? 'bg-[#1D1E23] text-white'
+                        : 'bg-[#F6F7F9] text-[#505460] hover:bg-[#ECEEF3]'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="divide-y divide-[#1A1B20]/[0.06] max-h-[380px] overflow-y-auto pr-1">
+              {filteredStudents.length === 0 ? (
+                <p className="py-8 text-center text-xs text-[#686C78]">
+                  No students match this filter right now.
+                </p>
+              ) : (
+                filteredStudents.map((student) => {
+                  const isSignedIn = student.sessionState === 'logged_in';
+                  return (
+                    <button
+                      key={student.id}
+                      type="button"
+                      onClick={() => setSelectedStudentId(student.id)}
+                      className="w-full py-3 first:pt-1 last:pb-1 flex items-center justify-between gap-3 text-left hover:bg-[#F6F7F9] rounded-xl px-2 -mx-2 transition-colors cursor-pointer"
+                    >
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span
+                            aria-hidden="true"
+                            className={`h-2 w-2 rounded-full shrink-0 ${
+                              isSignedIn ? 'bg-[#16A34A]' : 'bg-[#C3C7D2]'
+                            }`}
+                          />
+                          <p className="text-sm font-bold text-[#1A1B20] truncate">
+                            {student.fullName}
+                          </p>
+                        </div>
+                        <p className="text-xs text-[#686C78] truncate pl-4">
+                          {student.matricNumber ? `${student.matricNumber} · ` : ''}
+                          {student.level ?? '100L'}
+                          {student.department ? ` · ${student.department}` : ''}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`rounded-lg px-2 py-1 text-[11px] font-semibold ${
+                            isSignedIn
+                              ? 'bg-[#DCFCE7] text-[#15803D]'
+                              : student.status === 'active'
+                                ? 'bg-[#F2F4F7] text-[#505460]'
+                                : 'bg-[#FEE2E2] text-[#B91C1C]'
+                          }`}
+                        >
+                          {isSignedIn
+                            ? 'Signed In'
+                            : student.status === 'active'
+                              ? 'Active'
+                              : student.status}
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-[#8E93A2]" />
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </SurfaceCard>
+
+          <SurfaceCard tone="white" className="lg:col-span-6 p-5 sm:p-6 space-y-4">
+            <SectionHeadingBar
+              icon={<Bell className="w-4 h-4" />}
+              title="Student Website Notifications"
+              right={
+                <span className="font-mono-tabular text-xs font-semibold text-[#C3C7D2]">
+                  Verified by Super Admin
+                </span>
+              }
+            />
+
+            <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/[0.07] px-3.5 py-2.5 flex items-start gap-2.5 text-xs text-[#505460]">
+              <ShieldCheck className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
+              <span>
+                Messages submitted here stay hidden from students until a Super Admin verifies and
+                approves them.
+              </span>
+            </div>
+
+            <form onSubmit={handleSubmitNotification} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-[#686C78] mb-1">
+                  Notification Title
+                </label>
+                <input
+                  type="text"
+                  required
+                  disabled={accountRestricted}
+                  value={notifTitle}
+                  onChange={(e) => setNotifTitle(e.target.value)}
+                  placeholder="e.g. GNS 101 Past Questions Updated"
+                  className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-xs sm:text-sm font-semibold disabled:opacity-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[#686C78] mb-1">
+                  Message to {assignedSchool.code} Students
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  disabled={accountRestricted}
+                  value={notifMessage}
+                  onChange={(e) => setNotifMessage(e.target.value)}
+                  placeholder="Write announcement for students..."
+                  className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3 text-xs sm:text-sm text-[#1A1B20] disabled:opacity-50"
+                />
+              </div>
+
+              <CustomSelect
+                label="Category"
+                value={notifCategory}
+                options={[
+                  { value: 'system', label: 'Announcement / Notice' },
+                  { value: 'upload', label: 'Past Questions / Material Update' },
+                  { value: 'access', label: 'Exam & Timetable Notice' },
+                ]}
+                onChange={(v) => setNotifCategory(v as AppNotification['category'])}
+              />
+
+              <TactileButton
+                type="submit"
+                variant="dark"
+                size="md"
+                fullWidth
+                disabled={accountRestricted}
+                icon={<Send className="w-4 h-4" />}
+              >
+                Submit for Super Admin Verification
+              </TactileButton>
+            </form>
+
+            {schoolSubmittedNotifications.length > 0 && (
+              <div className="pt-3 border-t border-[#1A1B20]/[0.07] space-y-2.5">
+                <p className="text-xs font-bold text-[#1A1B20]">
+                  Submitted Notifications ({schoolSubmittedNotifications.length})
+                </p>
+                <div className="divide-y divide-[#1A1B20]/[0.06] max-h-[240px] overflow-y-auto pr-1">
+                  {schoolSubmittedNotifications.map((item) => {
+                    const status = item.approvalStatus ?? 'approved';
+                    const isEditingThis = editingNotifId === item.id;
+                    return (
+                      <div key={item.id} className="py-2.5 first:pt-1 last:pb-1 space-y-2">
+                        {isEditingThis ? (
+                          <form onSubmit={handleSaveNotifEdit} className="space-y-2 bg-[#F6F7F9] p-3 rounded-xl">
+                            <input
+                              type="text"
+                              required
+                              value={editNotifTitle}
+                              onChange={(e) => setEditNotifTitle(e.target.value)}
+                              className="w-full min-h-[38px] rounded-lg bg-white border border-[#1A1B20]/10 px-2.5 text-xs font-semibold"
+                            />
+                            <textarea
+                              rows={2}
+                              required
+                              value={editNotifMessage}
+                              onChange={(e) => setEditNotifMessage(e.target.value)}
+                              className="w-full rounded-lg bg-white border border-[#1A1B20]/10 p-2.5 text-xs text-[#1A1B20]"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <TactileButton
+                                type="button"
+                                variant="light"
+                                size="sm"
+                                onClick={() => setEditingNotifId(null)}
+                              >
+                                Cancel
+                              </TactileButton>
+                              <TactileButton type="submit" variant="dark" size="sm">
+                                Save Update
+                              </TactileButton>
+                            </div>
+                          </form>
+                        ) : (
+                          <div className="flex items-start justify-between gap-2.5">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs sm:text-sm font-bold text-[#1A1B20] truncate">
+                                {item.title}
+                              </p>
+                              <p className="text-xs text-[#505460] mt-0.5 line-clamp-2">
+                                {item.message}
+                              </p>
+                              {status === 'rejected' && item.reviewNote && (
+                                <p className="text-[11px] text-[#B91C1C] mt-1 font-medium">
+                                  Note: {item.reviewNote}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span
+                                className={`rounded-lg px-2 py-1 text-[10px] font-semibold inline-flex items-center gap-1 ${
+                                  status === 'approved'
+                                    ? 'bg-[#DCFCE7] text-[#15803D]'
+                                    : status === 'rejected'
+                                      ? 'bg-[#FEE2E2] text-[#B91C1C]'
+                                      : 'bg-[#FEF3C7] text-[#92400E]'
+                                }`}
+                              >
+                                {status === 'pending_verification' && (
+                                  <Clock className="w-3 h-3" />
+                                )}
+                                {status === 'approved'
+                                  ? 'Live'
+                                  : status === 'rejected'
+                                    ? 'Declined'
+                                    : 'Pending Verification'}
+                              </span>
+                              {status === 'pending_verification' && !accountRestricted && (
+                                <button
+                                  type="button"
+                                  onClick={() => startEditPendingNotif(item)}
+                                  className="h-7 px-2 rounded-lg bg-[#F2F4F7] hover:bg-[#E5E8EE] text-[11px] font-semibold text-[#1A1B20] cursor-pointer"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </SurfaceCard>
+        </div>
       </div>
 
       <DetailDialog
@@ -758,6 +1184,83 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                 </ol>
               </div>
             )}
+          </div>
+        )}
+      </DetailDialog>
+
+      <DetailDialog
+        open={Boolean(selectedStudent)}
+        onClose={() => setSelectedStudentId(null)}
+        title={selectedStudent?.fullName ?? 'Student Details'}
+        subtitle={
+          selectedStudent
+            ? `${selectedStudent.schoolCode} · ${selectedStudent.level ?? '100L'}${
+                selectedStudent.matricNumber ? ` · ${selectedStudent.matricNumber}` : ''
+              }`
+            : undefined
+        }
+        icon={<Users className="w-4 h-4" />}
+      >
+        {selectedStudent && (
+          <div className="space-y-4">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <dt className="text-[#686C78]">Session State</dt>
+                <dd
+                  className={`font-bold mt-0.5 ${
+                    selectedStudent.sessionState === 'logged_in'
+                      ? 'text-[#15803D]'
+                      : 'text-[#1A1B20]'
+                  }`}
+                >
+                  {selectedStudent.sessionState === 'logged_in' ? 'Signed In Now' : 'Signed Out'}
+                </dd>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <dt className="text-[#686C78]">Account Status</dt>
+                <dd className="font-bold capitalize text-[#1A1B20] mt-0.5">
+                  {selectedStudent.status}
+                </dd>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <dt className="text-[#686C78]">Email</dt>
+                <dd className="font-semibold text-[#1A1B20] mt-0.5 break-all">
+                  {selectedStudent.email}
+                </dd>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <dt className="text-[#686C78]">Last Active</dt>
+                <dd className="font-mono-tabular font-semibold text-[#1A1B20] mt-0.5">
+                  {new Date(selectedStudent.lastActiveAt).toLocaleString('en-NG', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
+                </dd>
+              </div>
+            </dl>
+
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-[#1A1B20]">Recent Activity</p>
+              {selectedStudentActivities.length === 0 ? (
+                <p className="text-xs text-[#686C78] rounded-xl bg-[#F6F7F9] p-3">
+                  No recent activity recorded yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-[#1A1B20]/[0.06] rounded-xl bg-[#F6F7F9] px-3">
+                  {selectedStudentActivities.map((act) => (
+                    <div key={act.id} className="py-2.5 flex items-start justify-between gap-3 text-xs">
+                      <span className="text-[#1A1B20] font-medium">{act.detail}</span>
+                      <span className="font-mono-tabular text-[11px] text-[#686C78] shrink-0">
+                        {new Date(act.timestamp).toLocaleTimeString('en-NG', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </DetailDialog>

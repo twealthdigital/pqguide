@@ -272,6 +272,11 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                         · Unread
                       </span>
                     )}
+                    {notif.updatedAt && (
+                      <span className="font-mono-tabular text-[11px] font-medium text-[#505460]">
+                        · Updated
+                      </span>
+                    )}
                     {notif.targetUserId && (
                       <span className="font-mono-tabular text-[11px] font-medium text-[#505460]">
                         · Direct message
