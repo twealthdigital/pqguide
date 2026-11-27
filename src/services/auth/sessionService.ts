@@ -101,7 +101,11 @@ function isValidRecord(parsed: ActiveSessionRecord | null): parsed is ActiveSess
 }
 
 export const sessionService = {
-  createSession(userId: string, rememberMe = true): ActiveSessionRecord {
+  createSession(
+    userId: string,
+    rememberMe = true,
+    authMode: 'standard' | 'dev_super_admin_bootstrap' = 'standard'
+  ): ActiveSessionRecord {
     const now = Date.now();
     const record: ActiveSessionRecord = {
       sessionId: generateOpaqueSessionId(),
@@ -109,6 +113,7 @@ export const sessionService = {
       issuedAt: now,
       expiresAt: now + SESSION_TTL_MS,
       rememberMe,
+      authMode,
     };
 
     if (rememberMe) {
@@ -226,6 +231,17 @@ export const sessionService = {
       return null;
     }
     return parsed;
+  },
+
+  readDevBootstrapSession(): ActiveSessionRecord | null {
+    if (this.readSuperAdminMemorySession() || this.hasSuperAdminSessionHint()) {
+      return null;
+    }
+    const session = this.readSession();
+    if (!session || session.authMode !== 'dev_super_admin_bootstrap') {
+      return null;
+    }
+    return session;
   },
 
   getSessionRemainingMs(): number | null {

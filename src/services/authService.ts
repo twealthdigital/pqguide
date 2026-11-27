@@ -439,6 +439,49 @@ export interface AuthActionResult<T = void> {
   data?: T;
 }
 
+function isPermittedAccountStatus(status: AccountStatus): boolean {
+  return status === 'active' || status === 'restricted';
+}
+
+function isVerifiedDevBootstrapRecord(account: StudentAccount): boolean {
+  return (
+    account.role === 'super_admin' &&
+    account.isEmailVerified === true &&
+    account.adminVerified !== false &&
+    account.authProvider === 'local' &&
+    account.createdBy === 'local-dev-bootstrap' &&
+    account.id.startsWith('super-') &&
+    isPermittedAccountStatus(account.status)
+  );
+}
+
+function resolveActiveDevBootstrapSuperAdmin(): AuthenticatedUser | null {
+  if (!isDevBootstrapEnabled()) return null;
+  if (localStore.getItem(BOOTSTRAP_LOCK_KEY) !== '1') return null;
+  const devSession = sessionService.readDevBootstrapSession();
+  if (!devSession) return null;
+
+  const matched = readAccounts().find((a) => a.id === devSession.userId);
+  if (!matched || !isVerifiedDevBootstrapRecord(matched)) {
+    return null;
+  }
+
+  const repoAcc = archiveRepository
+    .getSnapshot()
+    .accounts.find((a) => a.id === matched.id || a.email === matched.email);
+  if (repoAcc && (!isPermittedAccountStatus(repoAcc.status) || repoAcc.adminVerified === false)) {
+    return null;
+  }
+
+  const baseUser = toAuthenticatedUser(matched);
+  return {
+    ...baseUser,
+    status: repoAcc?.status ?? baseUser.status,
+    warningsCount: repoAcc?.warningsCount ?? baseUser.warningsCount ?? 0,
+    moderationNote: repoAcc?.moderationNote ?? baseUser.moderationNote,
+  };
+}
+
 export const authService = {
   // -------------------------------------------------------------------------
   // Dev-Only First Super Admin Bootstrap
@@ -1654,11 +1697,12 @@ export const authService = {
       return { ok: false, error: 'Enter your password.' };
     }
 
-    const devLocalAccount = isDevBootstrapEnabled()
-      ? readAccounts().find(
-          (a) => a.email === email && a.role === 'super_admin' && a.isEmailVerified
-        )
-      : undefined;
+    const devLocalAccount =
+      isDevBootstrapEnabled() && localStore.getItem(BOOTSTRAP_LOCK_KEY) === '1'
+        ? readAccounts().find(
+            (a) => a.email === email && isVerifiedDevBootstrapRecord(a)
+          )
+        : undefined;
 
     try {
       const response = await fetch('/api/auth/super-admin/login', {
@@ -1810,11 +1854,24 @@ export const authService = {
     return sessionService.hasSuperAdminSessionHint();
   },
 
+  isDevBootstrapSuperAdminSession(): boolean {
+    return resolveActiveDevBootstrapSuperAdmin() !== null;
+  },
+
   async verifyServerSuperAdminSession(): Promise<{
     verified: boolean;
     serverManaged: boolean;
     account?: AuthenticatedUser;
   }> {
+    const devBootstrapAccount = resolveActiveDevBootstrapSuperAdmin();
+    if (devBootstrapAccount) {
+      return {
+        verified: true,
+        serverManaged: false,
+        account: devBootstrapAccount,
+      };
+    }
+
     try {
       const res = await fetch('/api/auth/super-admin/session', {
         method: 'GET',
@@ -1861,9 +1918,6 @@ export const authService = {
         account: saMem?.account,
       };
     } catch {
-      if (isDevBootstrapEnabled() && localStore.getItem(BOOTSTRAP_LOCK_KEY) === '1') {
-        return { verified: true, serverManaged: false };
-      }
       const saMem = sessionService.readSuperAdminMemorySession();
       return {
         verified: Boolean(saMem),
@@ -1956,7 +2010,20 @@ export const authService = {
   },
 
   saveActiveSession(account: AuthenticatedUser, rememberMe = true): void {
-    sessionService.createSession(account.id, rememberMe);
+    const isDevBootstrapAccount =
+      isDevBootstrapEnabled() &&
+      localStore.getItem(BOOTSTRAP_LOCK_KEY) === '1' &&
+      !sessionService.readSuperAdminMemorySession() &&
+      !sessionService.hasSuperAdminSessionHint() &&
+      account.role === 'super_admin' &&
+      account.authProvider === 'local' &&
+      account.createdBy === 'local-dev-bootstrap' &&
+      account.id.startsWith('super-');
+    sessionService.createSession(
+      account.id,
+      rememberMe,
+      isDevBootstrapAccount ? 'dev_super_admin_bootstrap' : 'standard'
+    );
     localStore.setItem(ONBOARDING_KEY, 'true');
   },
 
@@ -2003,11 +2070,15 @@ export const authService = {
       return null;
     }
 
-    // Outside local dev bootstrap, Super Admin accounts NEVER authenticate from localStorage
-    if (matched.role === 'super_admin' && !isDevBootstrapEnabled()) {
-      archiveRepository.setAccountSessionState(matched.id, 'logged_out');
-      sessionService.clearSession('revoked');
-      return null;
+    // Outside verified dev-bootstrap sessions, Super Admin accounts NEVER authenticate from localStorage
+    if (matched.role === 'super_admin') {
+      const devBootstrapUser = resolveActiveDevBootstrapSuperAdmin();
+      if (!devBootstrapUser || devBootstrapUser.id !== matched.id) {
+        archiveRepository.setAccountSessionState(matched.id, 'logged_out');
+        sessionService.clearSession('revoked');
+        return null;
+      }
+      return devBootstrapUser;
     }
 
     // Re-check repository account status in case account was suspended/banned/revoked/unverified

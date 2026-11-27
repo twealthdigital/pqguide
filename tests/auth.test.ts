@@ -516,6 +516,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 
 const { authService } = await import('../src/services/authService.ts');
 const { archiveRepository } = await import('../src/services/archiveRepository.ts');
+const { sessionService } = await import('../src/services/auth/sessionService.ts');
 
 after(async () => {
   await redis.stop();
@@ -2693,6 +2694,108 @@ test('24. Super Admin enforces 2FA login, TOTP anti-replay, recovery codes, pass
     });
     assert.equal(stuAdminAction.ok, false);
   } finally {
+    await srv.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 25. Dev-only Super Admin bootstrap session verification, reload persistence, & prod rejection
+// ---------------------------------------------------------------------------
+test('25. Dev bootstrap Super Admin session survives verification and reload while production rejects local-only Super Admin sessions', async () => {
+  const srv = await startTestAppServer();
+  activeServerBaseUrl = srv.baseUrl;
+
+  try {
+    // 1. First-time development bootstrap succeeds and is not invalidated by 401 from /api/auth/super-admin/session
+    process.env.NODE_ENV = 'test-dev-bootstrap';
+    const bootRes = await authService.bootstrapFirstSuperAdmin({
+      fullName: 'Dev Bootstrap Owner',
+      email: 'dev-owner@pqguide.local',
+      password: 'SuperPassword123',
+      confirmPassword: 'SuperPassword123',
+      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+      rememberMe: true,
+    });
+    assert.equal(bootRes.ok, true);
+    assert.equal(bootRes.data?.account.role, 'super_admin');
+    assert.equal(authService.isDevBootstrapSuperAdminSession(), true);
+
+    // Confirm server endpoint actually returns 401 (no HttpOnly server cookie)
+    const rawServerCheck = await realFetch(`${srv.baseUrl}/api/auth/super-admin/session`, {
+      method: 'GET',
+    });
+    assert.equal(rawServerCheck.status, 401);
+
+    // Periodic / focus / mount session verifier must preserve dev-bootstrap session instead of clearing it
+    const verify1 = await authService.verifyServerSuperAdminSession();
+    assert.equal(verify1.verified, true);
+    assert.equal(verify1.serverManaged, false);
+    assert.equal(verify1.account?.email, 'dev-owner@pqguide.local');
+    assert.equal(authService.getActiveSession()?.id, bootRes.data?.account.id);
+
+    // 2. Simulate page reload (in-memory Super Admin state absent; session restored from localStorage / sessionStorage)
+    sessionService.clearSuperAdminSession();
+    const reloadedUser = authService.getActiveSession();
+    assert.equal(reloadedUser?.role, 'super_admin');
+    assert.equal(reloadedUser?.email, 'dev-owner@pqguide.local');
+    const verifyAfterReload = await authService.verifyServerSuperAdminSession();
+    assert.equal(verifyAfterReload.verified, true);
+    assert.equal(verifyAfterReload.serverManaged, false);
+
+    // Also test non-rememberMe (sessionStorage transient) persistence across reload + re-login
+    authService.clearActiveSession(reloadedUser, 'manual');
+    assert.equal(authService.getActiveSession(), null);
+    assert.equal(authService.isDevBootstrapSuperAdminSession(), false);
+
+    const relogin = await authService.beginSuperAdminLogin(
+      'dev-owner@pqguide.local',
+      'SuperPassword123',
+      false
+    );
+    assert.equal(relogin.ok, true);
+    assert.equal(relogin.data?.requiresTotp, false);
+    authService.saveActiveSession(relogin.data!.account!, false);
+    sessionService.clearSuperAdminSession();
+    assert.equal(authService.getActiveSession()?.email, 'dev-owner@pqguide.local');
+    const verifyTransient = await authService.verifyServerSuperAdminSession();
+    assert.equal(verifyTransient.verified, true);
+    assert.equal(verifyTransient.serverManaged, false);
+
+    // 3. Switching to production mode MUST immediately reject and clear any local-only Super Admin session
+    process.env.NODE_ENV = 'production';
+    assert.equal(authService.isDevBootstrapSuperAdminSession(), false);
+    assert.equal(authService.getActiveSession(), null);
+    const prodVerify = await authService.verifyServerSuperAdminSession();
+    assert.equal(prodVerify.verified, false);
+    assert.equal(prodVerify.serverManaged, true);
+
+    // Even if a forged localStorage Super Admin record + session is injected in dev mode without bootstrap provenance, reject it
+    process.env.NODE_ENV = 'test-dev-bootstrap';
+    const forgedAccount = {
+      id: 'forged-super-1',
+      fullName: 'Forged Admin',
+      matricNumber: 'SUPER-ADMIN',
+      faculty: 'Platform',
+      department: 'Ops',
+      email: 'forged@pqguide.local',
+      role: 'super_admin' as const,
+      status: 'active' as const,
+      adminVerified: true,
+      passwordHash: 'x',
+      passwordSalt: 'y',
+      isEmailVerified: true,
+      authProvider: 'local' as const,
+      createdAt: new Date().toISOString(),
+      createdBy: 'tamper',
+    };
+    mockLocalStorage.setItem('pqguide_student_accounts_v1', JSON.stringify([forgedAccount]));
+    authService.saveActiveSession(forgedAccount, true);
+    assert.equal(authService.isDevBootstrapSuperAdminSession(), false);
+    assert.equal(authService.getActiveSession(), null);
+    const forgedVerify = await authService.verifyServerSuperAdminSession();
+    assert.equal(forgedVerify.verified, false);
+  } finally {
+    delete process.env.NODE_ENV;
     await srv.close();
   }
 });

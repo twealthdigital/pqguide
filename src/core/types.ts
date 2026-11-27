@@ -433,6 +433,7 @@ export interface ActiveSessionRecord {
   issuedAt: number;
   expiresAt: number;
   rememberMe?: boolean;
+  authMode?: 'standard' | 'dev_super_admin_bootstrap';
 }
 
 export type SessionClearReason = 'manual' | 'expired' | 'revoked';

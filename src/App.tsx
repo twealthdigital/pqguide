@@ -799,7 +799,7 @@ function AppContent() {
         handleSessionInvalidated(expired ? 'expired' : 'external');
         return;
       }
-      if (current.role === 'super_admin') {
+      if (current.role === 'super_admin' && !authService.isDevBootstrapSuperAdminSession()) {
         void authService.verifyServerSuperAdminSession().then((res) => {
           if (!res.verified && authRef.current?.id === current.id) {
             authService.clearActiveSession(authRef.current, 'revoked');
