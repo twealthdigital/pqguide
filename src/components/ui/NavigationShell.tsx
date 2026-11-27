@@ -435,6 +435,14 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         ? 'bg-[#92400E] text-white'
         : 'bg-[#1D1E23] text-white';
 
+  // On mobile the hero banner only sits directly under the fixed header when no
+  // notice bar / admin bar is pushing it down. Otherwise the header floats over the
+  // light page background and must use dark (not white) logo/icon colours.
+  const showAdminViewBar = Boolean(
+    isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange
+  );
+  const headerOnBanner = hasBanner && !showMarquee && !showAdminViewBar;
+
   const defaultScreen = getDefaultScreenForRole(student.role, effectiveWorkspace);
   const roleBadgeLabel =
     student.role === 'school_admin' && student.assignedSchoolCode
@@ -1250,7 +1258,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           className={`lg:hidden fixed top-0 inset-x-0 z-40 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 sm:px-6 flex items-center justify-between transition-colors duration-250 ease-out ${
             isScrolled
               ? 'bg-[#1D1E23] text-white shadow-[0_6px_18px_-6px_rgba(14,15,20,0.42)]'
-              : hasBanner
+              : headerOnBanner
               ? 'bg-transparent text-white'
               : 'bg-[#F6F7F9] text-[#1D1E23] border-b border-[#1A1B20]/[0.06]'
           }`}
@@ -1274,7 +1282,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 onClick={() => onNavigate('notifications')}
                 aria-label={`Open notifications (${unreadCount} unread)`}
                 className={`relative h-10 w-10 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
-                  hasBanner || isScrolled
+                  headerOnBanner || isScrolled
                     ? 'text-white'
                     : 'text-[#1D1E23]'
                 }`}
@@ -1284,7 +1292,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   {unreadCount > 0 && (
                     <span
                       className={`absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold font-mono-tabular flex items-center justify-center ${
-                        hasBanner || isScrolled
+                        headerOnBanner || isScrolled
                           ? 'bg-white text-[#1D1E23]'
                           : 'bg-[#1D1E23] text-white'
                       }`}
@@ -1304,7 +1312,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 aria-controls="mobile-slide-drawer"
                 onClick={() => setDrawerOpen(true)}
                 className={`h-10 w-10 -mr-1.5 rounded-full flex items-center justify-center cursor-pointer transition-opacity duration-150 active:opacity-70 ${
-                  hasBanner || isScrolled
+                  headerOnBanner || isScrolled
                     ? 'text-white'
                     : 'text-[#1D1E23]'
                 }`}
