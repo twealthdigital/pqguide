@@ -205,7 +205,12 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   useEffect(() => {
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
+      const y =
+        window.scrollY ||
+        document.documentElement.scrollTop ||
+        document.body.scrollTop ||
+        0;
+      setIsScrolled(y > 10);
     };
     handleScroll();
     window.addEventListener('scroll', handleScroll, { passive: true });
@@ -1884,9 +1889,18 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           style={
             hasBanner
               ? ({
+                  // Same vertical offset the notice bars used to push the hero down by,
+                  // now added to the hero's own height so the headline/search stay put
+                  // while the hero image reaches up behind the header.
                   '--hero-extra': `${
-                    (showMarquee ? 40 : 0) +
-                    (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange ? 44 : 0)
+                    showMarquee ||
+                    (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange)
+                      ? 64 +
+                        (showMarquee ? 46 : 0) +
+                        (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange
+                          ? 50
+                          : 0)
+                      : 0
                   }px`,
                 } as React.CSSProperties)
               : undefined
@@ -1902,7 +1916,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <div
             className={
               hasBanner
-                ? 'lg:hidden absolute inset-x-4 sm:inset-x-6 top-[calc(62px+env(safe-area-inset-top))] z-30 space-y-2'
+                ? 'lg:hidden absolute inset-x-4 sm:inset-x-6 top-[calc(64px+env(safe-area-inset-top))] z-30 space-y-3'
                 : 'contents'
             }
           >
