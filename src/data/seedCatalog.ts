@@ -1,6 +1,5 @@
 import type {
   AppNotification,
-  ManagedAccount,
   PastQuestionDoc,
   School,
 } from '../core/types';
@@ -298,48 +297,5 @@ export const SEED_NOTIFICATIONS: AppNotification[] = [
     category: 'system',
     createdAt: '2026-11-25T09:00:00.000Z',
     isRead: false,
-  },
-];
-
-export const SEED_ACCOUNTS: ManagedAccount[] = [
-  {
-    id: 'acc-1',
-    fullName: 'Toluwanimi Adeyemi',
-    email: 't.adeyemi@aaua.edu.ng',
-    role: 'student',
-    schoolId: 'sch-aaua',
-    schoolCode: 'AAUA',
-    status: 'active',
-    lastActiveAt: '2026-11-23T09:10:00.000Z',
-  },
-  {
-    id: 'acc-2',
-    fullName: 'Dr. Femi Ogunleye (Exam Unit)',
-    email: 'examoffice@aaua.edu.ng',
-    role: 'school_admin',
-    schoolId: 'sch-aaua',
-    schoolCode: 'AAUA',
-    status: 'active',
-    lastActiveAt: '2026-11-23T08:45:00.000Z',
-  },
-  {
-    id: 'acc-3',
-    fullName: 'Chisom Okafor',
-    email: 'c.okafor@aaua.edu.ng',
-    role: 'student',
-    schoolId: 'sch-aaua',
-    schoolCode: 'AAUA',
-    status: 'active',
-    lastActiveAt: '2026-11-22T19:20:00.000Z',
-  },
-  {
-    id: 'acc-4',
-    fullName: 'Adebayo Rotimi',
-    email: 'a.rotimi@aaua.edu.ng',
-    role: 'student',
-    schoolId: 'sch-aaua',
-    schoolCode: 'AAUA',
-    status: 'active',
-    lastActiveAt: '2026-11-22T14:05:00.000Z',
   },
 ];

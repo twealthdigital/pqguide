@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { defaultOtpEngine } from './otpService.ts';
+import { defaultSuperAdminEngine } from './superAdminService.ts';
 
 export type NodeHttpRequest = IncomingMessage & {
   body?: unknown;
@@ -152,3 +153,143 @@ export function createOtpHttpHandlers(engine = defaultOtpEngine) {
 }
 
 export const defaultOtpHttpHandlers = createOtpHttpHandlers();
+
+export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
+  async function handleStatus(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const result = await engine.getStatus();
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleInit(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+      return;
+    }
+    const result = await engine.initializeFirstSuperAdmin({
+      body,
+      clientIp: getClientIp(req),
+    });
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleLogin(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+      return;
+    }
+    const result = await engine.loginSuperAdmin({
+      body,
+      clientIp: getClientIp(req),
+    });
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleVerifySession(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST' && req.method !== 'GET') {
+      res.setHeader('Allow', 'GET, POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    let body: unknown = {};
+    if (req.method === 'POST') {
+      try {
+        body = await readJsonBody(req);
+      } catch (err) {
+        const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+        sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+        return;
+      }
+    }
+    const authHeader =
+      typeof req.headers.authorization === 'string'
+        ? req.headers.authorization
+        : undefined;
+    const result = await engine.verifySession({
+      body,
+      authorizationHeader: authHeader,
+    });
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleForgot(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+      return;
+    }
+    const result = await engine.requestPasswordReset({
+      body,
+      clientIp: getClientIp(req),
+    });
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleResetPassword(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+      return;
+    }
+    const result = await engine.resetPassword({
+      body,
+      clientIp: getClientIp(req),
+    });
+    sendJson(res, result.status, result.body);
+  }
+
+  return {
+    handleStatus,
+    handleInit,
+    handleLogin,
+    handleVerifySession,
+    handleForgot,
+    handleResetPassword,
+  };
+}
+
+export const defaultSuperAdminHttpHandlers = createSuperAdminHttpHandlers();

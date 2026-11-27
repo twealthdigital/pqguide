@@ -43,22 +43,31 @@ import type {
 import { STUDY_MATERIALS } from '../data/materials';
 import { createDefaultSiteCms } from '../data/siteInfo';
 import {
-  SEED_ACCOUNTS,
   SEED_NOTIFICATIONS,
   SEED_PAST_QUESTIONS,
   SEED_SCHOOLS,
   SEED_SESSIONS,
 } from '../data/seedCatalog';
-import {
-  buildDemoPreviewDataset,
-  hasAppliedDemoPreview,
-  isDemoPreviewId,
-  markDemoPreviewApplied,
-  resetDemoPreviewFlag,
-} from '../data/demoPreviewData';
 import { localStore } from './storage/localStore';
 
 const STORAGE_KEY = 'pqguide_aaua_store_v1';
+const LEGACY_DEMO_FLAG_KEY = 'pqguide_demo_preview_seeded_v1';
+
+const LEGACY_SEED_ACCOUNT_EMAIL_BY_ID = new Map<string, string>([
+  ['acc-1', 't.adeyemi@aaua.edu.ng'],
+  ['acc-2', 'examoffice@aaua.edu.ng'],
+  ['acc-3', 'c.okafor@aaua.edu.ng'],
+  ['acc-4', 'a.rotimi@aaua.edu.ng'],
+]);
+
+function isDemoId(id: string | undefined): boolean {
+  return typeof id === 'string' && id.startsWith('demo-');
+}
+
+function isLegacySeedAccount(acc: Pick<ManagedAccount, 'id' | 'email'>): boolean {
+  const expectedEmail = LEGACY_SEED_ACCOUNT_EMAIL_BY_ID.get(acc.id);
+  return Boolean(expectedEmail && acc.email.toLowerCase() === expectedEmail);
+}
 
 export interface AppStoreState {
   schools: School[];
@@ -91,47 +100,6 @@ function getDefaultMarquee(): HeaderMarqueeConfig {
   };
 }
 
-function mergeUniqueById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
-  const seen = new Set(existing.map((item) => item.id));
-  return [...existing, ...incoming.filter((item) => !seen.has(item.id))];
-}
-
-function hydrateDemoPreviewOnce(base: AppStoreState): AppStoreState {
-  if (hasAppliedDemoPreview()) return base;
-  const demo = buildDemoPreviewDataset();
-  markDemoPreviewApplied('1');
-
-  const existingVisitors = new Set(base.telemetry.uniqueVisitorIds);
-  const nextVisitorIds = [
-    ...base.telemetry.uniqueVisitorIds,
-    ...demo.visitorIds.filter((id) => !existingVisitors.has(id)),
-  ];
-
-  const hydrated: AppStoreState = {
-    ...base,
-    accounts: mergeUniqueById(base.accounts, demo.accounts),
-    payments: mergeUniqueById(base.payments, demo.payments)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 300),
-    userActivities: mergeUniqueById(base.userActivities, demo.userActivities)
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-      .slice(0, 500),
-    supportTickets: mergeUniqueById(base.supportTickets, demo.supportTickets)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 300),
-    auditLogs: mergeUniqueById(base.auditLogs, demo.auditLogs)
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-      .slice(0, 300),
-    telemetry: {
-      totalVisits: base.telemetry.totalVisits + demo.extraVisitsCount,
-      uniqueVisitorIds: nextVisitorIds,
-      lastVisitAt: base.telemetry.lastVisitAt ?? new Date().toISOString(),
-    },
-  };
-  saveState(hydrated);
-  return hydrated;
-}
-
 function getDefaultState(): AppStoreState {
   return {
     schools: SEED_SCHOOLS,
@@ -139,7 +107,7 @@ function getDefaultState(): AppStoreState {
     documents: SEED_PAST_QUESTIONS,
     materials: STUDY_MATERIALS,
     notifications: SEED_NOTIFICATIONS,
-    accounts: SEED_ACCOUNTS,
+    accounts: [],
     auditLogs: [],
     payments: [],
     userActivities: [],
@@ -211,9 +179,10 @@ function mergeSiteCms(raw?: Partial<SiteCmsConfig> | null): SiteCmsConfig {
 }
 
 function loadState(): AppStoreState {
+  localStore.removeItem(LEGACY_DEMO_FLAG_KEY);
   try {
     const parsed = localStore.getJson<Partial<AppStoreState>>(STORAGE_KEY);
-    if (!parsed) return hydrateDemoPreviewOnce(getDefaultState());
+    if (!parsed) return getDefaultState();
 
     const defaults = getDefaultState();
     const storedDocs = Array.isArray(parsed.documents) ? parsed.documents : null;
@@ -255,15 +224,17 @@ function loadState(): AppStoreState {
         ? parsed.schools
         : defaults.schools;
 
-    const accounts = Array.isArray(parsed.accounts)
-      ? parsed.accounts.map((a) => ({
-          ...a,
-          adminVerified: a.adminVerified ?? true,
-          schoolId:
-            a.schoolId ??
-            schools.find((s) => s.code.toUpperCase() === (a.schoolCode || '').toUpperCase())?.id,
-        }))
-      : defaults.accounts;
+    const rawAccounts = Array.isArray(parsed.accounts) ? parsed.accounts : [];
+    const accounts = rawAccounts
+      .filter((a) => !isDemoId(a.id) && !isLegacySeedAccount(a))
+      .map((a) => ({
+        ...a,
+        adminVerified: a.adminVerified ?? true,
+        isEmailVerified: a.isEmailVerified ?? true,
+        schoolId:
+          a.schoolId ??
+          schools.find((s) => s.code.toUpperCase() === (a.schoolCode || '').toUpperCase())?.id,
+      }));
 
     const marquee: HeaderMarqueeConfig =
       parsed.marquee && typeof parsed.marquee === 'object'
@@ -283,23 +254,38 @@ function loadState(): AppStoreState {
           }
         : defaults.marquee;
 
+    const rawVisitorIds = Array.isArray(parsed.telemetry?.uniqueVisitorIds)
+      ? parsed.telemetry.uniqueVisitorIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    const hadDemoVisitors = rawVisitorIds.some((id) => isDemoId(id));
+    const cleanedVisitorIds = rawVisitorIds.filter((id) => !isDemoId(id));
+    const rawTotalVisits =
+      typeof parsed.telemetry?.totalVisits === 'number'
+        ? Math.max(0, parsed.telemetry.totalVisits)
+        : 0;
+
     const telemetry: VisitorTelemetry =
       parsed.telemetry && typeof parsed.telemetry === 'object'
         ? {
-            totalVisits:
-              typeof parsed.telemetry.totalVisits === 'number'
-                ? Math.max(0, parsed.telemetry.totalVisits)
-                : 0,
-            uniqueVisitorIds: Array.isArray(parsed.telemetry.uniqueVisitorIds)
-              ? parsed.telemetry.uniqueVisitorIds.filter(
-                  (id): id is string => typeof id === 'string'
-                )
-              : [],
+            totalVisits: hadDemoVisitors
+              ? Math.max(cleanedVisitorIds.length, rawTotalVisits - 184)
+              : rawTotalVisits,
+            uniqueVisitorIds: cleanedVisitorIds,
             lastVisitAt: parsed.telemetry.lastVisitAt,
           }
         : defaults.telemetry;
 
-    return hydrateDemoPreviewOnce({
+    const rawAuditLogs = Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [];
+    const rawPayments = Array.isArray(parsed.payments) ? parsed.payments : [];
+    const rawActivities = Array.isArray(parsed.userActivities) ? parsed.userActivities : [];
+    const rawTickets = Array.isArray(parsed.supportTickets) ? parsed.supportTickets : [];
+
+    const auditLogs = rawAuditLogs.filter((l) => !isDemoId(l.id)).slice(0, 300);
+    const payments = rawPayments.filter((p) => !isDemoId(p.id)).slice(0, 300);
+    const userActivities = rawActivities.filter((a) => !isDemoId(a.id)).slice(0, 500);
+    const supportTickets = rawTickets.filter((t) => !isDemoId(t.id)).slice(0, 300);
+
+    const sanitizedState: AppStoreState = {
       schools,
       sessions:
         Array.isArray(parsed.sessions) && parsed.sessions.length > 0
@@ -309,14 +295,10 @@ function loadState(): AppStoreState {
       materials: storedMaterials,
       notifications,
       accounts,
-      auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs.slice(0, 300) : [],
-      payments: Array.isArray(parsed.payments) ? parsed.payments.slice(0, 300) : [],
-      userActivities: Array.isArray(parsed.userActivities)
-        ? parsed.userActivities.slice(0, 500)
-        : [],
-      supportTickets: Array.isArray(parsed.supportTickets)
-        ? parsed.supportTickets.slice(0, 300)
-        : [],
+      auditLogs,
+      payments,
+      userActivities,
+      supportTickets,
       siteCms: mergeSiteCms(parsed.siteCms),
       telemetry,
       marquee,
@@ -327,9 +309,23 @@ function loadState(): AppStoreState {
       readSuperAdminNotifIds: Array.isArray(parsed.readSuperAdminNotifIds)
         ? parsed.readSuperAdminNotifIds.filter((id): id is string => typeof id === 'string')
         : [],
-    });
+    };
+
+    const strippedAnyDemoOrSeed =
+      accounts.length !== rawAccounts.length ||
+      hadDemoVisitors ||
+      auditLogs.length !== rawAuditLogs.length ||
+      payments.length !== rawPayments.length ||
+      userActivities.length !== rawActivities.length ||
+      supportTickets.length !== rawTickets.length;
+
+    if (strippedAnyDemoOrSeed) {
+      saveState(sanitizedState);
+    }
+
+    return sanitizedState;
   } catch {
-    return hydrateDemoPreviewOnce(getDefaultState());
+    return getDefaultState();
   }
 }
 
@@ -385,6 +381,12 @@ class ArchiveRepository {
   };
 
   getSnapshot = (): AppStoreState => this.state;
+
+  refreshFromStorage(): AppStoreState {
+    this.state = loadState();
+    this.listeners.forEach((l) => l());
+    return this.state;
+  }
 
   private update(updater: (prev: AppStoreState) => AppStoreState): void {
     this.state = updater(this.state);
@@ -2136,86 +2138,53 @@ class ArchiveRepository {
       'pq:manage_all',
       'Only Super Administrators can clear starter catalog samples.'
     );
-    markDemoPreviewApplied('cleared');
-    this.update((prev) => {
-      const hadDemoVisits = prev.telemetry.uniqueVisitorIds.some((id) => isDemoPreviewId(id));
-      const cleanedVisitors = prev.telemetry.uniqueVisitorIds.filter((id) => !isDemoPreviewId(id));
-      return {
-        ...prev,
-        documents: prev.documents.filter((doc) => !doc.id.startsWith('pq-aaua-')),
-        accounts: prev.accounts.filter((acc) => !isDemoPreviewId(acc.id)),
-        payments: prev.payments.filter((tx) => !isDemoPreviewId(tx.id)),
-        userActivities: prev.userActivities.filter((act) => !isDemoPreviewId(act.id)),
-        supportTickets: prev.supportTickets.filter((tk) => !isDemoPreviewId(tk.id)),
-        telemetry: {
-          ...prev.telemetry,
-          totalVisits: hadDemoVisits
-            ? Math.max(cleanedVisitors.length, prev.telemetry.totalVisits - 184)
-            : prev.telemetry.totalVisits,
-          uniqueVisitorIds: cleanedVisitors,
+    localStore.removeItem(LEGACY_DEMO_FLAG_KEY);
+    this.update((prev) => ({
+      ...prev,
+      documents: prev.documents.filter((doc) => !doc.id.startsWith('pq-aaua-')),
+      notifications: [
+        {
+          id: `notif-${Date.now()}`,
+          title: 'Starter Samples Cleared',
+          message:
+            'Starter sample past questions were removed. All real user records and custom uploads remain intact.',
+          category: 'system',
+          createdAt: new Date().toISOString(),
+          isRead: false,
         },
-        notifications: [
-          {
-            id: `notif-${Date.now()}`,
-            title: 'Starter Samples Cleared',
-            message:
-              'Demo seed past questions and preview sample records were removed. Only live records remain.',
-            category: 'system',
-            createdAt: new Date().toISOString(),
-            isRead: false,
-          },
-        ],
-        auditLogs: [
-          createAuditEntry(
-            actor,
-            'pq_deleted',
-            'system',
-            'seed-samples',
-            'Cleared starter demo samples and preview records'
-          ),
-          ...prev.auditLogs.filter((log) => !isDemoPreviewId(log.id)),
-        ].slice(0, 300),
-      };
-    });
+      ],
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'pq_deleted',
+          'system',
+          'seed-samples',
+          'Cleared starter sample past questions'
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
   }
 
   restoreDefaultCatalog(actor: AuthenticatedUser | null | undefined): void {
     this.requirePermission(
       actor,
       'dev:reset',
-      'Only Super Administrators can restore starter samples.'
+      'Only Super Administrators can restore starter catalog.'
     );
-    resetDemoPreviewFlag();
-    const defaults = hydrateDemoPreviewOnce(getDefaultState());
+    const defaults = getDefaultState();
     this.update((prev) => ({
       ...prev,
       documents: defaults.documents,
       materials: defaults.materials.map(normalizeMaterial),
       notifications: defaults.notifications,
-      accounts: mergeUniqueById(prev.accounts, defaults.accounts),
-      payments: mergeUniqueById(prev.payments, defaults.payments)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 300),
-      userActivities: mergeUniqueById(prev.userActivities, defaults.userActivities)
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-        .slice(0, 500),
-      supportTickets: mergeUniqueById(prev.supportTickets, defaults.supportTickets)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 300),
-      telemetry: {
-        totalVisits: Math.max(prev.telemetry.totalVisits, defaults.telemetry.totalVisits),
-        uniqueVisitorIds: Array.from(
-          new Set([...prev.telemetry.uniqueVisitorIds, ...defaults.telemetry.uniqueVisitorIds])
-        ),
-        lastVisitAt: prev.telemetry.lastVisitAt ?? defaults.telemetry.lastVisitAt,
-      },
       auditLogs: [
         createAuditEntry(
           actor,
           'dev_data_reset',
           'system',
           'default-catalog',
-          'Restored default past questions, materials, and preview dataset'
+          'Restored starter past questions and study materials catalog'
         ),
         ...prev.auditLogs,
       ].slice(0, 300),
@@ -2223,7 +2192,7 @@ class ArchiveRepository {
   }
 
   resetAllForDev(): void {
-    resetDemoPreviewFlag();
+    localStore.removeItem(LEGACY_DEMO_FLAG_KEY);
     this.state = getDefaultState();
     localStore.removeItem(STORAGE_KEY);
     this.listeners.forEach((l) => l());

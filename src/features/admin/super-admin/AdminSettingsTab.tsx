@@ -1722,7 +1722,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
           title="Dataset &amp; Development Controls"
           right={
             <div className="flex flex-wrap gap-2">
-              <TooltipBubble label="Remove sample demo past questions & materials">
+              <TooltipBubble label="Remove starter sample past questions & materials">
                 <TactileButton variant="light" size="sm" onClick={handleClearSamples}>
                   Clear Samples
                 </TactileButton>

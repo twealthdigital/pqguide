@@ -12,6 +12,7 @@ import {
   evaluatePasswordStrength,
   IS_DEV_BOOTSTRAP_ENV,
   validateEmailAddress,
+  type SuperAdminInitStatus,
 } from '../../services/authService';
 import { TactileButton } from '../ui/TactileButton';
 import { AuthPortalShell } from './AuthPortalShell';
@@ -23,6 +24,7 @@ import type { AuthView, PortalAuthProps } from './types';
 type SuperAdminActionKey =
   | 'signin'
   | 'dev_bootstrap'
+  | 'prod_setup'
   | 'dev_reset'
   | 'resend_code'
   | 'forgot_request'
@@ -36,6 +38,7 @@ const ALLOWED_SUPER_ADMIN_VIEWS = new Set<AuthView>([
   'forgot_reset',
   'forgot_success',
   'dev_super_admin_setup',
+  'super_admin_setup',
 ]);
 
 export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
@@ -68,11 +71,18 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
   const [devBootstrapAvailable, setDevBootstrapAvailable] = useState(() =>
     authService.isDevBootstrapAvailable()
   );
+  const [serverStatus, setServerStatus] = useState<SuperAdminInitStatus | null>(null);
   const [devFullName, setDevFullName] = useState('');
   const [devEmail, setDevEmail] = useState('');
   const [devPassword, setDevPassword] = useState('');
   const [devConfirmPassword, setDevConfirmPassword] = useState('');
   const [devConfirmPhrase, setDevConfirmPhrase] = useState('');
+  const [prodFullName, setProdFullName] = useState('');
+  const [prodEmail, setProdEmail] = useState('');
+  const [prodSetupSecret, setProdSetupSecret] = useState('');
+  const [prodPassword, setProdPassword] = useState('');
+  const [prodConfirmPassword, setProdConfirmPassword] = useState('');
+  const [prodConfirmPhrase, setProdConfirmPhrase] = useState('');
   const [showDevResetBox, setShowDevResetBox] = useState(false);
   const [devResetPhrase, setDevResetPhrase] = useState('');
 
@@ -99,6 +109,11 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
   useEffect(() => {
     mountedRef.current = true;
+    void authService.getSuperAdminInitStatus().then((status) => {
+      if (mountedRef.current) {
+        setServerStatus(status);
+      }
+    });
     return () => {
       mountedRef.current = false;
       timersRef.current.forEach((id) => window.clearTimeout(id));
@@ -164,6 +179,15 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
       ? 'Passwords do not match.'
       : null;
 
+  const prodPwReport = useMemo(
+    () => evaluatePasswordStrength(prodPassword, 'super_admin'),
+    [prodPassword]
+  );
+  const prodConfirmError =
+    prodConfirmPassword && prodPassword !== prodConfirmPassword
+      ? 'Passwords do not match.'
+      : null;
+
   const resetPwReport = useMemo(
     () => evaluatePasswordStrength(newPassword, 'super_admin'),
     [newPassword]
@@ -177,6 +201,14 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     devPwReport.meetsMinimum &&
     devPassword === devConfirmPassword &&
     devConfirmPhrase.trim().toUpperCase() === 'INITIALIZE SUPER ADMIN';
+
+  const isProdSetupFormValid =
+    prodFullName.trim().length >= 2 &&
+    validateEmailAddress(prodEmail) &&
+    prodSetupSecret.trim().length >= 16 &&
+    prodPwReport.meetsMinimum &&
+    prodPassword === prodConfirmPassword &&
+    prodConfirmPhrase.trim().toUpperCase() === 'INITIALIZE SUPER ADMIN';
 
   const handleSignInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -240,6 +272,43 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     setDevBootstrapAvailable(false);
     setActiveAction(null);
     setSuccessAction('dev_bootstrap');
+    await scheduleDelay(450);
+    if (!mountedRef.current) return;
+
+    setSuccessAction(null);
+    onAuthenticated(result.data.account, rememberMe);
+  };
+
+  const handleProdSetupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setInfoMsg(null);
+    setActiveAction('prod_setup');
+
+    await scheduleDelay(420);
+    if (!mountedRef.current) return;
+
+    const result = await authService.initializeProductionSuperAdmin({
+      fullName: prodFullName,
+      email: prodEmail,
+      setupSecret: prodSetupSecret,
+      password: prodPassword,
+      confirmPassword: prodConfirmPassword,
+      confirmationPhrase: prodConfirmPhrase,
+      rememberMe,
+    });
+    if (!mountedRef.current) return;
+
+    if (!result.ok || !result.data) {
+      setActiveAction(null);
+      setErrorMsg(result.error ?? 'Initialization failed.');
+      return;
+    }
+
+    setServerStatus((prev) => (prev ? { ...prev, initialized: true } : prev));
+    setActiveAction(null);
+    setSuccessAction('prod_setup');
     await scheduleDelay(450);
     if (!mountedRef.current) return;
 
@@ -425,6 +494,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     forgot_reset: 'Set New Super Admin Password',
     forgot_success: 'Console Password Updated',
     dev_super_admin_setup: 'Dev Super Admin Bootstrap',
+    super_admin_setup: 'Initialize Super Admin',
   };
 
   const subheadingMap: Record<string, string> = {
@@ -434,6 +504,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     forgot_reset: 'Create a 10+ character password containing uppercase, lowercase, and numbers.',
     forgot_success: 'Your Super Admin password has been reset successfully.',
     dev_super_admin_setup: 'Development-only one-time initialization for the first local Super Admin account.',
+    super_admin_setup: 'One-time server-authorized setup for the first Super Admin account.',
   };
 
   const handleTopBack = () => {
@@ -541,10 +612,45 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
             </TactileButton>
           </form>
 
+          {/* Server-Authorized One-Time Production Setup */}
+          {serverStatus?.serverSupported && !serverStatus.initialized && (
+            <div className="mt-5 pt-4 border-t border-[#1A1B20]/[0.08] space-y-2.5">
+              {serverStatus.setupConfigured ? (
+                <button
+                  type="button"
+                  onClick={() => navigateView('super_admin_setup')}
+                  className="w-full min-h-[44px] rounded-2xl border border-[#1A1B20]/12 bg-[#F6F7F9] hover:bg-[#ECEEF3] px-3.5 py-2.5 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <ShieldCheck className="w-4 h-4 text-[#1D1E23] shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#1A1B20] truncate">
+                        First-Time Setup: Initialize Super Admin
+                      </p>
+                      <p className="text-[11px] text-[#686C78] truncate">
+                        Requires server setup key · Locks permanently after initialization
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              ) : (
+                !(import.meta.env.DEV && IS_DEV_BOOTSTRAP_ENV) && (
+                  <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3.5 py-2.5 text-[11px] text-[#505460] leading-relaxed">
+                    No Super Admin has been initialized yet. Add{' '}
+                    <span className="font-mono-tabular font-semibold text-[#1A1B20]">
+                      SUPER_ADMIN_SETUP_SECRET
+                    </span>{' '}
+                    in your server environment variables to unlock one-time setup.
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
           {/* Strictly Local Dev Only Bootstrap & Reset */}
           {import.meta.env.DEV && IS_DEV_BOOTSTRAP_ENV && (
             <div className="mt-5 pt-4 border-t border-[#1A1B20]/[0.08] space-y-2.5">
-              {devBootstrapAvailable && (
+              {devBootstrapAvailable && !serverStatus?.initialized && (
                 <button
                   type="button"
                   onClick={() => navigateView('dev_super_admin_setup')}
@@ -608,6 +714,158 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* SERVER-AUTHORIZED ONE-TIME SUPER ADMIN SETUP */}
+      {view === 'super_admin_setup' && (
+        <div className="space-y-4 page-enter">
+          <div className="rounded-2xl bg-[#1D1E23] text-white px-4 py-3 text-xs leading-relaxed">
+            <p className="font-bold">One-Time Server-Authorized Initialization</p>
+            <p className="mt-0.5 text-[#D4D7E0]">
+              Protected by your server setup key. Once completed, this initialization endpoint permanently locks.
+            </p>
+          </div>
+
+          {serverStatus?.initialized ? (
+            <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-5 text-center space-y-3">
+              <p className="text-sm font-bold text-[#1A1B20]">Setup Permanently Locked</p>
+              <p className="text-xs text-[#505460]">
+                A Super Admin account has already been initialized for this platform.
+              </p>
+              <TactileButton
+                type="button"
+                variant="dark"
+                size="md"
+                onClick={() => navigateBack('signin')}
+              >
+                Return to Sign In
+              </TactileButton>
+            </div>
+          ) : (
+            <form onSubmit={handleProdSetupSubmit} className="space-y-3.5" noValidate>
+              <div>
+                <label
+                  htmlFor="prod-sa-name"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                >
+                  Super Admin Full Name
+                </label>
+                <input
+                  id="prod-sa-name"
+                  type="text"
+                  disabled={isBusy}
+                  value={prodFullName}
+                  onChange={(e) => setProdFullName(e.target.value)}
+                  placeholder="e.g. Platform Lead"
+                  className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="prod-sa-email"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                >
+                  Super Admin Email
+                </label>
+                <input
+                  id="prod-sa-email"
+                  type="email"
+                  disabled={isBusy}
+                  value={prodEmail}
+                  onChange={(e) => setProdEmail(e.target.value)}
+                  placeholder="superadmin@pqguide.org"
+                  className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
+                />
+                {serverStatus?.emailLockedToConfigured && (
+                  <p className="mt-1 pl-1 text-[11px] text-[#686C78]">
+                    Must match your configured server bootstrap email.
+                  </p>
+                )}
+              </div>
+
+              <PasswordField
+                id="prod-sa-setup-secret"
+                label="Server Setup Key (SUPER_ADMIN_SETUP_SECRET)"
+                value={prodSetupSecret}
+                onChange={setProdSetupSecret}
+                placeholder="Enter server setup secret key"
+                disabled={isBusy}
+                autoComplete="off"
+                compact
+              />
+
+              <PasswordField
+                id="prod-sa-password"
+                label="Password (10+ chars, upper, lower & numbers)"
+                value={prodPassword}
+                onChange={setProdPassword}
+                placeholder="Create strong Super Admin password"
+                disabled={isBusy}
+                autoComplete="new-password"
+                compact
+              />
+
+              <PasswordStrengthMeter password={prodPassword} role="super_admin" />
+
+              <PasswordField
+                id="prod-sa-confirm"
+                label="Confirm Password"
+                value={prodConfirmPassword}
+                onChange={setProdConfirmPassword}
+                placeholder="Re-enter password"
+                disabled={isBusy}
+                autoComplete="new-password"
+                error={prodConfirmError}
+                compact
+              />
+
+              <div>
+                <label
+                  htmlFor="prod-sa-phrase"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                >
+                  Type <span className="font-mono-tabular">INITIALIZE SUPER ADMIN</span>
+                </label>
+                <input
+                  id="prod-sa-phrase"
+                  type="text"
+                  disabled={isBusy}
+                  value={prodConfirmPhrase}
+                  onChange={(e) => setProdConfirmPhrase(e.target.value)}
+                  placeholder="INITIALIZE SUPER ADMIN"
+                  className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 font-mono-tabular text-sm text-[#1A1B20]"
+                />
+              </div>
+
+              <TactileButton
+                type="submit"
+                variant="dark"
+                size="lg"
+                fullWidth
+                className="rounded-full"
+                loading={activeAction === 'prod_setup'}
+                success={successAction === 'prod_setup'}
+                successLabel="Super Admin Initialized!"
+                disabled={isBusy || !isProdSetupFormValid}
+              >
+                Initialize Super Admin
+              </TactileButton>
+            </form>
+          )}
+
+          <div className="text-center pt-1">
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => navigateBack('signin')}
+              className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to Super Admin Sign In</span>
+            </button>
+          </div>
         </div>
       )}
 

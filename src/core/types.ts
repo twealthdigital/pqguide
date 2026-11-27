@@ -245,6 +245,7 @@ export interface ManagedAccount {
   schoolCode: string;
   status: AccountStatus;
   adminVerified?: boolean;
+  isEmailVerified?: boolean;
   needsPasswordSetup?: boolean;
   level?: StudentLevel;
   faculty?: string;

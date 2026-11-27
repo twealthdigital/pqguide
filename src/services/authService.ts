@@ -399,6 +399,19 @@ export interface SuperAdminBootstrapInput {
   rememberMe?: boolean;
 }
 
+export interface ProductionSuperAdminInitInput extends SuperAdminBootstrapInput {
+  setupSecret: string;
+}
+
+export interface SuperAdminInitStatus {
+  serverSupported: boolean;
+  initialized: boolean;
+  setupConfigured: boolean;
+  emailLockedToConfigured: boolean;
+  storage: 'upstash' | 'memory-dev';
+  error?: string;
+}
+
 export interface CreateSchoolAdminInput {
   fullName: string;
   email: string;
@@ -525,6 +538,7 @@ export const authService = {
       schoolCode: 'ALL',
       status: 'active',
       adminVerified: true,
+      isEmailVerified: true,
       sessionState: 'logged_in',
       lastLoginAt: now,
       lastActiveAt: now,
@@ -743,6 +757,47 @@ export const authService = {
     const accounts = readAccounts();
     const matched = accounts.find((a) => a.email === normalizedEmail);
     if (!matched) {
+      if (purpose === 'reset') {
+        try {
+          const saRes = await fetch('/api/auth/super-admin/forgot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: normalizedEmail }),
+          });
+          const saPayload = (await saRes.json()) as {
+            ok?: boolean;
+            error?: string;
+            deliveryMode?: OtpDeliveryMode;
+            cooldownSeconds?: number;
+            retryAfterSeconds?: number;
+            previewCode?: string;
+          };
+          if (saRes.ok && saPayload.ok) {
+            const deliveryMode: OtpDeliveryMode =
+              saPayload.deliveryMode === 'email' ? 'email' : 'preview';
+            return {
+              ok: true,
+              data: {
+                deliveryMode,
+                cooldownSeconds: saPayload.cooldownSeconds ?? 30,
+                verificationCode:
+                  deliveryMode === 'preview' && isDevBootstrapEnabled()
+                    ? saPayload.previewCode
+                    : undefined,
+              },
+            };
+          }
+          if (saRes.status !== 404) {
+            return {
+              ok: false,
+              error: saPayload.error || 'Could not resend code.',
+              retryAfterSeconds: saPayload.retryAfterSeconds,
+            };
+          }
+        } catch {
+          // Fall through to standard session error
+        }
+      }
       return { ok: false, error: 'Account session expired. Please try again.' };
     }
     if (purpose === 'admin_activate') {
@@ -855,6 +910,7 @@ export const authService = {
       schoolCode: 'AAUA',
       status: 'active',
       adminVerified: true,
+      isEmailVerified: true,
       sessionState: 'logged_in',
       lastLoginAt: now,
       lastActiveAt: now,
@@ -911,6 +967,82 @@ export const authService = {
       account = accounts.find(
         (a) => a.email === normalizedEmail && a.role === requiredRole && a.isEmailVerified
       );
+
+      if (portal === 'super_admin' && (!isDevBootstrapEnabled() || !account)) {
+        try {
+          const response = await fetch('/api/auth/super-admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: normalizedEmail, password }),
+          });
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            error?: string;
+            retryAfterSeconds?: number;
+            account?: AuthenticatedUser;
+            sessionToken?: string;
+          };
+          if (response.ok && payload.ok && payload.account && payload.sessionToken) {
+            const now = new Date().toISOString();
+            const serverUser: AuthenticatedUser = {
+              ...payload.account,
+              role: 'super_admin',
+              isEmailVerified: true,
+              adminVerified: true,
+            };
+            sessionService.saveSuperAdminSession(
+              serverUser,
+              payload.sessionToken,
+              rememberMe
+            );
+            archiveRepository.syncManagedAccount({
+              id: serverUser.id,
+              fullName: serverUser.fullName,
+              email: serverUser.email,
+              role: 'super_admin',
+              schoolCode: 'ALL',
+              status: serverUser.status,
+              adminVerified: true,
+              isEmailVerified: true,
+              needsPasswordSetup: false,
+              sessionState: 'logged_in',
+              lastLoginAt: now,
+              lastActiveAt: now,
+              createdAt: serverUser.createdAt,
+              createdBy: serverUser.createdBy,
+            });
+            archiveRepository.setAccountSessionState(serverUser.id, 'logged_in');
+            archiveRepository.recordUserActivity({
+              userId: serverUser.id,
+              userName: serverUser.fullName,
+              userEmail: serverUser.email,
+              userRole: 'super_admin',
+              type: 'login',
+              detail: 'Signed in on super admin portal',
+            });
+            this.saveActiveSession(serverUser, rememberMe);
+            return { ok: true, data: { account: serverUser } };
+          }
+          if (response.status !== 404 || !account) {
+            return {
+              ok: false,
+              error:
+                response.status === 404
+                  ? 'No verified Super Admin account matches this email address.'
+                  : payload.error || 'Authentication failed.',
+              retryAfterSeconds: payload.retryAfterSeconds,
+            };
+          }
+        } catch {
+          if (!account || !isDevBootstrapEnabled()) {
+            return {
+              ok: false,
+              error: 'Unable to reach Super Admin authentication server.',
+            };
+          }
+        }
+      }
+
       if (!account) {
         return {
           ok: false,
@@ -1006,6 +1138,7 @@ export const authService = {
       schoolCode: publicUser.assignedSchoolCode ?? (publicUser.role === 'super_admin' ? 'ALL' : 'AAUA'),
       status: publicUser.status,
       adminVerified: publicUser.adminVerified ?? true,
+      isEmailVerified: true,
       needsPasswordSetup: false,
       warningsCount: publicUser.warningsCount,
       moderationNote: publicUser.moderationNote,
@@ -1155,6 +1288,7 @@ export const authService = {
       schoolCode: publicUser.assignedSchoolCode ?? 'AAUA',
       status: 'active',
       adminVerified: true,
+      isEmailVerified: true,
       needsPasswordSetup: false,
       sessionState: 'logged_in',
       lastLoginAt: now,
@@ -1199,6 +1333,261 @@ export const authService = {
     return this.signinWithPortal('student', rawMatric, password, rememberMe);
   },
 
+  syncVerifiedAccountsToRepository(): void {
+    const accounts = readAccounts().filter((a) => a.isEmailVerified);
+    if (accounts.length === 0) return;
+
+    const existingRepo = archiveRepository.getSnapshot().accounts;
+    for (const acc of accounts) {
+      const publicUser = toAuthenticatedUser(acc);
+      const repoMatch = existingRepo.find(
+        (r) =>
+          r.id === publicUser.id ||
+          r.email.toLowerCase() === publicUser.email.toLowerCase()
+      );
+      const resolvedSchoolId =
+        publicUser.assignedSchoolId ??
+        (publicUser.role === 'student' ? 'sch-aaua' : undefined);
+      const resolvedSchoolCode =
+        publicUser.assignedSchoolCode ??
+        (publicUser.role === 'super_admin' ? 'ALL' : 'AAUA');
+
+      const alreadyUpToDate =
+        repoMatch &&
+        repoMatch.fullName === publicUser.fullName &&
+        repoMatch.email === publicUser.email &&
+        (repoMatch.matricNumber ?? '') === (publicUser.matricNumber ?? '') &&
+        repoMatch.role === publicUser.role &&
+        repoMatch.isEmailVerified === true &&
+        repoMatch.createdAt === publicUser.createdAt;
+
+      if (alreadyUpToDate) continue;
+
+      archiveRepository.syncManagedAccount({
+        id: publicUser.id,
+        fullName: publicUser.fullName,
+        email: publicUser.email,
+        matricNumber: publicUser.role === 'student' ? publicUser.matricNumber : undefined,
+        level: publicUser.level,
+        faculty: publicUser.faculty,
+        department: publicUser.department,
+        role: publicUser.role,
+        schoolId: resolvedSchoolId,
+        schoolCode: resolvedSchoolCode,
+        status: repoMatch?.status ?? publicUser.status,
+        adminVerified: repoMatch?.adminVerified ?? publicUser.adminVerified ?? true,
+        isEmailVerified: true,
+        needsPasswordSetup: Boolean(publicUser.needsPasswordSetup),
+        warningsCount: repoMatch?.warningsCount ?? publicUser.warningsCount ?? 0,
+        moderationNote: repoMatch?.moderationNote ?? publicUser.moderationNote,
+        sessionState: repoMatch?.sessionState ?? 'logged_out',
+        lastLoginAt: repoMatch?.lastLoginAt,
+        lastLogoutAt: repoMatch?.lastLogoutAt,
+        lastActiveAt:
+          repoMatch?.lastActiveAt ?? publicUser.updatedAt ?? publicUser.createdAt,
+        createdAt: publicUser.createdAt,
+        createdBy: publicUser.createdBy,
+      });
+    }
+  },
+
+  async getSuperAdminInitStatus(): Promise<SuperAdminInitStatus> {
+    try {
+      const res = await fetch('/api/auth/super-admin/status', {
+        method: 'GET',
+        cache: 'no-store',
+      });
+      const payload = (await res.json()) as Partial<SuperAdminInitStatus> & {
+        ok?: boolean;
+      };
+      return {
+        serverSupported: Boolean(payload.serverSupported),
+        initialized: Boolean(payload.initialized),
+        setupConfigured: Boolean(payload.setupConfigured),
+        emailLockedToConfigured: Boolean(payload.emailLockedToConfigured),
+        storage: payload.storage === 'upstash' ? 'upstash' : 'memory-dev',
+        error: payload.error,
+      };
+    } catch {
+      return {
+        serverSupported: false,
+        initialized: false,
+        setupConfigured: false,
+        emailLockedToConfigured: false,
+        storage: 'memory-dev',
+        error: 'Unable to check Super Admin server status.',
+      };
+    }
+  },
+
+  async initializeProductionSuperAdmin(
+    input: ProductionSuperAdminInitInput
+  ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
+    const currentSessionUser = this.getActiveSession();
+    if (currentSessionUser) {
+      return {
+        ok: false,
+        error: 'Signed-in accounts cannot initialize or replace a Super Admin.',
+      };
+    }
+
+    const fullName = sanitizeSingleLine(input.fullName, 120);
+    const email = sanitizeSingleLine(input.email, 160).toLowerCase();
+    const setupSecret = input.setupSecret.trim();
+
+    if (fullName.length < 2) {
+      return { ok: false, error: 'Enter the Super Admin full name.' };
+    }
+    if (!validateEmailAddress(email)) {
+      return { ok: false, error: 'Enter a valid Super Admin email address.' };
+    }
+    if (!setupSecret) {
+      return { ok: false, error: 'Enter the server setup authorization key.' };
+    }
+    const pwError = validatePasswordForRole(input.password, 'super_admin');
+    if (pwError) {
+      return { ok: false, error: pwError };
+    }
+    if (input.password !== input.confirmPassword) {
+      return { ok: false, error: 'Passwords do not match.' };
+    }
+    if (input.confirmationPhrase.trim().toUpperCase() !== 'INITIALIZE SUPER ADMIN') {
+      return {
+        ok: false,
+        error: 'Type INITIALIZE SUPER ADMIN in the confirmation field.',
+      };
+    }
+
+    try {
+      const response = await fetch('/api/auth/super-admin/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName,
+          email,
+          password: input.password,
+          confirmPassword: input.confirmPassword,
+          confirmationPhrase: input.confirmationPhrase,
+          setupSecret,
+        }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        retryAfterSeconds?: number;
+        account?: AuthenticatedUser;
+        sessionToken?: string;
+      };
+      if (!response.ok || !payload.ok || !payload.account || !payload.sessionToken) {
+        return {
+          ok: false,
+          error: payload.error || 'Could not initialize Super Admin account.',
+          retryAfterSeconds: payload.retryAfterSeconds,
+        };
+      }
+
+      const now = new Date().toISOString();
+      const serverUser: AuthenticatedUser = {
+        ...payload.account,
+        role: 'super_admin',
+        isEmailVerified: true,
+        adminVerified: true,
+      };
+      const rememberMe = input.rememberMe ?? false;
+      sessionService.saveSuperAdminSession(serverUser, payload.sessionToken, rememberMe);
+      archiveRepository.syncManagedAccount({
+        id: serverUser.id,
+        fullName: serverUser.fullName,
+        email: serverUser.email,
+        role: 'super_admin',
+        schoolCode: 'ALL',
+        status: 'active',
+        adminVerified: true,
+        isEmailVerified: true,
+        sessionState: 'logged_in',
+        lastLoginAt: now,
+        lastActiveAt: now,
+        createdAt: serverUser.createdAt ?? now,
+        createdBy: 'production-bootstrap',
+      });
+      archiveRepository.appendAuditEvent(
+        serverUser,
+        'super_admin_bootstrapped',
+        'account',
+        serverUser.id,
+        `Initialized production Super Admin account (${serverUser.email})`
+      );
+      archiveRepository.recordUserActivity({
+        userId: serverUser.id,
+        userName: serverUser.fullName,
+        userEmail: serverUser.email,
+        userRole: 'super_admin',
+        type: 'login',
+        detail: 'Initialized and signed into Super Admin console',
+      });
+      this.saveActiveSession(serverUser, rememberMe);
+      return { ok: true, data: { account: serverUser } };
+    } catch {
+      return {
+        ok: false,
+        error: 'Unable to reach Super Admin initialization server.',
+      };
+    }
+  },
+
+  async verifyServerSuperAdminSession(): Promise<{
+    verified: boolean;
+    serverManaged: boolean;
+    account?: AuthenticatedUser;
+  }> {
+    const token = sessionService.readSuperAdminToken();
+    if (!token) {
+      return {
+        verified: isDevBootstrapEnabled() && localStore.getItem(BOOTSTRAP_LOCK_KEY) === '1',
+        serverManaged: false,
+      };
+    }
+
+    try {
+      const res = await fetch('/api/auth/super-admin/session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({}),
+      });
+      const payload = (await res.json()) as {
+        ok?: boolean;
+        account?: AuthenticatedUser;
+      };
+      if (res.status === 401 || res.status === 403) {
+        const sa = sessionService.readSuperAdminSession();
+        if (sa) {
+          archiveRepository.setAccountSessionState(sa.account.id, 'logged_out');
+        }
+        sessionService.clearSession('revoked');
+        return { verified: false, serverManaged: true };
+      }
+      if (res.ok && payload.ok && payload.account) {
+        const currentSession = sessionService.readSession();
+        sessionService.saveSuperAdminSession(
+          payload.account,
+          token,
+          Boolean(currentSession?.rememberMe)
+        );
+        return {
+          verified: true,
+          serverManaged: true,
+          account: payload.account,
+        };
+      }
+      return { verified: true, serverManaged: true };
+    } catch {
+      return { verified: true, serverManaged: true };
+    }
+  },
+
   saveActiveSession(account: AuthenticatedUser, rememberMe = true): void {
     sessionService.createSession(account.id, rememberMe);
     localStore.setItem(ONBOARDING_KEY, 'true');
@@ -1216,6 +1605,22 @@ export const authService = {
     const session = sessionService.readSession();
     if (!session) return null;
 
+    const saSession = sessionService.readSuperAdminSession();
+    if (saSession && saSession.account.id === session.userId) {
+      const repoSa = archiveRepository
+        .getSnapshot()
+        .accounts.find((a) => a.id === saSession.account.id || a.email === saSession.account.email);
+      if (repoSa && repoSa.status !== 'active' && repoSa.status !== 'restricted') {
+        archiveRepository.setAccountSessionState(saSession.account.id, 'logged_out');
+        sessionService.clearSession('revoked');
+        return null;
+      }
+      return {
+        ...saSession.account,
+        role: 'super_admin',
+      };
+    }
+
     const accounts = readAccounts();
     const matched = accounts.find(
       (a) => a.id === session.userId && a.isEmailVerified
@@ -1224,6 +1629,16 @@ export const authService = {
     const isPermittedStatus = (s: AccountStatus) => s === 'active' || s === 'restricted';
 
     if (!matched || !isPermittedStatus(matched.status) || matched.adminVerified === false) {
+      if (matched) {
+        archiveRepository.setAccountSessionState(matched.id, 'logged_out');
+      }
+      sessionService.clearSession('revoked');
+      return null;
+    }
+
+    // Outside local dev bootstrap, Super Admin sessions require a server-signed token
+    if (matched.role === 'super_admin' && !isDevBootstrapEnabled()) {
+      archiveRepository.setAccountSessionState(matched.id, 'logged_out');
       sessionService.clearSession('revoked');
       return null;
     }
@@ -1233,6 +1648,7 @@ export const authService = {
       .getSnapshot()
       .accounts.find((a) => a.id === matched.id || a.email === matched.email);
     if (repoAcc && (!isPermittedStatus(repoAcc.status) || repoAcc.adminVerified === false)) {
+      archiveRepository.setAccountSessionState(matched.id, 'logged_out');
       sessionService.clearSession('revoked');
       return null;
     }
@@ -1367,6 +1783,7 @@ export const authService = {
       schoolCode: school.code,
       status: 'active',
       adminVerified: true,
+      isEmailVerified: true,
       needsPasswordSetup: emailInviteMode,
       sessionState: 'logged_out',
       lastActiveAt: now,
@@ -1828,6 +2245,60 @@ export const authService = {
       (a) => a.matricNumber === compactMatric || a.email === lower
     );
 
+    if (portal === 'super_admin' && (!isDevBootstrapEnabled() || !account)) {
+      if (!validateEmailAddress(lower)) {
+        return { ok: false, error: 'Enter a valid Super Admin email address.' };
+      }
+      try {
+        const res = await fetch('/api/auth/super-admin/forgot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: lower }),
+        });
+        const payload = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          email?: string;
+          deliveryMode?: OtpDeliveryMode;
+          cooldownSeconds?: number;
+          retryAfterSeconds?: number;
+          previewCode?: string;
+        };
+        if (res.ok && payload.ok && payload.email) {
+          const deliveryMode: OtpDeliveryMode =
+            payload.deliveryMode === 'email' ? 'email' : 'preview';
+          return {
+            ok: true,
+            data: {
+              email: payload.email,
+              matricNumber: 'SUPER-ADMIN',
+              deliveryMode,
+              cooldownSeconds: payload.cooldownSeconds ?? 30,
+              verificationCode:
+                deliveryMode === 'preview' && isDevBootstrapEnabled()
+                  ? payload.previewCode
+                  : undefined,
+            },
+          };
+        }
+        if (res.status !== 404 || !account) {
+          return {
+            ok: false,
+            error:
+              payload.error || 'No verified administrator account matches that email.',
+            retryAfterSeconds: payload.retryAfterSeconds,
+          };
+        }
+      } catch {
+        if (!account || !isDevBootstrapEnabled()) {
+          return {
+            ok: false,
+            error: 'Unable to reach verification server. Please try again.',
+          };
+        }
+      }
+    }
+
     if (!account) {
       return {
         ok: false,
@@ -1913,6 +2384,50 @@ export const authService = {
       (a) => a.email === normalizedEmail && a.isEmailVerified
     );
 
+    if (!target || (target.role === 'super_admin' && !isDevBootstrapEnabled())) {
+      const pwError = validatePasswordForRole(newPassword, 'super_admin');
+      if (pwError) {
+        return { ok: false, error: pwError };
+      }
+      if (newPassword !== confirmPassword) {
+        return { ok: false, error: 'Passwords do not match.' };
+      }
+      try {
+        const res = await fetch('/api/auth/super-admin/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: normalizedEmail,
+            newPassword,
+            confirmPassword,
+            resetToken,
+          }),
+        });
+        const payload = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          identifier?: string;
+        };
+        if (res.ok && payload.ok && payload.identifier) {
+          return {
+            ok: true,
+            data: {
+              identifier: payload.identifier,
+              matricNumber: 'SUPER-ADMIN',
+            },
+          };
+        }
+        if (res.status !== 404 || !target) {
+          return {
+            ok: false,
+            error: payload.error || 'Account could not be found.',
+          };
+        }
+      } catch {
+        return { ok: false, error: 'Account could not be found.' };
+      }
+    }
+
     if (!target) {
       return { ok: false, error: 'Account could not be found.' };
     }
@@ -1968,3 +2483,11 @@ export const authService = {
     };
   },
 };
+
+try {
+  if (typeof window !== 'undefined') {
+    authService.syncVerifiedAccountsToRepository();
+  }
+} catch {
+  // Ignore startup sync errors in constrained runtimes
+}

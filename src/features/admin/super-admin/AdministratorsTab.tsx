@@ -491,10 +491,25 @@ export const AdministratorsTab: React.FC<AdministratorsTabProps> = ({
                   {selectedAdmin.status}
                 </p>
               </div>
-              <div className="rounded-xl bg-[#F6F7F9] p-3 col-span-2 sm:col-span-1">
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
                 <p className="text-[#686C78]">Session</p>
                 <p className="font-bold text-[#1A1B20] mt-0.5">
                   {selectedAdmin.sessionState === 'logged_in' ? 'Signed In' : 'Signed Out'}
+                </p>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <p className="text-[#686C78]">Role</p>
+                <p className="font-bold text-[#1A1B20] mt-0.5">School Admin</p>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3 col-span-2">
+                <p className="text-[#686C78]">Registered</p>
+                <p className="font-mono-tabular font-bold text-[#1A1B20] mt-0.5">
+                  {selectedAdmin.createdAt
+                    ? new Date(selectedAdmin.createdAt).toLocaleString([], {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })
+                    : 'N/A'}
                 </p>
               </div>
             </div>

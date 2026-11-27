@@ -12,7 +12,8 @@ export type AuthView =
   | 'admin_activate_request'
   | 'admin_activate_verify'
   | 'admin_activate_success'
-  | 'dev_super_admin_setup';
+  | 'dev_super_admin_setup'
+  | 'super_admin_setup';
 
 export interface AuthNotice {
   tone: 'warning' | 'error' | 'info' | 'success';

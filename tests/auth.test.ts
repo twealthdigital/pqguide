@@ -18,6 +18,12 @@ import statusHandler from '../api/auth/email-otp/status.ts';
 import sendHandler from '../api/auth/email-otp/send.ts';
 import verifyHandler from '../api/auth/email-otp/verify.ts';
 import consumeResetHandler from '../api/auth/email-otp/consume-reset.ts';
+import saStatusHandler from '../api/auth/super-admin/status.ts';
+import saInitHandler from '../api/auth/super-admin/init.ts';
+import saLoginHandler from '../api/auth/super-admin/login.ts';
+import saSessionHandler from '../api/auth/super-admin/session.ts';
+import saForgotHandler from '../api/auth/super-admin/forgot.ts';
+import saResetPasswordHandler from '../api/auth/super-admin/reset-password.ts';
 
 // ---------------------------------------------------------------------------
 // Upstash REST-compatible persistent in-memory Redis mock server
@@ -186,6 +192,34 @@ class MockUpstashRedisServer {
         return ['LIMIT', String(Math.max(1, Math.ceil(ttlMs / 1000)))];
       }
       return ['OK', String(current)];
+    }
+
+    // GET_SUPER_ADMIN_LUA
+    if (script === "return redis.call('GET', KEYS[1])") {
+      const existing = this.purgeIfExpired(keys[0]);
+      return existing?.type === 'string' ? (existing.str ?? null) : null;
+    }
+
+    // INIT_SUPER_ADMIN_LUA
+    if (script.includes("redis.call('EXISTS', KEYS[1]) == 1")) {
+      const key = keys[0];
+      const existing = this.purgeIfExpired(key);
+      if (existing) {
+        return ['ERR', 'EXISTS'];
+      }
+      this.data.set(key, { type: 'string', str: args[0] });
+      return ['OK'];
+    }
+
+    // UPDATE_SUPER_ADMIN_LUA
+    if (script.includes("redis.call('EXISTS', KEYS[1]) == 0")) {
+      const key = keys[0];
+      const existing = this.purgeIfExpired(key);
+      if (!existing) {
+        return ['ERR', 'MISSING'];
+      }
+      this.data.set(key, { type: 'string', str: args[0] });
+      return ['OK'];
     }
 
     throw new Error('Unhandled Lua script in mock Redis');
@@ -1877,6 +1911,346 @@ test('21. resendCode rejects unverified/suspended school admins and unverified r
     assert.equal(unverifiedStuResetResend.ok, false);
     assert.match(unverifiedStuResetResend.error ?? '', /not verified/i);
     assert.equal(resendHarness.capturedEmails.length, 1);
+  } finally {
+    await srv.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 22. Fake/demo data removal & real registered user visibility
+// ---------------------------------------------------------------------------
+test('22. Archive starts with zero fake users/telemetry, strips legacy demo/seed accounts, and syncs real verified users cleanly', async () => {
+  const srv = await startTestAppServer();
+  activeServerBaseUrl = srv.baseUrl;
+  try {
+    // 1. Fresh store has zero fake accounts, payments, activities, tickets, or visits
+    const initialSnap = archiveRepository.getSnapshot();
+    assert.equal(initialSnap.accounts.length, 0);
+    assert.equal(initialSnap.payments.length, 0);
+    assert.equal(initialSnap.userActivities.length, 0);
+    assert.equal(initialSnap.supportTickets.length, 0);
+    assert.equal(initialSnap.telemetry.totalVisits, 0);
+
+    // Legitimate school/catalog content remains intact
+    assert.ok(initialSnap.schools.length > 0);
+    assert.ok(initialSnap.documents.length > 0);
+
+    // 2. Register and verify a real student -> automatically appears in repository without hashes
+    await authService.startSignup({
+      fullName: 'Chinedu Okafor',
+      matricNumber: '230404077',
+      level: '200L',
+      faculty: 'Computing & Information Sciences',
+      department: 'Computer Science',
+      email: 'pqguide@gmail.com',
+      password: 'Password123',
+      confirmPassword: 'Password123',
+    });
+    // Pending unverified account must NOT appear in admin user directory yet
+    assert.equal(archiveRepository.getSnapshot().accounts.length, 0);
+
+    const verified = await authService.verifySignupCode(
+      'pqguide@gmail.com',
+      resendHarness.capturedEmails[0].code
+    );
+    assert.equal(verified.ok, true);
+
+    const repoAfterSignup = archiveRepository.getSnapshot();
+    assert.equal(repoAfterSignup.accounts.length, 1);
+    const listedStudent = repoAfterSignup.accounts[0];
+    assert.equal(listedStudent.fullName, 'Chinedu Okafor');
+    assert.equal(listedStudent.email, 'pqguide@gmail.com');
+    assert.equal(listedStudent.matricNumber, '230404077');
+    assert.equal(listedStudent.role, 'student');
+    assert.equal(listedStudent.isEmailVerified, true);
+    assert.equal(listedStudent.sessionState, 'logged_in');
+    assert.ok(Boolean(listedStudent.createdAt));
+    assert.equal('passwordHash' in (listedStudent as unknown as Record<string, unknown>), false);
+    assert.equal('passwordSalt' in (listedStudent as unknown as Record<string, unknown>), false);
+
+    // Logout updates sessionState to logged_out, and startup sync restores missing repo rows
+    authService.clearActiveSession(verified.data!.account, 'manual');
+    assert.equal(archiveRepository.getSnapshot().accounts[0].sessionState, 'logged_out');
+
+    // 3. Legacy stored fake demo-* + seed acc-1..4 records are stripped while real user survives
+    const corruptedState = {
+      ...archiveRepository.getSnapshot(),
+      accounts: [
+        {
+          id: 'demo-stu-adaeze',
+          fullName: 'Adaeze Nwosu',
+          email: 'adaeze.nwosu@aaua.edu.ng',
+          role: 'student',
+          schoolCode: 'AAUA',
+          status: 'active',
+          lastActiveAt: new Date().toISOString(),
+        },
+        {
+          id: 'acc-3',
+          fullName: 'Chidi Okafor',
+          email: 'c.okafor@aaua.edu.ng',
+          role: 'student',
+          schoolCode: 'AAUA',
+          status: 'active',
+          lastActiveAt: new Date().toISOString(),
+        },
+        archiveRepository.getSnapshot().accounts[0],
+      ],
+      telemetry: {
+        totalVisits: 184,
+        uniqueVisitorIds: ['demo-v1', 'demo-v2'],
+        lastVisitAt: new Date().toISOString(),
+      },
+    };
+    mockLocalStorage.setItem('pqguide_aaua_store_v1', JSON.stringify(corruptedState));
+    mockLocalStorage.setItem('pqguide_demo_preview_seeded_v1', '1');
+
+    const sanitized = archiveRepository.refreshFromStorage();
+    assert.equal(sanitized.accounts.length, 1);
+    assert.equal(sanitized.accounts[0].email, 'pqguide@gmail.com');
+    assert.equal(sanitized.telemetry.totalVisits, 0);
+    assert.equal(sanitized.telemetry.uniqueVisitorIds.length, 0);
+    assert.equal(mockLocalStorage.getItem('pqguide_demo_preview_seeded_v1'), null);
+
+    // Even if archiveRepository was wiped cleanly, startup sync repopulates real verified student
+    archiveRepository.resetAllForDev();
+    assert.equal(archiveRepository.getSnapshot().accounts.length, 0);
+    authService.syncVerifiedAccountsToRepository();
+    assert.equal(archiveRepository.getSnapshot().accounts.length, 1);
+    assert.equal(archiveRepository.getSnapshot().accounts[0].matricNumber, '230404077');
+  } finally {
+    await srv.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 23. Production server-side Super Admin init, auth, session verify, & reset
+// ---------------------------------------------------------------------------
+test('23. Production Super Admin enforces one-time setup secret, atomic Redis lock, HMAC session verification, and password reset', async () => {
+  // Confirm Vercel handler exports exist
+  for (const h of [
+    saStatusHandler,
+    saInitHandler,
+    saLoginHandler,
+    saSessionHandler,
+    saForgotHandler,
+    saResetPasswordHandler,
+  ]) {
+    assert.equal(typeof h, 'function');
+  }
+
+  // Missing SUPER_ADMIN_SETUP_SECRET -> setupConfigured false, init returns 503
+  const unconfiguredSrv = await startTestAppServer({});
+  try {
+    const stRes = await realFetch(`${unconfiguredSrv.baseUrl}/api/auth/super-admin/status`);
+    assert.equal(stRes.status, 200);
+    const stJson = (await stRes.json()) as { setupConfigured: boolean; initialized: boolean };
+    assert.equal(stJson.setupConfigured, false);
+    assert.equal(stJson.initialized, false);
+
+    const blockedInit = await realFetch(`${unconfiguredSrv.baseUrl}/api/auth/super-admin/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fullName: 'Lead Admin',
+        email: 'pqguide@gmail.com',
+        setupSecret: 'some-random-secret-key-1234',
+        password: 'SuperPassword123',
+        confirmPassword: 'SuperPassword123',
+        confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+      }),
+    });
+    assert.equal(blockedInit.status, 503);
+  } finally {
+    await unconfiguredSrv.close();
+  }
+
+  // With SUPER_ADMIN_SETUP_SECRET + optional SUPER_ADMIN_BOOTSTRAP_EMAIL
+  const SETUP_SECRET = 'pqguide-prod-sa-setup-key-32-chars!';
+  const srv = await startTestAppServer({
+    SUPER_ADMIN_SETUP_SECRET: SETUP_SECRET,
+    SUPER_ADMIN_BOOTSTRAP_EMAIL: 'pqguide@gmail.com',
+  });
+  activeServerBaseUrl = srv.baseUrl;
+  try {
+    const stBefore = await authService.getSuperAdminInitStatus();
+    assert.equal(stBefore.serverSupported, true);
+    assert.equal(stBefore.setupConfigured, true);
+    assert.equal(stBefore.initialized, false);
+    assert.equal(stBefore.emailLockedToConfigured, true);
+
+    // Wrong setup secret -> 403
+    const badSecret = await authService.initializeProductionSuperAdmin({
+      fullName: 'Lead Admin',
+      email: 'pqguide@gmail.com',
+      setupSecret: 'wrong-setup-secret-key-value',
+      password: 'SuperPassword123',
+      confirmPassword: 'SuperPassword123',
+      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+    });
+    assert.equal(badSecret.ok, false);
+    assert.match(badSecret.error ?? '', /authorization key/i);
+
+    // Unallowlisted email -> 403
+    const badEmail = await authService.initializeProductionSuperAdmin({
+      fullName: 'Lead Admin',
+      email: 'attacker@example.com',
+      setupSecret: SETUP_SECRET,
+      password: 'SuperPassword123',
+      confirmPassword: 'SuperPassword123',
+      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+    });
+    assert.equal(badEmail.ok, false);
+    assert.match(badEmail.error ?? '', /not authorized/i);
+
+    // Valid one-time init -> 200
+    const initialized = await authService.initializeProductionSuperAdmin({
+      fullName: 'Platform Owner',
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+      password: 'SuperPassword123',
+      confirmPassword: 'SuperPassword123',
+      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+      rememberMe: true,
+    });
+    assert.equal(initialized.ok, true);
+    assert.equal(initialized.data?.account.role, 'super_admin');
+    assert.equal(initialized.data?.account.email, 'pqguide@gmail.com');
+
+    // Never expose setup secret or raw password in Redis
+    const redisDump = JSON.stringify(redis.snapshotKeys());
+    assert.equal(redisDump.includes(SETUP_SECRET), false);
+    assert.equal(redisDump.includes('SuperPassword123'), false);
+
+    // Server session verifies valid HMAC token
+    const sessionCheck = await authService.verifyServerSuperAdminSession();
+    assert.equal(sessionCheck.verified, true);
+    assert.equal(sessionCheck.account?.email, 'pqguide@gmail.com');
+
+    // Sign out, then confirm status shows initialized & second init is permanently locked (409)
+    authService.clearActiveSession(initialized.data?.account, 'manual');
+    const stAfter = await authService.getSuperAdminInitStatus();
+    assert.equal(stAfter.initialized, true);
+
+    const secondInit = await authService.initializeProductionSuperAdmin({
+      fullName: 'Second Owner',
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+      password: 'SuperPassword123',
+      confirmPassword: 'SuperPassword123',
+      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+    });
+    assert.equal(secondInit.ok, false);
+    assert.match(secondInit.error ?? '', /already been initialized/i);
+
+    // Concurrent raw init calls also fail cleanly with 409
+    const dupHttp = await realFetch(`${srv.baseUrl}/api/auth/super-admin/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fullName: 'Race Owner',
+        email: 'pqguide@gmail.com',
+        setupSecret: SETUP_SECRET,
+        password: 'SuperPassword123',
+        confirmPassword: 'SuperPassword123',
+        confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+      }),
+    });
+    assert.equal(dupHttp.status, 409);
+
+    // Wrong password rejected (401), correct password succeeds
+    const badLogin = await authService.signinWithPortal(
+      'super_admin',
+      'pqguide@gmail.com',
+      'WrongPassword123'
+    );
+    assert.equal(badLogin.ok, false);
+
+    const goodLogin = await authService.signinWithPortal(
+      'super_admin',
+      'pqguide@gmail.com',
+      'SuperPassword123',
+      true
+    );
+    assert.equal(goodLogin.ok, true);
+    assert.equal(goodLogin.data?.account.role, 'super_admin');
+
+    // Forged / tampered Bearer token is rejected (401)
+    const forgedCheck = await realFetch(`${srv.baseUrl}/api/auth/super-admin/session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer forged.token',
+      },
+      body: JSON.stringify({}),
+    });
+    assert.equal(forgedCheck.status, 401);
+
+    // Tampering localStorage role to super_admin in non-dev mode without server token is rejected
+    authService.clearActiveSession(goodLogin.data?.account, 'manual');
+    mockLocalStorage.setItem(
+      'pqguide_student_accounts_v1',
+      JSON.stringify([
+        {
+          id: 'forged-stu',
+          fullName: 'Tampered Student',
+          matricNumber: '230404999',
+          faculty: 'Science',
+          department: 'CS',
+          email: 'tamper@example.com',
+          role: 'super_admin',
+          status: 'active',
+          adminVerified: true,
+          isEmailVerified: true,
+          passwordHash: 'x',
+          passwordSalt: 'y',
+          createdAt: new Date().toISOString(),
+        },
+      ])
+    );
+    authService.saveActiveSession(
+      {
+        id: 'forged-stu',
+        fullName: 'Tampered Student',
+        matricNumber: '230404999',
+        faculty: 'Science',
+        department: 'CS',
+        email: 'tamper@example.com',
+        role: 'super_admin',
+        status: 'active',
+        isEmailVerified: true,
+        createdAt: new Date().toISOString(),
+      },
+      true
+    );
+    assert.equal(authService.getActiveSession(), null);
+
+    // Server-backed Super Admin OTP forgot password + reset flow
+    const forgotRes = await authService.requestPasswordReset('pqguide@gmail.com', 'super_admin');
+    assert.equal(forgotRes.ok, true);
+    const resetOtp = resendHarness.capturedEmails[0].code;
+    const verifyReset = await authService.verifyResetCode('pqguide@gmail.com', resetOtp);
+    assert.equal(verifyReset.ok, true);
+    const completedReset = await authService.completePasswordReset(
+      'pqguide@gmail.com',
+      'NewSuperPass456',
+      'NewSuperPass456',
+      verifyReset.data!.resetToken!
+    );
+    assert.equal(completedReset.ok, true);
+
+    const oldPwLogin = await authService.signinWithPortal(
+      'super_admin',
+      'pqguide@gmail.com',
+      'SuperPassword123'
+    );
+    assert.equal(oldPwLogin.ok, false);
+    const newPwLogin = await authService.signinWithPortal(
+      'super_admin',
+      'pqguide@gmail.com',
+      'NewSuperPass456'
+    );
+    assert.equal(newPwLogin.ok, true);
   } finally {
     await srv.close();
   }

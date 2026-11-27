@@ -111,7 +111,7 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
   const [editQuestionsText, setEditQuestionsText] = useState('');
 
   // Logged-In & Active Students Monitor
-  const [studentFilter, setStudentFilter] = useState<'signed_in' | 'active' | 'all'>('signed_in');
+  const [studentFilter, setStudentFilter] = useState<'signed_in' | 'active' | 'all'>('all');
   const [studentSearch, setStudentSearch] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
 
@@ -1110,7 +1110,7 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                         </div>
                         <p className="text-xs text-[#686C78] truncate pl-4">
                           {student.matricNumber ? `${student.matricNumber} · ` : ''}
-                          {student.level ?? '100L'}
+                          {student.email} · {student.level ?? '100L'}
                           {student.department ? ` · ${student.department}` : ''}
                         </p>
                       </div>
@@ -1484,6 +1484,36 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                 <dt className="text-[#686C78]">Email</dt>
                 <dd className="font-semibold text-[#1A1B20] mt-0.5 break-all">
                   {selectedStudent.email}
+                </dd>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <dt className="text-[#686C78]">Role</dt>
+                <dd className="font-bold text-[#1A1B20] mt-0.5">Student</dd>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <dt className="text-[#686C78]">Verification</dt>
+                <dd
+                  className={`font-bold mt-0.5 ${
+                    selectedStudent.isEmailVerified !== false &&
+                    selectedStudent.adminVerified !== false
+                      ? 'text-[#15803D]'
+                      : 'text-[#B91C1C]'
+                  }`}
+                >
+                  {selectedStudent.isEmailVerified !== false ? 'Email Verified' : 'Pending Email'}
+                  {' · '}
+                  {selectedStudent.adminVerified !== false ? 'Login Verified' : 'Unverified'}
+                </dd>
+              </div>
+              <div className="rounded-xl bg-[#F6F7F9] p-3">
+                <dt className="text-[#686C78]">Registered</dt>
+                <dd className="font-mono-tabular font-semibold text-[#1A1B20] mt-0.5">
+                  {selectedStudent.createdAt
+                    ? new Date(selectedStudent.createdAt).toLocaleString('en-NG', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })
+                    : 'N/A'}
                 </dd>
               </div>
               <div className="rounded-xl bg-[#F6F7F9] p-3">

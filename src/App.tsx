@@ -712,6 +712,7 @@ function AppContent() {
     };
 
     syncPortal();
+    authService.syncVerifiedAccountsToRepository();
     window.addEventListener('hashchange', syncPortal);
     window.addEventListener('popstate', syncPortal);
     return () => {
@@ -748,8 +749,24 @@ function AppContent() {
       if (!current) {
         const expired = authService.consumeExpiredSessionNotice();
         handleSessionInvalidated(expired ? 'expired' : 'external');
+        return;
+      }
+      if (current.role === 'super_admin') {
+        void authService.verifyServerSuperAdminSession().then((res) => {
+          if (!res.verified && authRef.current?.id === current.id) {
+            authService.clearActiveSession(authRef.current, 'revoked');
+            resetSessionLocalState('super_admin', {
+              tone: 'warning',
+              message: 'Super Admin session could not be verified. Please sign in again.',
+            });
+          }
+        });
       }
     };
+
+    if (authenticatedStudent.role === 'super_admin') {
+      verifySession();
+    }
 
     const remainingMs = authService.getSessionRemainingMs();
     if (remainingMs === null || remainingMs <= 0) {

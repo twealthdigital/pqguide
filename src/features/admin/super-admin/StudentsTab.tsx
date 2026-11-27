@@ -165,6 +165,8 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
                         {acc.matricNumber || 'No Matric'}
                       </span>
                       {' · '}
+                      <span>{acc.email}</span>
+                      {' · '}
                       {acc.department || acc.faculty || 'Department N/A'}
                     </p>
                     <p className="text-xs text-[#686C78]">
@@ -211,10 +213,41 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
                   {inspectedStudent.faculty || 'Faculty N/A'} ·{' '}
                   {inspectedStudent.department || 'Department N/A'}
                 </p>
-                <p className="text-[#505460]">{inspectedStudent.email}</p>
+                <p className="text-[#505460]">
+                  {inspectedStudent.email} · Role: <span className="font-semibold text-[#1A1B20]">Student</span>
+                </p>
                 <p className="text-[#686C78] font-mono-tabular">
-                  Plan: {inspectedStudent.subscriptionTier ?? 'free'} · Status:{' '}
+                  Email:{' '}
+                  <span
+                    className={
+                      inspectedStudent.isEmailVerified !== false
+                        ? 'text-[#15803D] font-semibold'
+                        : 'text-[#B91C1C] font-semibold'
+                    }
+                  >
+                    {inspectedStudent.isEmailVerified !== false ? 'Verified' : 'Unverified'}
+                  </span>
+                  {' · '}Login:{' '}
+                  <span
+                    className={
+                      inspectedStudent.adminVerified !== false
+                        ? 'text-[#15803D] font-semibold'
+                        : 'text-[#B91C1C] font-semibold'
+                    }
+                  >
+                    {inspectedStudent.adminVerified !== false ? 'Verified' : 'Paused'}
+                  </span>
+                  {' · '}Status:{' '}
                   <span className="capitalize font-semibold">{inspectedStudent.status}</span>
+                </p>
+                <p className="text-[#686C78] font-mono-tabular">
+                  Plan: {inspectedStudent.subscriptionTier ?? 'free'} · Registered:{' '}
+                  {inspectedStudent.createdAt
+                    ? new Date(inspectedStudent.createdAt).toLocaleString([], {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })
+                    : 'N/A'}
                 </p>
               </div>
 

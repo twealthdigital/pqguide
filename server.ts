@@ -2,8 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import express, { type Request, type Response } from 'express';
-import { createOtpHttpHandlers } from './server/httpAdapter.ts';
+import {
+  createOtpHttpHandlers,
+  createSuperAdminHttpHandlers,
+} from './server/httpAdapter.ts';
 import { createOtpEngine, type OtpEngineDeps } from './server/otpService.ts';
+import { createSuperAdminEngine } from './server/superAdminService.ts';
 
 dotenv.config({ path: path.resolve(import.meta.dirname, '.env.local') });
 dotenv.config({ path: path.resolve(import.meta.dirname, '.env') });
@@ -19,9 +23,15 @@ export function createApiApp(deps?: OtpEngineDeps) {
 
   app.use(express.json({ limit: '64kb' }));
 
-  const handlers = deps
-    ? createOtpHttpHandlers(createOtpEngine(deps))
+  const otpEngine = deps ? createOtpEngine(deps) : undefined;
+  const handlers = otpEngine
+    ? createOtpHttpHandlers(otpEngine)
     : createOtpHttpHandlers();
+  const superAdminHandlers = deps
+    ? createSuperAdminHttpHandlers(
+        createSuperAdminEngine({ ...deps, otpEngine })
+      )
+    : createSuperAdminHttpHandlers();
 
   app.get('/api/auth/email-otp/status', (req: Request, res: Response) => {
     void handlers.handleStatus(req, res);
@@ -37,6 +47,34 @@ export function createApiApp(deps?: OtpEngineDeps) {
 
   app.post('/api/auth/email-otp/consume-reset', (req: Request, res: Response) => {
     void handlers.handleConsumeReset(req, res);
+  });
+
+  app.get('/api/auth/super-admin/status', (req: Request, res: Response) => {
+    void superAdminHandlers.handleStatus(req, res);
+  });
+
+  app.post('/api/auth/super-admin/init', (req: Request, res: Response) => {
+    void superAdminHandlers.handleInit(req, res);
+  });
+
+  app.post('/api/auth/super-admin/login', (req: Request, res: Response) => {
+    void superAdminHandlers.handleLogin(req, res);
+  });
+
+  app.post('/api/auth/super-admin/session', (req: Request, res: Response) => {
+    void superAdminHandlers.handleVerifySession(req, res);
+  });
+
+  app.get('/api/auth/super-admin/session', (req: Request, res: Response) => {
+    void superAdminHandlers.handleVerifySession(req, res);
+  });
+
+  app.post('/api/auth/super-admin/forgot', (req: Request, res: Response) => {
+    void superAdminHandlers.handleForgot(req, res);
+  });
+
+  app.post('/api/auth/super-admin/reset-password', (req: Request, res: Response) => {
+    void superAdminHandlers.handleResetPassword(req, res);
   });
 
   return app;
