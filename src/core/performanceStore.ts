@@ -72,6 +72,10 @@ export function subscribePerformances(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+export function getExamPerformances(): ExamPerformanceRecord[] {
+  return readRecords();
+}
+
 export function useExamPerformances(): ExamPerformanceRecord[] {
   return useSyncExternalStore(subscribePerformances, readRecords, () => []);
 }

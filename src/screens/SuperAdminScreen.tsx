@@ -18,6 +18,7 @@ import { BroadcastsTab } from '../features/admin/super-admin/BroadcastsTab';
 import { SupportInboxTab } from '../features/admin/super-admin/SupportInboxTab';
 import { PastQuestionsManagerTab } from '../features/admin/super-admin/PastQuestionsManagerTab';
 import { StudyMaterialsManagerTab } from '../features/admin/super-admin/StudyMaterialsManagerTab';
+import { DocumentReviewTab } from '../features/admin/super-admin/DocumentReviewTab';
 import { PaymentsTab } from '../features/admin/super-admin/PaymentsTab';
 import { AdminSettingsTab } from '../features/admin/super-admin/AdminSettingsTab';
 
@@ -73,6 +74,10 @@ const SECTION_META: Record<
   study_materials: {
     title: 'Study Materials Manager',
     subtitle: 'Upload structured lecture notes and reading guides across universities.',
+  },
+  document_review: {
+    title: 'Document Review',
+    subtitle: 'Verify flagged student uploads, SHA-256 duplicates, OCR scores, and AI cross-checks.',
   },
   payments: {
     title: 'Payment Verifications',
@@ -230,6 +235,15 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
 
       {activeSection === 'study_materials' && (
         <StudyMaterialsManagerTab
+          currentUser={currentUser}
+          store={store}
+          onNotice={handleNotice}
+          onError={handleError}
+        />
+      )}
+
+      {activeSection === 'document_review' && (
+        <DocumentReviewTab
           currentUser={currentUser}
           store={store}
           onNotice={handleNotice}

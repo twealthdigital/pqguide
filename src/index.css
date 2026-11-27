@@ -696,3 +696,54 @@ input::-ms-clear {
     transform: none !important;
   }
 }
+
+/* PQGuide AI Logo Activity Animations (active states only, respects prefers-reduced-motion) */
+@keyframes pqAiRingPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.9;
+  }
+}
+
+@keyframes pqAiPupilActive {
+  0%, 38%, 100% {
+    transform: scaleY(1) translate(0, 0);
+  }
+  42% {
+    transform: scaleY(0.15) translate(0, 0);
+  }
+  48% {
+    transform: scaleY(1) translate(-6px, -6px);
+  }
+  68% {
+    transform: scaleY(1) translate(6px, 4px);
+  }
+  74% {
+    transform: scaleY(0.15) translate(0, 0);
+  }
+  80% {
+    transform: scaleY(1) translate(0, 0);
+  }
+}
+
+.pq-ai-ring-active {
+  animation: pqAiRingPulse 1.4s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.pq-ai-pupil-active {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pqAiPupilActive 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pq-ai-ring-active,
+  .pq-ai-pupil-active {
+    animation: none !important;
+  }
+}

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { ArrowRight, CheckCircle2, FileText, Lock, Sparkles } from 'lucide-react';
-import type { PastQuestionDoc } from '../core/types';
+import React, { useEffect } from 'react';
+import { ArrowRight, CheckCircle2, FileText, FolderOpen, Lock, ScanLine } from 'lucide-react';
+import type { AppScreen, PastQuestionDoc } from '../core/types';
 import {
   subscriptionService,
   useSubscription,
@@ -9,6 +9,7 @@ import {
 import { useArchiveSearch } from '../hooks/useArchiveSearch';
 import {
   DocumentListSkeleton,
+  PqGuideAiIcon,
   SurfaceCard,
   TactileButton,
   WaveHeader,
@@ -20,17 +21,18 @@ interface HomeScreenProps {
   onOpenDocument: (doc: PastQuestionDoc) => void;
   focusSearchSignal: number;
   onOpenPaywall?: (context?: PaywallContext) => void;
+  onNavigate?: (screen: AppScreen) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onOpenDocument,
   focusSearchSignal,
   onOpenPaywall,
+  onNavigate,
 }) => {
   const search = useArchiveSearch();
   useSubscription();
   const aiUnlocked = subscriptionService.hasAiAccess();
-  const [showAiAssistant, setShowAiAssistant] = useState(false);
   const {
     store,
     activeSchool,
@@ -188,39 +190,48 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   <span>{cms.guideStep2}</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <Sparkles className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
+                  <PqGuideAiIcon size="xs" className="text-[#1D1E23] shrink-0 mt-0.5" />
                   <span>{cms.guideStep3}</span>
                 </li>
               </ol>
             </div>
 
-            {aiUnlocked ? (
-              <div className="mt-4 space-y-2">
+            {onNavigate && (
+              <div className="mt-3 grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowAiAssistant((v) => !v)}
+                  onClick={() => onNavigate('document_scanner')}
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/10 px-2.5 py-2 text-xs font-semibold text-[#1A1B20] cursor-pointer transition-colors"
+                >
+                  <ScanLine className="w-3.5 h-3.5 shrink-0" />
+                  <span>Scan Docs</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('document_library')}
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/10 px-2.5 py-2 text-xs font-semibold text-[#1A1B20] cursor-pointer transition-colors"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 shrink-0" />
+                  <span>Doc Library</span>
+                </button>
+              </div>
+            )}
+
+            {aiUnlocked ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.('ai_assistant')}
                   className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-[#1D1E23] px-3.5 py-2.5 text-left text-white transition-colors hover:bg-[#2B2D35]"
                 >
                   <span className="flex items-center gap-2 min-w-0">
-                    <Sparkles className="h-4 w-4 shrink-0 text-[#4ADE80]" />
+                    <PqGuideAiIcon size="xs" className="text-white shrink-0" />
                     <span className="text-xs font-semibold truncate">
-                      AI Study Assistant · Infinity Active
+                      Open PQGuide AI Assistant
                     </span>
                   </span>
-                  <span className="font-mono-tabular text-[11px] font-semibold text-[#4ADE80] shrink-0">
-                    {showAiAssistant ? 'Hide' : 'Open'}
-                  </span>
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[#C3C7D2]" />
                 </button>
-                {showAiAssistant && heroFeaturedDoc && (
-                  <div className="rounded-xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 text-xs text-[#3A3D47] space-y-1.5">
-                    <p className="font-bold text-[#1A1B20]">
-                      Focus Recommendation: {heroFeaturedDoc.courseCode}
-                    </p>
-                    <p className="leading-relaxed">
-                      Prioritize recurring questions from {heroFeaturedDoc.session} ({heroFeaturedDoc.questions.length} indexed items). Open the paper below to inspect AI Tutor breakdowns.
-                    </p>
-                  </div>
-                )}
               </div>
             ) : (
               onOpenPaywall && (
@@ -235,12 +246,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                         'Standard unlocks everything the core webapp can do. Tier 3 (AI Scholar) adds an AI Study Assistant for instant question breakdowns and smart topic predictions.',
                     })
                   }
-                  className="mt-4 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
+                  className="mt-3 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
                 >
                   <span className="flex items-center gap-2 min-w-0">
-                    <Sparkles className="h-4 w-4 shrink-0 text-[#505460]" />
+                    <PqGuideAiIcon size="xs" className="text-[#505460] shrink-0" />
                     <span className="text-xs font-semibold text-[#3A3D47] truncate">
-                      AI Study Assistant (Tier 3)
+                      PQGuide AI Assistant (Tier 3)
                     </span>
                   </span>
                   <Lock className="h-3.5 w-3.5 shrink-0 text-[#686C78]" />

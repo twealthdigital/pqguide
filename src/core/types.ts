@@ -32,6 +32,7 @@ export type SuperAdminSectionId =
   | 'support_inbox'
   | 'past_questions'
   | 'study_materials'
+  | 'document_review'
   | 'payments'
   | 'settings';
 
@@ -55,6 +56,9 @@ export type AppScreen =
   | 'material_reader'
   | 'mock_exam'
   | 'performance'
+  | 'document_scanner'
+  | 'document_library'
+  | 'ai_assistant'
   | 'school_admin'
   | 'super_admin'
   | 'subscription';
@@ -472,7 +476,189 @@ export type AuditActionType =
   | 'support_replied'
   | 'cms_updated'
   | 'payment_verified'
+  | 'doc_scanned'
+  | 'doc_auto_approved'
+  | 'doc_flagged'
+  | 'doc_review_approved'
+  | 'doc_review_rejected'
+  | 'doc_resubmission_requested'
   | 'dev_data_reset';
+
+export type AcademicDocFormat = 'pdf' | 'image' | 'docx' | 'text' | 'zip';
+
+export type AcademicDocCategory =
+  | 'past_question'
+  | 'study_material'
+  | 'lecture_note'
+  | 'lab_diagram'
+  | 'reference';
+
+export type DocumentPipelineDecision =
+  | 'auto_approved'
+  | 'flagged'
+  | 'rejected'
+  | 'pending_review';
+
+export type DocumentPublicationStatus =
+  | 'published'
+  | 'flagged'
+  | 'pending_review'
+  | 'rejected'
+  | 'resubmission_requested'
+  | 'archived';
+
+export type DocumentRiskLevel = 'low' | 'medium' | 'high';
+
+export interface StorageObjectRef {
+  adapter: 'indexeddb' | 'memory' | 'object_storage';
+  key: string;
+  sizeBytes: number;
+  mimeType: string;
+  storedAt: string;
+}
+
+export interface ExtractedDiagramAsset {
+  id: string;
+  pageNumber: number;
+  caption: string;
+  kind: 'diagram' | 'chart' | 'illustration' | 'table_snapshot' | 'image';
+  mimeType?: string;
+  dataUrl?: string;
+  storageRef?: StorageObjectRef;
+  width?: number;
+  height?: number;
+}
+
+export interface ExtractedTable {
+  id: string;
+  pageNumber: number;
+  caption?: string;
+  headers: string[];
+  rows: string[][];
+}
+
+export interface ExtractedFormula {
+  id: string;
+  pageNumber: number;
+  rawText: string;
+  latex: string;
+  displayMode: boolean;
+}
+
+export interface ExtractedPageContent {
+  pageNumber: number;
+  text: string;
+  wordCount: number;
+  ocrApplied: boolean;
+  ocrConfidence: number | null;
+  renderedPreviewUrl?: string;
+  diagrams: ExtractedDiagramAsset[];
+  tables: ExtractedTable[];
+  formulas: ExtractedFormula[];
+  warnings: string[];
+}
+
+export interface QrCodeMatch {
+  pageNumber: number;
+  payload: string;
+  isSafeUrl: boolean;
+}
+
+export interface DeterministicCheckResult {
+  id: string;
+  label: string;
+  category: 'integrity' | 'duplicate' | 'quality' | 'structure' | 'security' | 'qr_code';
+  passed: boolean;
+  severity: 'info' | 'warning' | 'blocker';
+  detail: string;
+  pageNumbers?: number[];
+}
+
+export interface AiCrossCheckEvidence {
+  pageNumber?: number;
+  excerpt: string;
+  checkType: string;
+}
+
+export interface AiCrossCheckFindings {
+  riskLevel: DocumentRiskLevel;
+  reason: string;
+  evidence: AiCrossCheckEvidence[];
+  confidence: number;
+  recommendedAction: 'auto_approve' | 'manual_review' | 'request_resubmission' | 'reject';
+  isOfficialCredentialSuspected?: boolean;
+  providerAvailable: boolean;
+  modelUsed?: string;
+  checkedAt: string;
+}
+
+export interface ProcessingHistoryEntry {
+  id: string;
+  timestamp: string;
+  stage: string;
+  status: 'completed' | 'warning' | 'failed';
+  actorName?: string;
+  actorRole?: UserRole;
+  detail: string;
+}
+
+export interface DocumentReviewNote {
+  id: string;
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+  note: string;
+}
+
+export interface AcademicDocumentRecord {
+  id: string;
+  title: string;
+  courseCode: string;
+  courseTitle: string;
+  department: string;
+  faculty: string;
+  level: StudentLevel;
+  schoolId: string;
+  schoolCode: string;
+  session: string;
+  semester: SemesterType;
+  category: AcademicDocCategory;
+  submittedById: string;
+  submittedByName: string;
+  submittedByRole: UserRole;
+  submittedAt: string;
+  updatedAt: string;
+  originalFileName: string;
+  mimeType: string;
+  detectedFormat: AcademicDocFormat;
+  fileSizeBytes: number;
+  sha256: string;
+  duplicateOfDocId?: string;
+  originalFileRef?: StorageObjectRef;
+  optimizedPreviewUrl?: string;
+  pageCount: number;
+  extractedText: string;
+  summary: string;
+  headings: string[];
+  pages: ExtractedPageContent[];
+  diagrams: ExtractedDiagramAsset[];
+  tables: ExtractedTable[];
+  formulas: ExtractedFormula[];
+  qrCodesFound: QrCodeMatch[];
+  averageOcrConfidence: number | null;
+  deterministicChecks: DeterministicCheckResult[];
+  aiFindings?: AiCrossCheckFindings;
+  decision: DocumentPipelineDecision;
+  publicationStatus: DocumentPublicationStatus;
+  riskLevel: DocumentRiskLevel;
+  reviewerId?: string;
+  reviewerName?: string;
+  reviewedAt?: string;
+  rejectionReason?: string;
+  internalNotes: DocumentReviewNote[];
+  processingHistory: ProcessingHistoryEntry[];
+  parentZipName?: string;
+}
 
 export interface AuditLogEntry {
   id: string;
@@ -487,6 +673,7 @@ export interface AuditLogEntry {
     | 'school'
     | 'past_question'
     | 'study_material'
+    | 'academic_document'
     | 'broadcast'
     | 'payment'
     | 'support'

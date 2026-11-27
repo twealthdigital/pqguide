@@ -119,6 +119,24 @@ const SubscriptionScreen = lazy(() =>
   }))
 );
 
+const DocumentScannerScreen = lazy(() =>
+  import('./screens/DocumentScannerScreen').then((m) => ({
+    default: m.DocumentScannerScreen,
+  }))
+);
+
+const DocumentLibraryScreen = lazy(() =>
+  import('./screens/DocumentLibraryScreen').then((m) => ({
+    default: m.DocumentLibraryScreen,
+  }))
+);
+
+const AiAssistantScreen = lazy(() =>
+  import('./screens/AiAssistantScreen').then((m) => ({
+    default: m.AiAssistantScreen,
+  }))
+);
+
 /** One step in the in-app "Back" trail. */
 interface NavEntry {
   screen: AppScreen;
@@ -182,6 +200,8 @@ function AppContent() {
   const [perf, setPerf] = useState<PerfNavState>(INITIAL_PERF);
   const [paywallContext, setPaywallContext] = useState<PaywallContext | null>(null);
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
+  const [docLibraryFocusId, setDocLibraryFocusId] = useState<string | null>(null);
+  const [aiInitialPrompt, setAiInitialPrompt] = useState<string | null>(null);
   const [activeDropIn, setActiveDropIn] = useState<DropInNotificationItem | null>(null);
   const [authNotice, setAuthNotice] = useState<AuthNotice | null>(() => {
     if (authService.consumeExpiredSessionNotice()) {
@@ -270,6 +290,17 @@ function AppContent() {
   const openSupportCount = useMemo(
     () => store.supportTickets.filter((t) => t.status === 'new').length,
     [store.supportTickets]
+  );
+
+  const pendingDocReviewCount = useMemo(
+    () =>
+      (store.academicDocuments ?? []).filter(
+        (d) =>
+          d.publicationStatus === 'flagged' ||
+          d.publicationStatus === 'pending_review' ||
+          d.publicationStatus === 'resubmission_requested'
+      ).length,
+    [store.academicDocuments]
   );
 
   useEffect(() => {
@@ -1127,6 +1158,23 @@ function AppContent() {
     [navigateDirect]
   );
 
+  const handleFeatureNavigate = useCallback(
+    (screen: AppScreen, opts?: { docLibraryId?: string; aiPrompt?: string }) => {
+      if (opts?.docLibraryId !== undefined) {
+        setDocLibraryFocusId(opts.docLibraryId ?? null);
+      } else if (screen !== 'document_library' && screen !== 'ai_assistant') {
+        setDocLibraryFocusId(null);
+      }
+      if (opts?.aiPrompt !== undefined) {
+        setAiInitialPrompt(opts.aiPrompt ?? null);
+      } else if (screen !== 'ai_assistant') {
+        setAiInitialPrompt(null);
+      }
+      handleNavigate(screen);
+    },
+    [handleNavigate]
+  );
+
   // Back goes to exactly where the person came from (home if there is no trail).
   const handleBack = useCallback(() => {
     const pushed = pushedLayerIdsRef.current;
@@ -1677,6 +1725,7 @@ function AppContent() {
           : undefined
       }
       openSupportCount={openSupportCount}
+      pendingDocumentReviewCount={pendingDocReviewCount}
       marquee={store.marquee}
       onNavigate={handleNavigate}
       onOpenPaywall={openPaywall}
@@ -1694,6 +1743,7 @@ function AppContent() {
             onOpenDocument={handleOpenDocument}
             focusSearchSignal={focusSearchSignal}
             onOpenPaywall={openPaywall}
+            onNavigate={handleNavigate}
           />
         )}
 
@@ -1749,6 +1799,32 @@ function AppContent() {
             onOpenOverall={handlePerfOpenOverall}
             onBackView={handlePerfBackView}
             onViewList={handlePerfViewList}
+          />
+        )}
+
+        {activeScreen === 'document_scanner' && (
+          <DocumentScannerScreen
+            currentUser={authenticatedStudent}
+            onNavigate={handleFeatureNavigate}
+          />
+        )}
+
+        {activeScreen === 'document_library' && (
+          <DocumentLibraryScreen
+            currentUser={authenticatedStudent}
+            initialDocId={docLibraryFocusId}
+            onNavigate={handleFeatureNavigate}
+          />
+        )}
+
+        {activeScreen === 'ai_assistant' && (
+          <AiAssistantScreen
+            currentUser={authenticatedStudent}
+            initialPrompt={aiInitialPrompt}
+            initialDocLibraryId={docLibraryFocusId}
+            onNavigate={handleFeatureNavigate}
+            onOpenDocument={handleOpenDocument}
+            onOpenMaterial={handleOpenMaterial}
           />
         )}
 

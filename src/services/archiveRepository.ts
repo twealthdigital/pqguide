@@ -18,6 +18,8 @@ import {
   resolveSchoolCode,
 } from '../core/auditMeta';
 import type {
+  AcademicDocCategory,
+  AcademicDocumentRecord,
   AccountStatus,
   AppNotification,
   ArchiveFilter,
@@ -31,7 +33,9 @@ import type {
   PastQuestionDoc,
   PaymentTransaction,
   School,
+  SemesterType,
   SiteCmsConfig,
+  StudentLevel,
   StudyMaterial,
   SuperAdminNotification,
   SupportTicket,
@@ -74,6 +78,7 @@ export interface AppStoreState {
   sessions: string[];
   documents: PastQuestionDoc[];
   materials: StudyMaterial[];
+  academicDocuments: AcademicDocumentRecord[];
   notifications: AppNotification[];
   accounts: ManagedAccount[];
   auditLogs: AuditLogEntry[];
@@ -106,6 +111,7 @@ function getDefaultState(): AppStoreState {
     sessions: SEED_SESSIONS,
     documents: SEED_PAST_QUESTIONS,
     materials: STUDY_MATERIALS,
+    academicDocuments: [],
     notifications: SEED_NOTIFICATIONS,
     accounts: [],
     auditLogs: [],
@@ -285,6 +291,31 @@ function loadState(): AppStoreState {
     const userActivities = rawActivities.filter((a) => !isDemoId(a.id)).slice(0, 500);
     const supportTickets = rawTickets.filter((t) => !isDemoId(t.id)).slice(0, 300);
 
+    const rawAcademicDocs = Array.isArray(parsed.academicDocuments)
+      ? parsed.academicDocuments
+      : [];
+    const academicDocuments = rawAcademicDocs
+      .filter((d): d is AcademicDocumentRecord => Boolean(d && typeof d.id === 'string'))
+      .map((d) => ({
+        ...d,
+        optimizedPreviewUrl: sanitizeSafeUrl(d.optimizedPreviewUrl),
+        diagrams: Array.isArray(d.diagrams)
+          ? d.diagrams.map((dg) => ({ ...dg, dataUrl: sanitizeSafeUrl(dg.dataUrl) }))
+          : [],
+        pages: Array.isArray(d.pages)
+          ? d.pages.map((pg) => ({
+              ...pg,
+              renderedPreviewUrl: sanitizeSafeUrl(pg.renderedPreviewUrl),
+              diagrams: Array.isArray(pg.diagrams)
+                ? pg.diagrams.map((dg) => ({ ...dg, dataUrl: sanitizeSafeUrl(dg.dataUrl) }))
+                : [],
+            }))
+          : [],
+        internalNotes: Array.isArray(d.internalNotes) ? d.internalNotes : [],
+        processingHistory: Array.isArray(d.processingHistory) ? d.processingHistory : [],
+      }))
+      .slice(0, 120);
+
     const sanitizedState: AppStoreState = {
       schools,
       sessions:
@@ -293,6 +324,7 @@ function loadState(): AppStoreState {
           : defaults.sessions,
       documents,
       materials: storedMaterials,
+      academicDocuments,
       notifications,
       accounts,
       auditLogs,
@@ -2126,6 +2158,438 @@ class ArchiveRepository {
     }));
 
     return withMeta;
+  }
+
+  // -------------------------------------------------------------------------
+  // Student Document Intelligence, Scanning Pipeline & Super Admin Review
+  // -------------------------------------------------------------------------
+
+  findDocumentBySha256(sha256: string): AcademicDocumentRecord | undefined {
+    const target = sha256.trim().toLowerCase();
+    if (!target) return undefined;
+    return this.state.academicDocuments.find(
+      (d) => d.sha256.toLowerCase() === target && d.publicationStatus !== 'archived'
+    );
+  }
+
+  getPublishedLibraryDocuments(schoolId?: string): AcademicDocumentRecord[] {
+    return this.state.academicDocuments.filter(
+      (d) =>
+        d.publicationStatus === 'published' && (!schoolId || d.schoolId === schoolId)
+    );
+  }
+
+  getDocumentsForSubmitter(userId: string): AcademicDocumentRecord[] {
+    return this.state.academicDocuments.filter((d) => d.submittedById === userId);
+  }
+
+  getDocumentsForReview(
+    actor: AuthenticatedUser | null | undefined,
+    filter: 'pending_flagged' | 'auto_approved' | 'rejected' | 'all' = 'all'
+  ): AcademicDocumentRecord[] {
+    this.requirePermission(
+      actor,
+      'docs:review_all',
+      'Only Super Administrators can inspect the document verification review queue.'
+    );
+    return this.state.academicDocuments.filter((doc) => {
+      if (filter === 'pending_flagged') {
+        return (
+          doc.publicationStatus === 'flagged' ||
+          doc.publicationStatus === 'pending_review' ||
+          doc.publicationStatus === 'resubmission_requested'
+        );
+      }
+      if (filter === 'auto_approved') {
+        return doc.decision === 'auto_approved' && doc.publicationStatus === 'published';
+      }
+      if (filter === 'rejected') {
+        return doc.publicationStatus === 'rejected';
+      }
+      return true;
+    });
+  }
+
+  submitScannedDocument(
+    actor: AuthenticatedUser | null | undefined,
+    payload: {
+      id?: string;
+      title: string;
+      courseCode: string;
+      courseTitle: string;
+      department?: string;
+      faculty?: string;
+      level: StudentLevel;
+      schoolId?: string;
+      session: string;
+      semester: SemesterType;
+      category: AcademicDocCategory;
+      originalFileName: string;
+      mimeType: string;
+      detectedFormat: AcademicDocumentRecord['detectedFormat'];
+      fileSizeBytes: number;
+      sha256: string;
+      originalFileRef?: AcademicDocumentRecord['originalFileRef'];
+      optimizedPreviewUrl?: string;
+      pageCount: number;
+      extractedText: string;
+      summary: string;
+      headings: string[];
+      pages: AcademicDocumentRecord['pages'];
+      diagrams: AcademicDocumentRecord['diagrams'];
+      tables: AcademicDocumentRecord['tables'];
+      formulas: AcademicDocumentRecord['formulas'];
+      qrCodesFound: AcademicDocumentRecord['qrCodesFound'];
+      averageOcrConfidence: number | null;
+      deterministicChecks: AcademicDocumentRecord['deterministicChecks'];
+      aiFindings?: AcademicDocumentRecord['aiFindings'];
+      decision: AcademicDocumentRecord['decision'];
+      riskLevel: AcademicDocumentRecord['riskLevel'];
+      decisionReason?: string;
+      parentZipName?: string;
+    }
+  ): AcademicDocumentRecord {
+    this.requirePermission(
+      actor,
+      'docs:scan_submit',
+      'Active Student or Super Admin account required to submit scanned academic documents.'
+    );
+
+    const school =
+      this.state.schools.find((s) => s.id === (payload.schoolId || this.state.selectedSchoolId)) ??
+      this.state.schools[0];
+
+    const duplicate = this.findDocumentBySha256(payload.sha256);
+    const now = new Date().toISOString();
+
+    let finalDecision = payload.decision;
+    if (duplicate && finalDecision === 'auto_approved') {
+      finalDecision = 'flagged';
+    }
+
+    const publicationStatus: AcademicDocumentRecord['publicationStatus'] =
+      finalDecision === 'auto_approved'
+        ? 'published'
+        : finalDecision === 'rejected'
+          ? 'rejected'
+          : finalDecision === 'flagged'
+            ? 'flagged'
+            : 'pending_review';
+
+    const docId = payload.id || `adoc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const record: AcademicDocumentRecord = {
+      id: docId,
+      title: sanitizeSingleLine(payload.title, 180) || sanitizeSingleLine(payload.originalFileName, 120),
+      courseCode: sanitizeIdentifier(payload.courseCode, 24).toUpperCase() || 'GEN 101',
+      courseTitle: sanitizeSingleLine(payload.courseTitle, 160) || 'Academic Document',
+      department: sanitizeSingleLine(payload.department || actor.department || 'General Studies', 120),
+      faculty: sanitizeSingleLine(payload.faculty || actor.faculty || 'Academic Affairs', 120),
+      level: payload.level,
+      schoolId: school?.id ?? 'sch-aaua',
+      schoolCode: school?.code ?? 'AAUA',
+      session: sanitizeIdentifier(payload.session, 20) || '2024/2025',
+      semester: payload.semester,
+      category: payload.category,
+      submittedById: actor.id,
+      submittedByName: sanitizeSingleLine(actor.fullName, 120),
+      submittedByRole: actor.role,
+      submittedAt: now,
+      updatedAt: now,
+      originalFileName: sanitizeSingleLine(payload.originalFileName, 180),
+      mimeType: sanitizeSingleLine(payload.mimeType, 120),
+      detectedFormat: payload.detectedFormat,
+      fileSizeBytes: Math.max(1, payload.fileSizeBytes),
+      sha256: payload.sha256.toLowerCase(),
+      duplicateOfDocId: duplicate?.id,
+      originalFileRef: payload.originalFileRef,
+      optimizedPreviewUrl: sanitizeSafeUrl(payload.optimizedPreviewUrl),
+      pageCount: Math.max(1, payload.pageCount),
+      extractedText: sanitizePlainText(payload.extractedText, 30_000),
+      summary: sanitizePlainText(payload.summary, 600),
+      headings: (payload.headings ?? []).map((h) => sanitizeSingleLine(h, 140)).filter(Boolean).slice(0, 20),
+      pages: (payload.pages ?? []).slice(0, 40).map((pg) => ({
+        ...pg,
+        text: sanitizePlainText(pg.text, 10_000),
+        renderedPreviewUrl: sanitizeSafeUrl(pg.renderedPreviewUrl),
+        diagrams: (pg.diagrams ?? []).map((d) => ({ ...d, dataUrl: sanitizeSafeUrl(d.dataUrl) })),
+      })),
+      diagrams: (payload.diagrams ?? []).slice(0, 12).map((d) => ({
+        ...d,
+        dataUrl: sanitizeSafeUrl(d.dataUrl),
+      })),
+      tables: (payload.tables ?? []).slice(0, 16),
+      formulas: (payload.formulas ?? []).slice(0, 32),
+      qrCodesFound: payload.qrCodesFound ?? [],
+      averageOcrConfidence: payload.averageOcrConfidence,
+      deterministicChecks: payload.deterministicChecks ?? [],
+      aiFindings: payload.aiFindings,
+      decision: finalDecision,
+      publicationStatus,
+      riskLevel: duplicate && payload.riskLevel === 'low' ? 'medium' : payload.riskLevel,
+      rejectionReason:
+        publicationStatus === 'rejected'
+          ? sanitizeSingleLine(
+              payload.decisionReason || 'Rejected during automated security/integrity screening.',
+              300
+            )
+          : undefined,
+      internalNotes: [],
+      parentZipName: payload.parentZipName ? sanitizeSingleLine(payload.parentZipName, 140) : undefined,
+      processingHistory: [
+        {
+          id: `ph-${Date.now()}-scan`,
+          timestamp: now,
+          stage: 'Scan & Extraction',
+          status: 'completed',
+          actorName: actor.fullName,
+          actorRole: actor.role,
+          detail: `Processed ${payload.detectedFormat.toUpperCase()} (${payload.pageCount} page${payload.pageCount === 1 ? '' : 's'}) · SHA-256 ${payload.sha256.slice(0, 12)}...`,
+        },
+        {
+          id: `ph-${Date.now()}-dec`,
+          timestamp: now,
+          stage: 'Verification Decision',
+          status:
+            publicationStatus === 'published'
+              ? 'completed'
+              : publicationStatus === 'rejected'
+                ? 'failed'
+                : 'warning',
+          detail:
+            payload.decisionReason ||
+            (publicationStatus === 'published'
+              ? 'Auto-approved and published to Student Document Library.'
+              : 'Routed to Super Admin Document Review.'),
+        },
+      ],
+    };
+
+    const auditAction: AuditActionType =
+      publicationStatus === 'published' ? 'doc_auto_approved' : 'doc_flagged';
+
+    this.update((prev) => {
+      const nextNotifications =
+        publicationStatus === 'published'
+          ? prev.notifications
+          : [
+              {
+                id: `notif-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                title:
+                  publicationStatus === 'rejected'
+                    ? `Document Blocked: ${record.courseCode}`
+                    : `Document Flagged for Verification: ${record.courseCode}`,
+                message:
+                  publicationStatus === 'rejected'
+                    ? `"${record.title}" failed automated safety/integrity checks and was not published.`
+                    : `"${record.title}" has been queued for Super Admin review before appearing in the Document Library.`,
+                category: 'upload' as const,
+                audience: (actor.role === 'student' ? 'students' : 'admins') as BroadcastAudience,
+                targetUserId: actor.id,
+                createdAt: now,
+                isRead: false,
+                createdBy: 'PQGuide Verification Engine',
+                approvalStatus: 'approved' as const,
+              },
+              ...prev.notifications,
+            ];
+
+      return {
+        ...prev,
+        academicDocuments: [record, ...prev.academicDocuments].slice(0, 120),
+        notifications: nextNotifications,
+        auditLogs: [
+          createAuditEntry(
+            actor,
+            'doc_scanned',
+            'academic_document',
+            record.id,
+            `Scanned "${record.title}" (${record.courseCode} · ${record.detectedFormat.toUpperCase()})`,
+            record.schoolId
+          ),
+          createAuditEntry(
+            actor,
+            auditAction,
+            'academic_document',
+            record.id,
+            `${publicationStatus === 'published' ? 'Auto-approved' : publicationStatus === 'rejected' ? 'Rejected' : 'Flagged for review'}: "${record.title}"`,
+            record.schoolId
+          ),
+          ...prev.auditLogs,
+        ].slice(0, 300),
+      };
+    });
+
+    return record;
+  }
+
+  reviewSubmittedDocument(
+    actor: AuthenticatedUser | null | undefined,
+    docId: string,
+    action: 'approve' | 'reject' | 'request_resubmission',
+    options?: { rejectionReason?: string; note?: string }
+  ): AcademicDocumentRecord {
+    this.requirePermission(
+      actor,
+      'docs:review_all',
+      'Only Super Administrators can approve, request resubmission, or reject submitted documents.'
+    );
+
+    const existing = this.state.academicDocuments.find((d) => d.id === docId);
+    if (!existing) {
+      throw new Error('Submitted document not found.');
+    }
+
+    const cleanReason = sanitizeSingleLine(options?.rejectionReason ?? '', 400);
+    if ((action === 'reject' || action === 'request_resubmission') && cleanReason.length < 5) {
+      throw new Error('A clear reason (at least 5 characters) is mandatory when rejecting or requesting resubmission.');
+    }
+
+    const cleanNote = sanitizeSingleLine(options?.note ?? '', 400);
+    const now = new Date().toISOString();
+    const nextStatus: AcademicDocumentRecord['publicationStatus'] =
+      action === 'approve'
+        ? 'published'
+        : action === 'request_resubmission'
+          ? 'resubmission_requested'
+          : 'rejected';
+
+    const nextNotes = cleanNote
+      ? [
+          {
+            id: `dnote-${Date.now()}`,
+            authorId: actor.id,
+            authorName: sanitizeSingleLine(actor.fullName, 120),
+            createdAt: now,
+            note: cleanNote,
+          },
+          ...existing.internalNotes,
+        ]
+      : existing.internalNotes;
+
+    const historyEntry = {
+      id: `ph-${Date.now()}-rev`,
+      timestamp: now,
+      stage:
+        action === 'approve'
+          ? 'Super Admin Approved & Published'
+          : action === 'request_resubmission'
+            ? 'Resubmission Requested'
+            : 'Super Admin Rejected',
+      status: (action === 'approve' ? 'completed' : action === 'request_resubmission' ? 'warning' : 'failed') as
+        | 'completed'
+        | 'warning'
+        | 'failed',
+      actorName: actor.fullName,
+      actorRole: actor.role,
+      detail:
+        action === 'approve'
+          ? `Approved & published to Student Document Library by ${actor.fullName}.`
+          : cleanReason,
+    };
+
+    const updated: AcademicDocumentRecord = {
+      ...existing,
+      publicationStatus: nextStatus,
+      reviewerId: actor.id,
+      reviewerName: sanitizeSingleLine(actor.fullName, 120),
+      reviewedAt: now,
+      updatedAt: now,
+      rejectionReason: action === 'approve' ? undefined : cleanReason,
+      internalNotes: nextNotes,
+      processingHistory: [...existing.processingHistory, historyEntry],
+    };
+
+    const auditAction: AuditActionType =
+      action === 'approve'
+        ? 'doc_review_approved'
+        : action === 'request_resubmission'
+          ? 'doc_resubmission_requested'
+          : 'doc_review_rejected';
+
+    this.update((prev) => ({
+      ...prev,
+      academicDocuments: prev.academicDocuments.map((d) => (d.id === docId ? updated : d)),
+      notifications: [
+        {
+          id: `notif-rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title:
+            action === 'approve'
+              ? `Document Approved: ${updated.courseCode}`
+              : action === 'request_resubmission'
+                ? `Resubmission Requested: ${updated.courseCode}`
+                : `Document Rejected: ${updated.courseCode}`,
+          message:
+            action === 'approve'
+              ? `"${updated.title}" passed Super Admin verification and is now live in the Student Document Library.`
+              : `Your upload "${updated.title}" requires attention: ${cleanReason}`,
+          category: 'upload' as const,
+          audience: 'students' as BroadcastAudience,
+          targetUserId: updated.submittedById,
+          createdAt: now,
+          isRead: false,
+          createdBy: sanitizeSingleLine(actor.fullName, 120),
+          approvalStatus: 'approved' as const,
+        },
+        ...prev.notifications,
+      ],
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          auditAction,
+          'academic_document',
+          docId,
+          action === 'approve'
+            ? `Approved & published "${updated.title}" (${updated.courseCode})`
+            : `${action === 'request_resubmission' ? 'Requested resubmission for' : 'Rejected'} "${updated.title}": ${cleanReason}`,
+          updated.schoolId
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    return updated;
+  }
+
+  addDocumentReviewNote(
+    actor: AuthenticatedUser | null | undefined,
+    docId: string,
+    note: string
+  ): AcademicDocumentRecord {
+    this.requirePermission(
+      actor,
+      'docs:review_all',
+      'Only Super Administrators can attach reviewer notes.'
+    );
+    const existing = this.state.academicDocuments.find((d) => d.id === docId);
+    if (!existing) {
+      throw new Error('Submitted document not found.');
+    }
+    const cleanNote = sanitizeSingleLine(note, 400);
+    if (!cleanNote) {
+      throw new Error('Enter a reviewer note first.');
+    }
+    const now = new Date().toISOString();
+    const updated: AcademicDocumentRecord = {
+      ...existing,
+      updatedAt: now,
+      internalNotes: [
+        {
+          id: `dnote-${Date.now()}`,
+          authorId: actor.id,
+          authorName: sanitizeSingleLine(actor.fullName, 120),
+          createdAt: now,
+          note: cleanNote,
+        },
+        ...existing.internalNotes,
+      ],
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      academicDocuments: prev.academicDocuments.map((d) => (d.id === docId ? updated : d)),
+    }));
+
+    return updated;
   }
 
   // -------------------------------------------------------------------------

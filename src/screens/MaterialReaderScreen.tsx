@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Lock, Sparkles } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import type { StudyMaterial } from '../core/types';
 import {
   subscriptionService,
@@ -9,6 +9,8 @@ import {
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
+import { PqGuideAiIcon } from '../components/ui/PqGuideAiIcon';
+import { RichInlineText } from '../components/academic/AcademicContentRenderer';
 import { sanitizeSafeUrl } from '../core/security';
 import { MaterialDownloadButton } from '../components/ui/MaterialDownloadButton';
 
@@ -123,8 +125,8 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
               className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl bg-[#1D1E23] px-4 py-3 text-left text-white transition-colors hover:bg-[#2B2D35]"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/15 text-[#4ADE80]">
-                  <Sparkles className="h-4 w-4" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white">
+                  <PqGuideAiIcon size="xs" />
                 </span>
                 <div className="min-w-0">
                   <p className="text-xs font-bold">
@@ -212,7 +214,7 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
             >
               <div className="flex items-center gap-3 min-w-0">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23]/10 text-[#505460]">
-                  <Sparkles className="h-4 w-4" />
+                  <PqGuideAiIcon size="xs" />
                 </span>
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-[#3A3D47]">
@@ -244,9 +246,11 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
                 </h2>
 
                 {section.paragraphs?.map((p, i) => (
-                  <p key={i} className="mt-3 text-[15px] leading-7 text-[#3A3D47]">
-                    {p}
-                  </p>
+                  <RichInlineText
+                    key={i}
+                    text={p}
+                    className="mt-3 text-[15px] leading-7 text-[#3A3D47]"
+                  />
                 ))}
 
                 {section.points && (

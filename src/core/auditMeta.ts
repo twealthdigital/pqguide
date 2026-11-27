@@ -197,6 +197,36 @@ export const AUDIT_ACTION_META: Record<AuditActionType, AuditActionMeta> = {
     whatItDoes: 'Confirmed a Paystack or Flutterwave subscription payment automatically.',
     verb: 'completed a verified payment',
   },
+  doc_scanned: {
+    label: 'Document Scanned',
+    whatItDoes: 'Processed an uploaded file through validation, SHA-256 hashing, and text/OCR extraction.',
+    verb: 'submitted a scanned document',
+  },
+  doc_auto_approved: {
+    label: 'Document Auto-Approved',
+    whatItDoes: 'Automatically approved and published a clean, low-risk academic document after passing validation checks.',
+    verb: 'had a document auto-approved for publication',
+  },
+  doc_flagged: {
+    label: 'Document Flagged for Review',
+    whatItDoes: 'Held an uploaded document in the Super Admin Document Review queue after validation or AI risk checks.',
+    verb: 'submitted a document flagged for review',
+  },
+  doc_review_approved: {
+    label: 'Document Review Approved',
+    whatItDoes: 'Approved and published a pending or flagged document in Super Admin Document Review.',
+    verb: 'approved and published a submitted document',
+  },
+  doc_review_rejected: {
+    label: 'Document Review Rejected',
+    whatItDoes: 'Rejected a submitted document with a recorded reason and notified the submitter.',
+    verb: 'rejected a submitted document',
+  },
+  doc_resubmission_requested: {
+    label: 'Resubmission Requested',
+    whatItDoes: 'Requested clearer upload or corrections from the submitter with review guidance.',
+    verb: 'requested document resubmission',
+  },
   dev_data_reset: {
     label: 'Dev Data Reset',
     whatItDoes: 'Reset local catalog or development storage.',

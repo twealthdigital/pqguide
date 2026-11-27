@@ -16,8 +16,8 @@ import {
   ScanLine,
   Search,
   Send,
-  Sparkles,
 } from 'lucide-react';
+import { PqGuideAiIcon } from '../components/ui/PqGuideAiIcon';
 import type { AppScreen, AuthenticatedUser, SupportTicket } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { submitFeedback } from '../services/feedbackService';
@@ -70,7 +70,7 @@ const AboutPage: React.FC = () => {
   return (
     <div className="space-y-4">
       <FeatureRow
-        icon={<Sparkles className="w-5 h-5" />}
+        icon={<PqGuideAiIcon size="sm" />}
         title={about.card1Title}
         text={about.card1Body}
       />

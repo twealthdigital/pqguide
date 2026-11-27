@@ -1,9 +1,11 @@
 import { useBackHandler } from '../../core/navGuard';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Lock, Sparkles, X } from 'lucide-react';
+import { Lock, X } from 'lucide-react';
 import type { QuestionSolution } from '../../core/types';
 import { subscriptionService, useSubscription } from '../../core/subscription';
+import { PqGuideAiIcon } from './PqGuideAiIcon';
+import { RichInlineText } from '../academic/AcademicContentRenderer';
 
 /**
  * Answer + explanation for a question: a bottom sheet on mobile/tablet and a
@@ -429,9 +431,10 @@ const AnswerBody: React.FC<{
                 <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EFF1F5] font-mono-tabular text-[11px] font-semibold text-[#1A1B20]">
                   {i + 1}
                 </span>
-                <p className="min-w-0 flex-1 whitespace-pre-line text-sm leading-6 text-[#3A3D47]">
-                  {step}
-                </p>
+                <RichInlineText
+                  text={step}
+                  className="min-w-0 flex-1 text-sm leading-6 text-[#3A3D47]"
+                />
               </li>
             ))}
           </ol>
@@ -455,8 +458,8 @@ const AnswerBody: React.FC<{
             className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl bg-[#1D1E23] px-4 py-3 text-left text-white transition-colors hover:bg-[#2B2D35]"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15 text-[#4ADE80]">
-                <Sparkles className="h-4 w-4" />
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white">
+                <PqGuideAiIcon size="sm" />
               </span>
               <div className="min-w-0">
                 <p className="text-xs font-bold">
@@ -494,7 +497,7 @@ const AnswerBody: React.FC<{
             >
               <div className="flex items-center gap-3 min-w-0">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23]/10 text-[#505460]">
-                  <Sparkles className="h-4 w-4" />
+                  <PqGuideAiIcon size="sm" />
                 </span>
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-[#3A3D47]">

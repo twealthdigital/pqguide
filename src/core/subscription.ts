@@ -11,11 +11,9 @@ import type { UserRole } from './types';
 export const FREE_TIER_ENABLED = true;
 
 /**
- * Master AI-feature flag (kept `false` until backend AI integration is installed).
- * Tier 3 UI entries stay visible in a locked/disabled state for standard users,
- * while Super Admin sessions receive the highest Infinity Plan with all controls unlocked.
+ * Master AI-feature flag backed by server-side Gemini integration & grounded archive retrieval.
  */
-export const AI_INTEGRATION_ENABLED = false;
+export const AI_INTEGRATION_ENABLED = true;
 
 export type BillingPeriod = 'monthly' | 'semester' | 'yearly';
 
@@ -233,6 +231,7 @@ export const subscriptionService = {
 
   hasAiAccess(): boolean {
     if (roleOverride === 'super_admin') return true;
+    if (FREE_TIER_ENABLED && AI_INTEGRATION_ENABLED) return true;
     return AI_INTEGRATION_ENABLED && currentState.activeTier === 'pro_ai';
   },
 

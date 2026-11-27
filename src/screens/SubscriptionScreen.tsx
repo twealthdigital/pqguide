@@ -6,9 +6,9 @@ import {
   CreditCard,
   Loader2,
   Lock,
-  Sparkles,
   X,
 } from 'lucide-react';
+import { PqGuideAiIcon } from '../components/ui/PqGuideAiIcon';
 import type {
   AuthenticatedUser,
   PaymentProvider,
@@ -204,7 +204,7 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
           >
             <div className="flex items-center gap-3.5 min-w-0">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white">
-                <Sparkles className="h-5 w-5" />
+                <PqGuideAiIcon size="sm" />
               </span>
               <div className="min-w-0">
                 <p className="font-display text-sm sm:text-base font-bold">
@@ -229,7 +229,7 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
             className="mx-auto mt-5 flex max-w-2xl items-center gap-3 rounded-2xl border border-[#1A1B20]/10 bg-white px-4 py-3 text-xs text-[#3A3D47] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)] sm:text-sm"
           >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23] text-white">
-              <Sparkles className="h-4 w-4" />
+              <PqGuideAiIcon size="xs" />
             </span>
             <p className="min-w-0 leading-snug">
               AI tools launch soon in Tier 3. All core study tools remain available in{' '}

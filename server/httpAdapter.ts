@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { defaultOtpEngine } from './otpService.ts';
 import { defaultSuperAdminEngine } from './superAdminService.ts';
+import { defaultDocumentEngine } from './documentService.ts';
+import { defaultAiEngine } from './aiService.ts';
 
 export type NodeHttpRequest = IncomingMessage & {
   body?: unknown;
@@ -13,6 +15,7 @@ export type NodeHttpResponse = ServerResponse & {
 };
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_DOC_BODY_BYTES = 4 * 1024 * 1024;
 
 function sendJson(
   res: NodeHttpResponse,
@@ -105,7 +108,10 @@ function getClientIp(req: NodeHttpRequest): string {
   return req.socket?.remoteAddress || 'unknown';
 }
 
-async function readJsonBody(req: NodeHttpRequest): Promise<unknown> {
+async function readJsonBody(
+  req: NodeHttpRequest,
+  maxBytes = MAX_BODY_BYTES
+): Promise<unknown> {
   if (req.body !== undefined && req.body !== null) {
     if (typeof req.body === 'string') {
       return req.body.trim() ? JSON.parse(req.body) : {};
@@ -122,7 +128,7 @@ async function readJsonBody(req: NodeHttpRequest): Promise<unknown> {
     let total = 0;
     req.on('data', (chunk: Buffer) => {
       total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
+      if (total > maxBytes) {
         reject(new Error('BODY_TOO_LARGE'));
         req.destroy();
         return;
@@ -488,3 +494,112 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
 }
 
 export const defaultSuperAdminHttpHandlers = createSuperAdminHttpHandlers();
+
+export function createDocumentHttpHandlers(engine = defaultDocumentEngine) {
+  async function handleValidate(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req, MAX_DOC_BODY_BYTES);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid document validation payload.' });
+      return;
+    }
+    const result = await engine.validateAndOptimizeBinary({ body });
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleCrossCheck(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req, MAX_DOC_BODY_BYTES);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid cross-check request payload.' });
+      return;
+    }
+    const result = await engine.crossCheckWithAi({ body });
+    sendJson(res, result.status, result.body);
+  }
+
+  return {
+    handleValidate,
+    handleCrossCheck,
+  };
+}
+
+export const defaultDocumentHttpHandlers = createDocumentHttpHandlers();
+
+export function createAiHttpHandlers(engine = defaultAiEngine) {
+  async function handleStatus(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const result = engine.getStatus();
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleStudy(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req, MAX_DOC_BODY_BYTES);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid AI study request payload.' });
+      return;
+    }
+    const result = await engine.runStudyQuery({ body });
+    sendJson(res, result.status, result.body);
+  }
+
+  return {
+    handleStatus,
+    handleStudy,
+  };
+}
+
+export const defaultAiHttpHandlers = createAiHttpHandlers();

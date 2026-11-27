@@ -13,6 +13,10 @@ export type Permission =
   | 'pq:manage_all'
   | 'materials:read'
   | 'materials:manage'
+  | 'docs:scan_submit'
+  | 'docs:read_library'
+  | 'docs:review_all'
+  | 'ai:use'
   | 'schools:manage'
   | 'admins:manage'
   | 'accounts:manage'
@@ -28,7 +32,13 @@ export const ROLE_LABELS: Readonly<Record<UserRole, string>> = {
 };
 
 export const ROLE_PERMISSIONS: Readonly<Record<UserRole, ReadonlySet<Permission>>> = {
-  student: new Set<Permission>(['pq:read', 'materials:read']),
+  student: new Set<Permission>([
+    'pq:read',
+    'materials:read',
+    'docs:scan_submit',
+    'docs:read_library',
+    'ai:use',
+  ]),
   school_admin: new Set<Permission>([
     'pq:read',
     'pq:upload_school',
@@ -41,6 +51,10 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, ReadonlySet<Permission>
     'pq:manage_all',
     'materials:read',
     'materials:manage',
+    'docs:scan_submit',
+    'docs:read_library',
+    'docs:review_all',
+    'ai:use',
     'schools:manage',
     'admins:manage',
     'accounts:manage',
@@ -60,7 +74,11 @@ const CONSTANT_ADMIN_SCREENS = new Set<AppScreen>([
   'support',
 ]);
 
-const READ_ONLY_PERMISSIONS = new Set<Permission>(['pq:read', 'materials:read']);
+const READ_ONLY_PERMISSIONS = new Set<Permission>([
+  'pq:read',
+  'materials:read',
+  'docs:read_library',
+]);
 
 export function isRestrictedAccount(
   user: AuthenticatedUser | null | undefined
@@ -109,7 +127,7 @@ export function canManageSchoolDocument(
 
 /**
  * Checks whether a user can open a screen:
- * - Students: normal student website + info/support screens ONLY (never admin screens).
+ * - Students: normal student website + document scanner/library + AI + info/support screens ONLY (never admin screens).
  * - School Admins: ONLY School Admin Desk + Notifications + About/Services/Help/Customer Support
  *   (cannot switch to or open normal student website screens or Super Admin).
  * - Super Admins: full access across Super Admin console, School Admin view, and Student website view.

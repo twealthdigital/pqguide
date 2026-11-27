@@ -14,8 +14,10 @@ import {
   Crown,
   Eye as PreviewEye,
   EyeOff as PreviewOff,
+  FileCheck2,
   FileText,
   Folder,
+  FolderOpen,
   Globe,
   Headphones,
   HelpCircle,
@@ -29,6 +31,7 @@ import {
   LogOut,
   Megaphone,
   MoreVertical,
+  ScanLine,
   Search,
   Settings,
   ShieldAlert,
@@ -38,6 +41,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { PqGuideAiIcon } from './PqGuideAiIcon';
 import type {
   AppScreen,
   AuthenticatedUser,
@@ -76,6 +80,7 @@ interface NavigationShellProps {
   settingsTarget?: SettingsUiTarget;
   onSelectSettingsTarget?: (target: SettingsUiTarget) => void;
   openSupportCount?: number;
+  pendingDocumentReviewCount?: number;
   marquee?: HeaderMarqueeConfig;
   onNavigate: (screen: AppScreen) => void;
   onOpenPaywall: (context?: PaywallContext) => void;
@@ -106,6 +111,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   settingsTarget = 'normal_website',
   onSelectSettingsTarget,
   openSupportCount = 0,
+  pendingDocumentReviewCount = 0,
   marquee,
   onNavigate,
   onOpenPaywall,
@@ -448,6 +454,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
             { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
             { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
+            { id: 'document_scanner', label: 'Scan Docs', icon: <ScanLine className="w-5 h-5" /> },
+            { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-5 h-5" /> },
+            { id: 'ai_assistant', label: 'PQGuide AI', icon: <PqGuideAiIcon size="xs" /> },
             { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
             { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
           ]
@@ -456,6 +465,9 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
           { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
           { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
+          { id: 'document_scanner', label: 'Scan Docs', icon: <ScanLine className="w-5 h-5" /> },
+          { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-5 h-5" /> },
+          { id: 'ai_assistant', label: 'PQGuide AI', icon: <PqGuideAiIcon size="xs" /> },
           { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
           { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
         ];
@@ -497,6 +509,12 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     },
     { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-[18px] h-[18px]" /> },
     { id: 'study_materials', label: 'Study Materials', icon: <BookOpen className="w-[18px] h-[18px]" /> },
+    {
+      id: 'document_review',
+      label: 'Document Review',
+      icon: <FileCheck2 className="w-[18px] h-[18px]" />,
+      badge: pendingDocumentReviewCount,
+    },
     { id: 'payments', label: 'Payments', icon: <CreditCard className="w-[18px] h-[18px]" /> },
   ];
 

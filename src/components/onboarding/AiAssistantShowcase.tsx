@@ -7,9 +7,8 @@ import {
   ChevronUp,
   FileText,
   Lightbulb,
-  Loader2,
-  Sparkles,
 } from 'lucide-react';
+import { PqGuideAiIcon } from '../ui/PqGuideAiIcon';
 
 type AiPhase =
   | 'ai_bounce_in'
@@ -434,7 +433,7 @@ export const AiAssistantShowcase: React.FC = () => {
                   : 'animate-ai-bounce'
               }`}
             >
-              <Sparkles className="w-7 h-7" />
+              <PqGuideAiIcon size="lg" state="idle" />
             </div>
           </div>
         )}
@@ -455,11 +454,10 @@ export const AiAssistantShowcase: React.FC = () => {
           >
             <div className="flex items-center gap-3 min-w-0">
               <div className="h-10 w-10 rounded-xl tactile-dark text-white flex items-center justify-center shrink-0">
-                {isLoadingScreen ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Sparkles className="w-5 h-5" />
-                )}
+                <PqGuideAiIcon
+                  size="sm"
+                  state={isLoadingScreen ? 'working' : 'idle'}
+                />
               </div>
 
               <div className="min-w-0">
@@ -519,7 +517,7 @@ export const AiAssistantShowcase: React.FC = () => {
             {isLoadingScreen && (
               <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-center page-enter">
                 <div className="h-10 w-10 rounded-full bg-white border border-[#1A1B20]/10 shadow-xs flex items-center justify-center text-[#1D1E23]">
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <PqGuideAiIcon size="sm" state="working" />
                 </div>
                 <p className="font-display text-xs font-bold text-[#1A1B20]">
                   {isCourseLoading
