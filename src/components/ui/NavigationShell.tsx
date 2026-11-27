@@ -1881,19 +1881,38 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
         {/* Scrollable Content */}
         <main
-          className={`flex-1 w-full mx-auto ${showStudentBottomBar ? 'pb-24' : 'pb-10'} ${
+          style={
+            hasBanner
+              ? ({
+                  '--hero-extra': `${
+                    (showMarquee ? 40 : 0) +
+                    (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange ? 44 : 0)
+                  }px`,
+                } as React.CSSProperties)
+              : undefined
+          }
+          className={`relative flex-1 w-full mx-auto ${showStudentBottomBar ? 'pb-24' : 'pb-10'} ${
             hasBanner
               ? 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-0 lg:pt-8 lg:pb-8'
               : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
           }`}
         >
+          {/* Mobile notices: on hero screens they float over the hero image so the image
+              blends into the header; elsewhere they flow normally. */}
+          <div
+            className={
+              hasBanner
+                ? 'lg:hidden absolute inset-x-4 sm:inset-x-6 top-[calc(62px+env(safe-area-inset-top))] z-30 space-y-2'
+                : 'contents'
+            }
+          >
           {/* Mobile Marquee Banner */}
           {showMarquee && marquee && (
             <div
               role="region"
               aria-label="Platform broadcast notice"
-              className={`lg:hidden mb-3 rounded-xl px-3.5 py-2 text-xs font-semibold flex items-center gap-2.5 overflow-hidden ${
-                hasBanner ? 'mt-[calc(64px+env(safe-area-inset-top))]' : ''
+              className={`lg:hidden rounded-xl px-3.5 py-2 text-xs font-semibold flex items-center gap-2.5 overflow-hidden ${
+                hasBanner ? 'ring-1 ring-white/10' : 'mb-3'
               } ${marqueeToneClass}`}
             >
               <Megaphone className="w-3.5 h-3.5 shrink-0" />
@@ -1907,8 +1926,8 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
           {isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange && (
             <div
-              className={`lg:hidden mb-3 rounded-xl bg-[#ECEEF3] border border-[#1A1B20]/10 px-3.5 py-2 flex items-center justify-between gap-2 text-xs ${
-                hasBanner && !showMarquee ? 'mt-[calc(64px+env(safe-area-inset-top))]' : ''
+              className={`lg:hidden rounded-xl bg-[#ECEEF3] border border-[#1A1B20]/10 px-3.5 py-2 flex items-center justify-between gap-2 text-xs ${
+                hasBanner ? '' : 'mb-3'
               }`}
             >
               <span className="font-semibold text-[#1A1B20] truncate">
@@ -1925,6 +1944,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               </button>
             </div>
           )}
+          </div>
 
           {isRestrictedAccount(student) && (
             <div
