@@ -401,6 +401,8 @@ export interface SuperAdminBootstrapInput {
 
 export interface ProductionSuperAdminInitInput extends SuperAdminBootstrapInput {
   setupSecret: string;
+  enrollmentToken: string;
+  totpCode: string;
 }
 
 export interface SuperAdminInitStatus {
@@ -408,8 +410,17 @@ export interface SuperAdminInitStatus {
   initialized: boolean;
   setupConfigured: boolean;
   emailLockedToConfigured: boolean;
+  totpEncryptionConfigured: boolean;
+  bootstrapEmailRequired: boolean;
   storage: 'upstash' | 'memory-dev';
   error?: string;
+}
+
+export interface SuperAdminLoginStepResult {
+  requiresTotp: boolean;
+  mfaToken?: string;
+  expiresInSeconds?: number;
+  account?: AuthenticatedUser;
 }
 
 export interface CreateSchoolAdminInput {
@@ -969,78 +980,11 @@ export const authService = {
       );
 
       if (portal === 'super_admin' && (!isDevBootstrapEnabled() || !account)) {
-        try {
-          const response = await fetch('/api/auth/super-admin/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: normalizedEmail, password }),
-          });
-          const payload = (await response.json()) as {
-            ok?: boolean;
-            error?: string;
-            retryAfterSeconds?: number;
-            account?: AuthenticatedUser;
-            sessionToken?: string;
-          };
-          if (response.ok && payload.ok && payload.account && payload.sessionToken) {
-            const now = new Date().toISOString();
-            const serverUser: AuthenticatedUser = {
-              ...payload.account,
-              role: 'super_admin',
-              isEmailVerified: true,
-              adminVerified: true,
-            };
-            sessionService.saveSuperAdminSession(
-              serverUser,
-              payload.sessionToken,
-              rememberMe
-            );
-            archiveRepository.syncManagedAccount({
-              id: serverUser.id,
-              fullName: serverUser.fullName,
-              email: serverUser.email,
-              role: 'super_admin',
-              schoolCode: 'ALL',
-              status: serverUser.status,
-              adminVerified: true,
-              isEmailVerified: true,
-              needsPasswordSetup: false,
-              sessionState: 'logged_in',
-              lastLoginAt: now,
-              lastActiveAt: now,
-              createdAt: serverUser.createdAt,
-              createdBy: serverUser.createdBy,
-            });
-            archiveRepository.setAccountSessionState(serverUser.id, 'logged_in');
-            archiveRepository.recordUserActivity({
-              userId: serverUser.id,
-              userName: serverUser.fullName,
-              userEmail: serverUser.email,
-              userRole: 'super_admin',
-              type: 'login',
-              detail: 'Signed in on super admin portal',
-            });
-            this.saveActiveSession(serverUser, rememberMe);
-            return { ok: true, data: { account: serverUser } };
-          }
-          if (response.status !== 404 || !account) {
-            return {
-              ok: false,
-              error:
-                response.status === 404
-                  ? 'No verified Super Admin account matches this email address.'
-                  : payload.error || 'Authentication failed.',
-              retryAfterSeconds: payload.retryAfterSeconds,
-            };
-          }
-        } catch {
-          if (!account || !isDevBootstrapEnabled()) {
-            return {
-              ok: false,
-              error: 'Unable to reach Super Admin authentication server.',
-            };
-          }
-        }
+        return {
+          ok: false,
+          error:
+            'Two-factor authenticator verification is required for Super Admin sign-in.',
+        };
       }
 
       if (!account) {
@@ -1396,6 +1340,7 @@ export const authService = {
       const res = await fetch('/api/auth/super-admin/status', {
         method: 'GET',
         cache: 'no-store',
+        credentials: 'include',
       });
       const payload = (await res.json()) as Partial<SuperAdminInitStatus> & {
         ok?: boolean;
@@ -1405,6 +1350,8 @@ export const authService = {
         initialized: Boolean(payload.initialized),
         setupConfigured: Boolean(payload.setupConfigured),
         emailLockedToConfigured: Boolean(payload.emailLockedToConfigured),
+        totpEncryptionConfigured: Boolean(payload.totpEncryptionConfigured),
+        bootstrapEmailRequired: Boolean(payload.bootstrapEmailRequired),
         storage: payload.storage === 'upstash' ? 'upstash' : 'memory-dev',
         error: payload.error,
       };
@@ -1414,15 +1361,146 @@ export const authService = {
         initialized: false,
         setupConfigured: false,
         emailLockedToConfigured: false,
+        totpEncryptionConfigured: false,
+        bootstrapEmailRequired: true,
         storage: 'memory-dev',
         error: 'Unable to check Super Admin server status.',
       };
     }
   },
 
+  async requestSuperAdminInitOtp(params: {
+    email: string;
+    setupSecret: string;
+  }): Promise<
+    AuthActionResult<{
+      email: string;
+      deliveryMode: OtpDeliveryMode;
+      cooldownSeconds: number;
+      verificationCode?: string;
+    }>
+  > {
+    const email = sanitizeSingleLine(params.email, 160).toLowerCase();
+    const setupSecret = params.setupSecret.trim();
+    if (!validateEmailAddress(email)) {
+      return { ok: false, error: 'Enter a valid Super Admin email address.' };
+    }
+    if (!setupSecret) {
+      return { ok: false, error: 'Enter the server setup authorization key.' };
+    }
+
+    try {
+      const res = await fetch('/api/auth/super-admin/init-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, setupSecret }),
+      });
+      const payload = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        email?: string;
+        deliveryMode?: OtpDeliveryMode;
+        cooldownSeconds?: number;
+        retryAfterSeconds?: number;
+        previewCode?: string;
+      };
+      if (!res.ok || !payload.ok || !payload.email) {
+        return {
+          ok: false,
+          error: payload.error || 'Could not dispatch setup verification code.',
+          retryAfterSeconds: payload.retryAfterSeconds,
+        };
+      }
+      const deliveryMode: OtpDeliveryMode =
+        payload.deliveryMode === 'email' ? 'email' : 'preview';
+      return {
+        ok: true,
+        data: {
+          email: payload.email,
+          deliveryMode,
+          cooldownSeconds: payload.cooldownSeconds ?? 30,
+          verificationCode:
+            deliveryMode === 'preview' && isDevBootstrapEnabled()
+              ? payload.previewCode
+              : undefined,
+        },
+      };
+    } catch {
+      return {
+        ok: false,
+        error: 'Unable to reach Super Admin setup server.',
+      };
+    }
+  },
+
+  async verifySuperAdminInitOtp(params: {
+    email: string;
+    setupSecret: string;
+    code: string;
+  }): Promise<
+    AuthActionResult<{
+      enrollmentToken: string;
+      otpauthUri: string;
+      manualSecret: string;
+      expiresInSeconds: number;
+    }>
+  > {
+    const email = sanitizeSingleLine(params.email, 160).toLowerCase();
+    const setupSecret = params.setupSecret.trim();
+    const code = params.code.replace(/\s+/g, '').trim();
+    if (!/^\d{6}$/.test(code)) {
+      return { ok: false, error: 'Enter the 6-digit verification code.' };
+    }
+    try {
+      const res = await fetch('/api/auth/super-admin/init-verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, setupSecret, code }),
+      });
+      const payload = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        retryAfterSeconds?: number;
+        enrollmentToken?: string;
+        otpauthUri?: string;
+        manualSecret?: string;
+        expiresInSeconds?: number;
+      };
+      if (
+        !res.ok ||
+        !payload.ok ||
+        !payload.enrollmentToken ||
+        !payload.otpauthUri ||
+        !payload.manualSecret
+      ) {
+        return {
+          ok: false,
+          error: payload.error || 'Could not verify setup email OTP.',
+          retryAfterSeconds: payload.retryAfterSeconds,
+        };
+      }
+      return {
+        ok: true,
+        data: {
+          enrollmentToken: payload.enrollmentToken,
+          otpauthUri: payload.otpauthUri,
+          manualSecret: payload.manualSecret,
+          expiresInSeconds: payload.expiresInSeconds ?? 900,
+        },
+      };
+    } catch {
+      return {
+        ok: false,
+        error: 'Unable to reach Super Admin setup server.',
+      };
+    }
+  },
+
   async initializeProductionSuperAdmin(
     input: ProductionSuperAdminInitInput
-  ): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
+  ): Promise<AuthActionResult<{ account: AuthenticatedUser; recoveryCodes: string[] }>> {
     const currentSessionUser = this.getActiveSession();
     if (currentSessionUser) {
       return {
@@ -1434,6 +1512,8 @@ export const authService = {
     const fullName = sanitizeSingleLine(input.fullName, 120);
     const email = sanitizeSingleLine(input.email, 160).toLowerCase();
     const setupSecret = input.setupSecret.trim();
+    const enrollmentToken = input.enrollmentToken.trim();
+    const totpCode = input.totpCode.replace(/\s+/g, '').trim();
 
     if (fullName.length < 2) {
       return { ok: false, error: 'Enter the Super Admin full name.' };
@@ -1443,6 +1523,15 @@ export const authService = {
     }
     if (!setupSecret) {
       return { ok: false, error: 'Enter the server setup authorization key.' };
+    }
+    if (!enrollmentToken) {
+      return { ok: false, error: 'Verify your setup email OTP first.' };
+    }
+    if (!/^\d{6}$/.test(totpCode)) {
+      return {
+        ok: false,
+        error: 'Enter the 6-digit code from your authenticator app.',
+      };
     }
     const pwError = validatePasswordForRole(input.password, 'super_admin');
     if (pwError) {
@@ -1458,10 +1547,12 @@ export const authService = {
       };
     }
 
+    const rememberMe = input.rememberMe ?? false;
     try {
       const response = await fetch('/api/auth/super-admin/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           fullName,
           email,
@@ -1469,6 +1560,9 @@ export const authService = {
           confirmPassword: input.confirmPassword,
           confirmationPhrase: input.confirmationPhrase,
           setupSecret,
+          enrollmentToken,
+          totpCode,
+          rememberMe,
         }),
       });
       const payload = (await response.json()) as {
@@ -1476,9 +1570,16 @@ export const authService = {
         error?: string;
         retryAfterSeconds?: number;
         account?: AuthenticatedUser;
-        sessionToken?: string;
+        csrfToken?: string;
+        recoveryCodes?: string[];
       };
-      if (!response.ok || !payload.ok || !payload.account || !payload.sessionToken) {
+      if (
+        !response.ok ||
+        !payload.ok ||
+        !payload.account ||
+        !payload.csrfToken ||
+        !Array.isArray(payload.recoveryCodes)
+      ) {
         return {
           ok: false,
           error: payload.error || 'Could not initialize Super Admin account.',
@@ -1493,8 +1594,7 @@ export const authService = {
         isEmailVerified: true,
         adminVerified: true,
       };
-      const rememberMe = input.rememberMe ?? false;
-      sessionService.saveSuperAdminSession(serverUser, payload.sessionToken, rememberMe);
+      sessionService.setSuperAdminMemorySession(serverUser, payload.csrfToken, rememberMe);
       archiveRepository.syncManagedAccount({
         id: serverUser.id,
         fullName: serverUser.fullName,
@@ -1526,7 +1626,13 @@ export const authService = {
         detail: 'Initialized and signed into Super Admin console',
       });
       this.saveActiveSession(serverUser, rememberMe);
-      return { ok: true, data: { account: serverUser } };
+      return {
+        ok: true,
+        data: {
+          account: serverUser,
+          recoveryCodes: payload.recoveryCodes,
+        },
+      };
     } catch {
       return {
         ok: false,
@@ -1535,56 +1641,317 @@ export const authService = {
     }
   },
 
+  async beginSuperAdminLogin(
+    rawEmail: string,
+    password: string,
+    rememberMe = false
+  ): Promise<AuthActionResult<SuperAdminLoginStepResult>> {
+    const email = rawEmail.trim().toLowerCase();
+    if (!validateEmailAddress(email)) {
+      return { ok: false, error: 'Enter a valid Super Admin email address.' };
+    }
+    if (!password) {
+      return { ok: false, error: 'Enter your password.' };
+    }
+
+    const devLocalAccount = isDevBootstrapEnabled()
+      ? readAccounts().find(
+          (a) => a.email === email && a.role === 'super_admin' && a.isEmailVerified
+        )
+      : undefined;
+
+    try {
+      const response = await fetch('/api/auth/super-admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, password, rememberMe }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        retryAfterSeconds?: number;
+        requiresTotp?: boolean;
+        mfaToken?: string;
+        expiresInSeconds?: number;
+      };
+      if (response.ok && payload.ok && payload.requiresTotp && payload.mfaToken) {
+        return {
+          ok: true,
+          data: {
+            requiresTotp: true,
+            mfaToken: payload.mfaToken,
+            expiresInSeconds: payload.expiresInSeconds ?? 300,
+          },
+        };
+      }
+      if (response.status !== 404 || !devLocalAccount) {
+        return {
+          ok: false,
+          error:
+            response.status === 404
+              ? 'No verified Super Admin account matches this email address.'
+              : payload.error || 'Authentication failed.',
+          retryAfterSeconds: payload.retryAfterSeconds,
+        };
+      }
+    } catch {
+      if (!devLocalAccount) {
+        return {
+          ok: false,
+          error: 'Unable to reach Super Admin authentication server.',
+        };
+      }
+    }
+
+    // Strictly local-dev fallback when no server Super Admin exists
+    const localRes = await this.signinWithPortal('super_admin', email, password, rememberMe);
+    if (!localRes.ok || !localRes.data) {
+      return { ok: false, error: localRes.error || 'Authentication failed.' };
+    }
+    return {
+      ok: true,
+      data: {
+        requiresTotp: false,
+        account: localRes.data.account,
+      },
+    };
+  },
+
+  async verifySuperAdminTotp(params: {
+    mfaToken: string;
+    totpCode?: string;
+    recoveryCode?: string;
+    rememberMe?: boolean;
+  }): Promise<AuthActionResult<{ account: AuthenticatedUser }>> {
+    const mfaToken = params.mfaToken.trim();
+    const totpCode = (params.totpCode ?? '').replace(/\s+/g, '').trim();
+    const recoveryCode = (params.recoveryCode ?? '').trim();
+
+    if (!mfaToken) {
+      return { ok: false, error: 'Two-factor session expired. Sign in again.' };
+    }
+    if (!totpCode && !recoveryCode) {
+      return { ok: false, error: 'Enter your 6-digit authenticator code or recovery code.' };
+    }
+
+    try {
+      const response = await fetch('/api/auth/super-admin/verify-totp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          mfaToken,
+          ...(totpCode ? { code: totpCode } : {}),
+          ...(recoveryCode ? { recoveryCode } : {}),
+          rememberMe: Boolean(params.rememberMe),
+        }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        retryAfterSeconds?: number;
+        account?: AuthenticatedUser;
+        csrfToken?: string;
+      };
+      if (!response.ok || !payload.ok || !payload.account || !payload.csrfToken) {
+        return {
+          ok: false,
+          error: payload.error || 'Invalid two-factor verification code.',
+          retryAfterSeconds: payload.retryAfterSeconds,
+        };
+      }
+
+      const now = new Date().toISOString();
+      const serverUser: AuthenticatedUser = {
+        ...payload.account,
+        role: 'super_admin',
+        isEmailVerified: true,
+        adminVerified: true,
+      };
+      const rememberMe = Boolean(params.rememberMe);
+      sessionService.setSuperAdminMemorySession(serverUser, payload.csrfToken, rememberMe);
+      archiveRepository.syncManagedAccount({
+        id: serverUser.id,
+        fullName: serverUser.fullName,
+        email: serverUser.email,
+        role: 'super_admin',
+        schoolCode: 'ALL',
+        status: serverUser.status,
+        adminVerified: true,
+        isEmailVerified: true,
+        needsPasswordSetup: false,
+        sessionState: 'logged_in',
+        lastLoginAt: now,
+        lastActiveAt: now,
+        createdAt: serverUser.createdAt,
+        createdBy: serverUser.createdBy,
+      });
+      archiveRepository.setAccountSessionState(serverUser.id, 'logged_in');
+      archiveRepository.recordUserActivity({
+        userId: serverUser.id,
+        userName: serverUser.fullName,
+        userEmail: serverUser.email,
+        userRole: 'super_admin',
+        type: 'login',
+        detail: 'Signed in on super admin portal (2FA verified)',
+      });
+      this.saveActiveSession(serverUser, rememberMe);
+      return { ok: true, data: { account: serverUser } };
+    } catch {
+      return {
+        ok: false,
+        error: 'Unable to reach Super Admin authentication server.',
+      };
+    }
+  },
+
+  hasSuperAdminSessionHint(): boolean {
+    return sessionService.hasSuperAdminSessionHint();
+  },
+
   async verifyServerSuperAdminSession(): Promise<{
     verified: boolean;
     serverManaged: boolean;
     account?: AuthenticatedUser;
   }> {
-    const token = sessionService.readSuperAdminToken();
-    if (!token) {
-      return {
-        verified: isDevBootstrapEnabled() && localStore.getItem(BOOTSTRAP_LOCK_KEY) === '1',
-        serverManaged: false,
-      };
-    }
-
     try {
       const res = await fetch('/api/auth/super-admin/session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({}),
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'include',
       });
       const payload = (await res.json()) as {
         ok?: boolean;
         account?: AuthenticatedUser;
+        csrfToken?: string;
       };
       if (res.status === 401 || res.status === 403) {
-        const sa = sessionService.readSuperAdminSession();
-        if (sa) {
-          archiveRepository.setAccountSessionState(sa.account.id, 'logged_out');
+        const saMem = sessionService.readSuperAdminMemorySession();
+        if (saMem) {
+          archiveRepository.setAccountSessionState(saMem.account.id, 'logged_out');
         }
         sessionService.clearSession('revoked');
         return { verified: false, serverManaged: true };
       }
-      if (res.ok && payload.ok && payload.account) {
+      if (res.ok && payload.ok && payload.account && payload.csrfToken) {
+        const serverUser: AuthenticatedUser = {
+          ...payload.account,
+          role: 'super_admin',
+          isEmailVerified: true,
+          adminVerified: true,
+        };
         const currentSession = sessionService.readSession();
-        sessionService.saveSuperAdminSession(
-          payload.account,
-          token,
+        sessionService.setSuperAdminMemorySession(
+          serverUser,
+          payload.csrfToken,
           Boolean(currentSession?.rememberMe)
         );
+        this.saveActiveSession(serverUser, Boolean(currentSession?.rememberMe));
         return {
           verified: true,
           serverManaged: true,
-          account: payload.account,
+          account: serverUser,
         };
       }
-      return { verified: true, serverManaged: true };
+      const saMem = sessionService.readSuperAdminMemorySession();
+      return {
+        verified: Boolean(saMem),
+        serverManaged: true,
+        account: saMem?.account,
+      };
     } catch {
-      return { verified: true, serverManaged: true };
+      if (isDevBootstrapEnabled() && localStore.getItem(BOOTSTRAP_LOCK_KEY) === '1') {
+        return { verified: true, serverManaged: false };
+      }
+      const saMem = sessionService.readSuperAdminMemorySession();
+      return {
+        verified: Boolean(saMem),
+        serverManaged: true,
+        account: saMem?.account,
+      };
+    }
+  },
+
+  async logoutSuperAdminServer(
+    actor?: AuthenticatedUser | null,
+    reason: 'manual' | 'expired' | 'revoked' = 'manual'
+  ): Promise<void> {
+    let csrfToken = sessionService.readSuperAdminCsrfToken();
+    if (!csrfToken) {
+      const verified = await this.verifyServerSuperAdminSession();
+      if (verified.verified) {
+        csrfToken = sessionService.readSuperAdminCsrfToken();
+      }
+    }
+    if (actor) {
+      archiveRepository.setAccountSessionState(actor.id, 'logged_out');
+    }
+    sessionService.clearSession(reason);
+    if (csrfToken) {
+      try {
+        await fetch('/api/auth/super-admin/logout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken,
+          },
+          credentials: 'include',
+          body: JSON.stringify({}),
+        });
+      } catch {
+        // Local session state is already cleared cleanly
+      }
+    }
+  },
+
+  async logoutAllSuperAdminDevices(
+    actor?: AuthenticatedUser | null
+  ): Promise<AuthActionResult> {
+    let csrfToken = sessionService.readSuperAdminCsrfToken();
+    if (!csrfToken) {
+      await this.verifyServerSuperAdminSession();
+      csrfToken = sessionService.readSuperAdminCsrfToken();
+    }
+    if (!csrfToken) {
+      this.clearActiveSession(actor, 'manual');
+      return { ok: false, error: 'Active server session could not be verified.' };
+    }
+
+    try {
+      const res = await fetch('/api/auth/super-admin/logout-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
+        },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const payload = (await res.json()) as { ok?: boolean; error?: string };
+      const targetActor = actor ?? this.getActiveSession();
+      if (targetActor) {
+        archiveRepository.setAccountSessionState(targetActor.id, 'logged_out');
+        archiveRepository.recordUserActivity({
+          userId: targetActor.id,
+          userName: targetActor.fullName,
+          userEmail: targetActor.email,
+          userRole: targetActor.role,
+          type: 'logout',
+          detail: 'Signed out all active Super Admin devices',
+        });
+      }
+      sessionService.clearSession('manual');
+      if (!res.ok || !payload.ok) {
+        return {
+          ok: false,
+          error: payload.error || 'Could not revoke remote sessions cleanly.',
+        };
+      }
+      return { ok: true };
+    } catch {
+      sessionService.clearSession('manual');
+      return { ok: false, error: 'Unable to reach Super Admin authentication server.' };
     }
   },
 
@@ -1602,24 +1969,24 @@ export const authService = {
   },
 
   getActiveSession(): AuthenticatedUser | null {
-    const session = sessionService.readSession();
-    if (!session) return null;
-
-    const saSession = sessionService.readSuperAdminSession();
-    if (saSession && saSession.account.id === session.userId) {
+    const saMem = sessionService.readSuperAdminMemorySession();
+    if (saMem) {
       const repoSa = archiveRepository
         .getSnapshot()
-        .accounts.find((a) => a.id === saSession.account.id || a.email === saSession.account.email);
+        .accounts.find((a) => a.id === saMem.account.id || a.email === saMem.account.email);
       if (repoSa && repoSa.status !== 'active' && repoSa.status !== 'restricted') {
-        archiveRepository.setAccountSessionState(saSession.account.id, 'logged_out');
+        archiveRepository.setAccountSessionState(saMem.account.id, 'logged_out');
         sessionService.clearSession('revoked');
         return null;
       }
       return {
-        ...saSession.account,
+        ...saMem.account,
         role: 'super_admin',
       };
     }
+
+    const session = sessionService.readSession();
+    if (!session) return null;
 
     const accounts = readAccounts();
     const matched = accounts.find(
@@ -1636,7 +2003,7 @@ export const authService = {
       return null;
     }
 
-    // Outside local dev bootstrap, Super Admin sessions require a server-signed token
+    // Outside local dev bootstrap, Super Admin accounts NEVER authenticate from localStorage
     if (matched.role === 'super_admin' && !isDevBootstrapEnabled()) {
       archiveRepository.setAccountSessionState(matched.id, 'logged_out');
       sessionService.clearSession('revoked');
@@ -1667,6 +2034,7 @@ export const authService = {
     reason: 'manual' | 'expired' | 'revoked' = 'manual'
   ): void {
     const active = actor ?? this.getActiveSession();
+    const hasServerSaSession = Boolean(sessionService.readSuperAdminMemorySession());
     if (active) {
       archiveRepository.setAccountSessionState(active.id, 'logged_out');
       archiveRepository.recordUserActivity({
@@ -1682,6 +2050,10 @@ export const authService = {
             ? 'Session expired automatically after 12 hours'
             : 'Signed out of account',
       });
+    }
+    if (active?.role === 'super_admin' && hasServerSaSession) {
+      void this.logoutSuperAdminServer(active, reason);
+      return;
     }
     sessionService.clearSession(reason);
   },
@@ -2376,7 +2748,8 @@ export const authService = {
     email: string,
     newPassword: string,
     confirmPassword: string,
-    resetToken = ''
+    resetToken = '',
+    twoFactor?: { totpCode?: string; recoveryCode?: string }
   ): Promise<AuthActionResult<{ identifier: string; matricNumber: string }>> {
     const normalizedEmail = email.trim().toLowerCase();
     const accounts = readAccounts();
@@ -2392,21 +2765,27 @@ export const authService = {
       if (newPassword !== confirmPassword) {
         return { ok: false, error: 'Passwords do not match.' };
       }
+      const totpCode = (twoFactor?.totpCode ?? '').replace(/\s+/g, '').trim();
+      const recoveryCode = (twoFactor?.recoveryCode ?? '').trim();
       try {
         const res = await fetch('/api/auth/super-admin/reset-password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({
             email: normalizedEmail,
             newPassword,
             confirmPassword,
             resetToken,
+            ...(totpCode ? { totpCode } : {}),
+            ...(recoveryCode ? { recoveryCode } : {}),
           }),
         });
         const payload = (await res.json()) as {
           ok?: boolean;
           error?: string;
           identifier?: string;
+          retryAfterSeconds?: number;
         };
         if (res.ok && payload.ok && payload.identifier) {
           return {
@@ -2421,6 +2800,7 @@ export const authService = {
           return {
             ok: false,
             error: payload.error || 'Account could not be found.',
+            retryAfterSeconds: payload.retryAfterSeconds,
           };
         }
       } catch {

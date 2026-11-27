@@ -53,6 +53,14 @@ export function createApiApp(deps?: OtpEngineDeps) {
     void superAdminHandlers.handleStatus(req, res);
   });
 
+  app.post('/api/auth/super-admin/init-otp', (req: Request, res: Response) => {
+    void superAdminHandlers.handleInitOtp(req, res);
+  });
+
+  app.post('/api/auth/super-admin/init-verify-otp', (req: Request, res: Response) => {
+    void superAdminHandlers.handleInitVerifyOtp(req, res);
+  });
+
   app.post('/api/auth/super-admin/init', (req: Request, res: Response) => {
     void superAdminHandlers.handleInit(req, res);
   });
@@ -61,12 +69,24 @@ export function createApiApp(deps?: OtpEngineDeps) {
     void superAdminHandlers.handleLogin(req, res);
   });
 
+  app.post('/api/auth/super-admin/verify-totp', (req: Request, res: Response) => {
+    void superAdminHandlers.handleVerifyTotp(req, res);
+  });
+
   app.post('/api/auth/super-admin/session', (req: Request, res: Response) => {
     void superAdminHandlers.handleVerifySession(req, res);
   });
 
   app.get('/api/auth/super-admin/session', (req: Request, res: Response) => {
     void superAdminHandlers.handleVerifySession(req, res);
+  });
+
+  app.post('/api/auth/super-admin/logout', (req: Request, res: Response) => {
+    void superAdminHandlers.handleLogout(req, res);
+  });
+
+  app.post('/api/auth/super-admin/logout-all', (req: Request, res: Response) => {
+    void superAdminHandlers.handleLogoutAll(req, res);
   });
 
   app.post('/api/auth/super-admin/forgot', (req: Request, res: Response) => {

@@ -83,6 +83,7 @@ interface NavigationShellProps {
   unreadCount: number;
   student: AuthenticatedUser;
   onSignOut: () => void;
+  onSignOutAllDevices?: () => void;
   children: React.ReactNode;
 }
 
@@ -112,6 +113,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   unreadCount,
   student,
   onSignOut,
+  onSignOutAllDevices,
   children,
 }) => {
   const { activeTier } = useSubscription();
@@ -368,6 +370,16 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       setIsSigningOut(false);
       setLogoutConfirmOpen(false);
       onSignOut();
+    }, 260);
+  };
+
+  const handleConfirmSignOutAll = () => {
+    if (isSigningOut || !onSignOutAllDevices) return;
+    setIsSigningOut(true);
+    signOutTimerRef.current = window.setTimeout(() => {
+      setIsSigningOut(false);
+      setLogoutConfirmOpen(false);
+      onSignOutAllDevices();
     }, 260);
   };
 
@@ -2000,6 +2012,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
         loading={isSigningOut}
         onCancel={() => setLogoutConfirmOpen(false)}
         onConfirm={handleConfirmSignOut}
+        onConfirmAllDevices={onSignOutAllDevices ? handleConfirmSignOutAll : undefined}
       />
     </div>
   );

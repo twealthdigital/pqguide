@@ -676,13 +676,13 @@ function safeEqualHex(a: string, b: string): boolean {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-async function sendVerificationEmailViaResend(params: {
+export async function sendVerificationEmailViaResend(params: {
   fetchImpl: typeof fetch;
   apiKey: string;
   from: string;
   to: string;
   code: string;
-  purpose: OtpPurpose;
+  purpose: OtpPurpose | 'super_admin_init';
   matricNumber?: string;
 }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const purposeLabel =
@@ -690,24 +690,33 @@ async function sendVerificationEmailViaResend(params: {
       ? 'Human Verification for Student Registration'
       : params.purpose === 'admin_activate'
         ? 'School Admin Email Activation'
-        : 'Password Reset Verification';
+        : params.purpose === 'super_admin_init'
+          ? 'One-Time Super Admin Initialization'
+          : 'Password Reset Verification';
 
   const subject =
     params.purpose === 'signup'
       ? `${params.code} is your PQGuide verification code`
       : params.purpose === 'admin_activate'
         ? `${params.code} — Activate your PQGuide School Admin desk`
-        : `${params.code} is your PQGuide password reset code`;
+        : params.purpose === 'super_admin_init'
+          ? `${params.code} — Verify Super Admin initialization`
+          : `${params.code} is your PQGuide password reset code`;
 
   const matricLine = params.matricNumber
     ? `<p style="margin:0 0 12px;color:#505460;font-size:14px;">Matric Number: <strong>${escapeHtml(params.matricNumber)}</strong></p>`
     : '';
 
+  const headline =
+    params.purpose === 'super_admin_init'
+      ? 'Verify Super Admin setup'
+      : 'Confirm you are human';
+
   const html = `
     <div style="font-family:Inter,system-ui,-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:24px;background:#F6F7F9;color:#1A1B20;">
       <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:20px;padding:24px;">
         <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#686C78;">PQGuide · ${escapeHtml(purposeLabel)}</p>
-        <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;color:#1A1B20;">Confirm you are human</h1>
+        <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;color:#1A1B20;">${headline}</h1>
         ${matricLine}
         <p style="margin:0 0 16px;color:#505460;font-size:14px;line-height:1.5;">
           Enter this 6-digit code in PQGuide to verify your email address. It expires in 10 minutes.

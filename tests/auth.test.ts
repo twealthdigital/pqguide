@@ -18,10 +18,16 @@ import statusHandler from '../api/auth/email-otp/status.ts';
 import sendHandler from '../api/auth/email-otp/send.ts';
 import verifyHandler from '../api/auth/email-otp/verify.ts';
 import consumeResetHandler from '../api/auth/email-otp/consume-reset.ts';
+import { generateTotpCode } from '../server/superAdminService.ts';
 import saStatusHandler from '../api/auth/super-admin/status.ts';
+import saInitOtpHandler from '../api/auth/super-admin/init-otp.ts';
+import saInitVerifyOtpHandler from '../api/auth/super-admin/init-verify-otp.ts';
 import saInitHandler from '../api/auth/super-admin/init.ts';
 import saLoginHandler from '../api/auth/super-admin/login.ts';
+import saVerifyTotpHandler from '../api/auth/super-admin/verify-totp.ts';
 import saSessionHandler from '../api/auth/super-admin/session.ts';
+import saLogoutHandler from '../api/auth/super-admin/logout.ts';
+import saLogoutAllHandler from '../api/auth/super-admin/logout-all.ts';
 import saForgotHandler from '../api/auth/super-admin/forgot.ts';
 import saResetPasswordHandler from '../api/auth/super-admin/reset-password.ts';
 
@@ -194,13 +200,44 @@ class MockUpstashRedisServer {
       return ['OK', String(current)];
     }
 
-    // GET_SUPER_ADMIN_LUA
+    // GET_KEY_LUA
     if (script === "return redis.call('GET', KEYS[1])") {
       const existing = this.purgeIfExpired(keys[0]);
       return existing?.type === 'string' ? (existing.str ?? null) : null;
     }
 
-    // INIT_SUPER_ADMIN_LUA
+    // SET_KEY_PX_LUA
+    if (script.includes("redis.call('SET', KEYS[1], ARGV[1], 'PX'")) {
+      const ttlMs = Number(args[1]);
+      this.data.set(keys[0], {
+        type: 'string',
+        str: args[0],
+        expiresAtMs: this.nowFn() + ttlMs,
+      });
+      return ['OK'];
+    }
+
+    // DEL_KEY_LUA
+    if (script === "return redis.call('DEL', KEYS[1])") {
+      const existing = this.purgeIfExpired(keys[0]);
+      this.data.delete(keys[0]);
+      return existing ? 1 : 0;
+    }
+
+    // CAS_UPDATE_LUA
+    if (script.includes("'CONFLICT'")) {
+      const existing = this.purgeIfExpired(keys[0]);
+      if (!existing || existing.type !== 'string') {
+        return ['ERR', 'MISSING'];
+      }
+      if (existing.str !== args[0]) {
+        return ['ERR', 'CONFLICT'];
+      }
+      this.data.set(keys[0], { type: 'string', str: args[1] });
+      return ['OK'];
+    }
+
+    // INIT_SUPER_ADMIN_ATOMIC_LUA
     if (script.includes("redis.call('EXISTS', KEYS[1]) == 1")) {
       const key = keys[0];
       const existing = this.purgeIfExpired(key);
@@ -208,6 +245,9 @@ class MockUpstashRedisServer {
         return ['ERR', 'EXISTS'];
       }
       this.data.set(key, { type: 'string', str: args[0] });
+      if (keys[1]) {
+        this.data.delete(keys[1]);
+      }
       return ['OK'];
     }
 
@@ -379,6 +419,41 @@ const resendHarness = createResendAndFetchHarness(realFetch);
 await redis.start();
 
 const PROD_SECRET = 'pqguide-test-hmac-secret-32-chars-minimum-value';
+const PROD_TOTP_KEY = 'pqguide-test-totp-aes256-encryption-key-32chars!';
+const testCookieJar = new Map<string, string>();
+const capturedSetCookies: string[] = [];
+
+function recordSetCookieHeaders(res: Response): void {
+  const getSetCookieFn = (
+    res.headers as unknown as { getSetCookie?: () => string[] }
+  ).getSetCookie;
+  const rawList =
+    typeof getSetCookieFn === 'function'
+      ? getSetCookieFn.call(res.headers)
+      : res.headers.get('set-cookie')
+        ? [res.headers.get('set-cookie') as string]
+        : [];
+  for (const header of rawList) {
+    capturedSetCookies.push(header);
+    const firstSemi = header.indexOf(';');
+    const kvPart = firstSemi === -1 ? header : header.slice(0, firstSemi);
+    const eq = kvPart.indexOf('=');
+    if (eq <= 0) continue;
+    const name = kvPart.slice(0, eq).trim();
+    const val = kvPart.slice(eq + 1).trim();
+    if (/max-age=0/i.test(header) || !val) {
+      testCookieJar.delete(name);
+    } else {
+      testCookieJar.set(name, val);
+    }
+  }
+}
+
+function buildCookieHeaderFromJar(): string {
+  return Array.from(testCookieJar.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join('; ');
+}
 
 function buildProdEnv(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -386,6 +461,8 @@ function buildProdEnv(overrides: Record<string, string | undefined> = {}) {
     RESEND_API_KEY: 're_test_live_key_secret',
     EMAIL_FROM: 'PQGuide <onboarding@resend.dev>',
     OTP_HMAC_SECRET: PROD_SECRET,
+    TOTP_ENCRYPTION_KEY: PROD_TOTP_KEY,
+    SUPER_ADMIN_BOOTSTRAP_EMAIL: 'pqguide@gmail.com',
     UPSTASH_REDIS_REST_URL: redis.url,
     UPSTASH_REDIS_REST_TOKEN: redis.token,
     ...overrides,
@@ -418,12 +495,21 @@ async function startTestAppServer(
 
 let activeServerBaseUrl = '';
 
-// Route relative /api/* fetches from authService to the active Express server
+// Route relative /api/* fetches from authService to the active Express server with cookie jar emulation
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   if (url.startsWith('/api/')) {
     assert.ok(activeServerBaseUrl, 'activeServerBaseUrl must be set before calling /api/*');
-    return realFetch(`${activeServerBaseUrl}${url}`, init);
+    const headers = new Headers(init?.headers);
+    if (init?.credentials === 'include' && !headers.has('cookie') && testCookieJar.size > 0) {
+      headers.set('Cookie', buildCookieHeaderFromJar());
+    }
+    const res = await realFetch(`${activeServerBaseUrl}${url}`, {
+      ...init,
+      headers,
+    });
+    recordSetCookieHeaders(res);
+    return res;
   }
   return realFetch(input, init);
 }) as typeof fetch;
@@ -441,6 +527,8 @@ describe('Mocked Unit & Integration Tests (No External Network)', () => {
     redis.clear();
     resendHarness.capturedEmails.length = 0;
     resendHarness.setThrowNetworkError(false);
+    testCookieJar.clear();
+    capturedSetCookies.length = 0;
     mockLocalStorage.clear();
     mockSessionStorage.clear();
     process.env.NODE_ENV = 'test-dev-bootstrap';
@@ -1448,6 +1536,9 @@ test('15. Vercel API routes, vercel.json, .gitignore, and .env.example satisfy d
     'OTP_HMAC_SECRET=',
     'UPSTASH_REDIS_REST_URL=',
     'UPSTASH_REDIS_REST_TOKEN=',
+    'SUPER_ADMIN_SETUP_SECRET=',
+    'SUPER_ADMIN_BOOTSTRAP_EMAIL=',
+    'TOTP_ENCRYPTION_KEY=',
   ]) {
     assert.ok(envExample.includes(requiredKey), `.env.example missing ${requiredKey}`);
   }
@@ -2024,49 +2115,71 @@ test('22. Archive starts with zero fake users/telemetry, strips legacy demo/seed
 });
 
 // ---------------------------------------------------------------------------
-// 23. Production server-side Super Admin init, auth, session verify, & reset
+// 23. Hardened Super Admin one-time init (setup secret, mandatory bootstrap email, email OTP, TOTP enrollment, AES-256-GCM encryption, recovery codes, atomic lock)
 // ---------------------------------------------------------------------------
-test('23. Production Super Admin enforces one-time setup secret, atomic Redis lock, HMAC session verification, and password reset', async () => {
-  // Confirm Vercel handler exports exist
+test('23. Production Super Admin requires setup secret, mandatory bootstrap email, email OTP, encrypted TOTP enrollment, recovery codes, and atomic lock', async () => {
   for (const h of [
     saStatusHandler,
+    saInitOtpHandler,
+    saInitVerifyOtpHandler,
     saInitHandler,
     saLoginHandler,
+    saVerifyTotpHandler,
     saSessionHandler,
+    saLogoutHandler,
+    saLogoutAllHandler,
     saForgotHandler,
     saResetPasswordHandler,
   ]) {
     assert.equal(typeof h, 'function');
   }
 
-  // Missing SUPER_ADMIN_SETUP_SECRET -> setupConfigured false, init returns 503
-  const unconfiguredSrv = await startTestAppServer({});
-  try {
-    const stRes = await realFetch(`${unconfiguredSrv.baseUrl}/api/auth/super-admin/status`);
-    assert.equal(stRes.status, 200);
-    const stJson = (await stRes.json()) as { setupConfigured: boolean; initialized: boolean };
-    assert.equal(stJson.setupConfigured, false);
-    assert.equal(stJson.initialized, false);
+  const SETUP_SECRET = 'pqguide-prod-sa-setup-key-32-chars!';
 
-    const blockedInit = await realFetch(`${unconfiguredSrv.baseUrl}/api/auth/super-admin/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fullName: 'Lead Admin',
-        email: 'pqguide@gmail.com',
-        setupSecret: 'some-random-secret-key-1234',
-        password: 'SuperPassword123',
-        confirmPassword: 'SuperPassword123',
-        confirmationPhrase: 'INITIALIZE SUPER ADMIN',
-      }),
-    });
-    assert.equal(blockedInit.status, 503);
-  } finally {
-    await unconfiguredSrv.close();
+  // 1. Missing any mandatory production variable -> setupConfigured false and init endpoints fail 503
+  const missingConfigs: Array<{ name: string; env: Record<string, string | undefined> }> = [
+    { name: 'missing SUPER_ADMIN_SETUP_SECRET', env: { SUPER_ADMIN_SETUP_SECRET: undefined } },
+    {
+      name: 'missing SUPER_ADMIN_BOOTSTRAP_EMAIL',
+      env: { SUPER_ADMIN_SETUP_SECRET: SETUP_SECRET, SUPER_ADMIN_BOOTSTRAP_EMAIL: undefined },
+    },
+    {
+      name: 'missing TOTP_ENCRYPTION_KEY',
+      env: { SUPER_ADMIN_SETUP_SECRET: SETUP_SECRET, TOTP_ENCRYPTION_KEY: undefined },
+    },
+    {
+      name: 'short TOTP_ENCRYPTION_KEY',
+      env: { SUPER_ADMIN_SETUP_SECRET: SETUP_SECRET, TOTP_ENCRYPTION_KEY: 'too-short' },
+    },
+  ];
+  for (const tc of missingConfigs) {
+    const unconfiguredSrv = await startTestAppServer(tc.env);
+    try {
+      const stRes = await realFetch(`${unconfiguredSrv.baseUrl}/api/auth/super-admin/status`);
+      assert.equal(stRes.status, 200, tc.name);
+      const stJson = (await stRes.json()) as {
+        setupConfigured: boolean;
+        initialized: boolean;
+        bootstrapEmailRequired: boolean;
+      };
+      assert.equal(stJson.setupConfigured, false, tc.name);
+      assert.equal(stJson.initialized, false, tc.name);
+      assert.equal(stJson.bootstrapEmailRequired, true, tc.name);
+
+      const otpGate = await realFetch(`${unconfiguredSrv.baseUrl}/api/auth/super-admin/init-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-For': '198.51.100.44',
+        },
+        body: JSON.stringify({ email: 'pqguide@gmail.com', setupSecret: SETUP_SECRET }),
+      });
+      assert.equal(otpGate.status, 503, tc.name);
+    } finally {
+      await unconfiguredSrv.close();
+    }
   }
 
-  // With SUPER_ADMIN_SETUP_SECRET + optional SUPER_ADMIN_BOOTSTRAP_EMAIL
-  const SETUP_SECRET = 'pqguide-prod-sa-setup-key-32-chars!';
   const srv = await startTestAppServer({
     SUPER_ADMIN_SETUP_SECRET: SETUP_SECRET,
     SUPER_ADMIN_BOOTSTRAP_EMAIL: 'pqguide@gmail.com',
@@ -2078,36 +2191,89 @@ test('23. Production Super Admin enforces one-time setup secret, atomic Redis lo
     assert.equal(stBefore.setupConfigured, true);
     assert.equal(stBefore.initialized, false);
     assert.equal(stBefore.emailLockedToConfigured, true);
+    assert.equal(stBefore.totpEncryptionConfigured, true);
+    assert.equal(stBefore.bootstrapEmailRequired, true);
 
-    // Wrong setup secret -> 403
-    const badSecret = await authService.initializeProductionSuperAdmin({
-      fullName: 'Lead Admin',
+    // 2. Wrong setup secret or mismatched bootstrap email cannot trigger OTP
+    const badSecretOtp = await authService.requestSuperAdminInitOtp({
       email: 'pqguide@gmail.com',
       setupSecret: 'wrong-setup-secret-key-value',
-      password: 'SuperPassword123',
-      confirmPassword: 'SuperPassword123',
-      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
     });
-    assert.equal(badSecret.ok, false);
-    assert.match(badSecret.error ?? '', /authorization key/i);
+    assert.equal(badSecretOtp.ok, false);
+    assert.match(badSecretOtp.error ?? '', /authorization key/i);
 
-    // Unallowlisted email -> 403
-    const badEmail = await authService.initializeProductionSuperAdmin({
-      fullName: 'Lead Admin',
+    const wrongEmailOtp = await authService.requestSuperAdminInitOtp({
       email: 'attacker@example.com',
       setupSecret: SETUP_SECRET,
+    });
+    assert.equal(wrongEmailOtp.ok, false);
+    assert.match(wrongEmailOtp.error ?? '', /not authorized/i);
+    assert.equal(resendHarness.capturedEmails.length, 0);
+
+    // 3. Cannot finalize init directly without verified email OTP & TOTP
+    const skipOtpInit = await authService.initializeProductionSuperAdmin({
+      fullName: 'Platform Owner',
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+      enrollmentToken: 'forged-token-without-otp',
+      totpCode: '123456',
       password: 'SuperPassword123',
       confirmPassword: 'SuperPassword123',
       confirmationPhrase: 'INITIALIZE SUPER ADMIN',
     });
-    assert.equal(badEmail.ok, false);
-    assert.match(badEmail.error ?? '', /not authorized/i);
+    assert.equal(skipOtpInit.ok, false);
 
-    // Valid one-time init -> 200
+    // 4. Authorized email receives setup OTP via Resend
+    const sentOtp = await authService.requestSuperAdminInitOtp({
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+    });
+    assert.equal(sentOtp.ok, true);
+    assert.equal(sentOtp.data?.verificationCode, undefined);
+    assert.equal(resendHarness.capturedEmails.length, 1);
+    const setupOtpCode = resendHarness.capturedEmails[0].code;
+
+    // Verify setup OTP -> receives enrollmentToken, otpauthUri, and manualSecret
+    const verifiedOtp = await authService.verifySuperAdminInitOtp({
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+      code: setupOtpCode,
+    });
+    assert.equal(verifiedOtp.ok, true);
+    const enrollment = verifiedOtp.data!;
+    assert.ok(enrollment.enrollmentToken.length >= 32);
+    assert.match(enrollment.otpauthUri, /^otpauth:\/\/totp\/PQGuide/i);
+    assert.ok(enrollment.manualSecret.length >= 16);
+
+    // Pending init record in Redis must encrypt TOTP secret with AES-256-GCM (never store plaintext)
+    const pendingRedisDump = JSON.stringify(redis.snapshotKeys());
+    assert.equal(pendingRedisDump.includes(enrollment.manualSecret), false);
+    assert.equal(pendingRedisDump.includes('aes-256-gcm'), true);
+
+    // Wrong TOTP code during enrollment is rejected cleanly without completing init
+    const wrongTotpCode =
+      generateTotpCode(enrollment.manualSecret, virtualNow) === '000000' ? '111111' : '000000';
+    const badTotpInit = await authService.initializeProductionSuperAdmin({
+      fullName: 'Platform Owner',
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+      enrollmentToken: enrollment.enrollmentToken,
+      totpCode: wrongTotpCode,
+      password: 'SuperPassword123',
+      confirmPassword: 'SuperPassword123',
+      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+    });
+    assert.equal(badTotpInit.ok, false);
+    assert.match(badTotpInit.error ?? '', /Invalid 6-digit authenticator code/i);
+
+    // 5. Valid TOTP code completes atomic initialization, sets HttpOnly cookie, and returns 10 recovery codes
+    const validTotp = generateTotpCode(enrollment.manualSecret, virtualNow);
     const initialized = await authService.initializeProductionSuperAdmin({
       fullName: 'Platform Owner',
       email: 'pqguide@gmail.com',
       setupSecret: SETUP_SECRET,
+      enrollmentToken: enrollment.enrollmentToken,
+      totpCode: validTotp,
       password: 'SuperPassword123',
       confirmPassword: 'SuperPassword123',
       confirmationPhrase: 'INITIALIZE SUPER ADMIN',
@@ -2116,34 +2282,43 @@ test('23. Production Super Admin enforces one-time setup secret, atomic Redis lo
     assert.equal(initialized.ok, true);
     assert.equal(initialized.data?.account.role, 'super_admin');
     assert.equal(initialized.data?.account.email, 'pqguide@gmail.com');
+    assert.equal(initialized.data?.recoveryCodes.length, 10);
+    for (const rc of initialized.data!.recoveryCodes) {
+      assert.match(rc, /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    }
 
-    // Never expose setup secret or raw password in Redis
+    // Verify HttpOnly; SameSite=Lax; Secure cookie issued, and nothing sensitive saved in localStorage/sessionStorage
+    assert.ok(capturedSetCookies.some((c) => /pqguide_sa_sid=/.test(c) && /HttpOnly/i.test(c) && /SameSite=Lax/i.test(c) && /Secure/i.test(c)));
+    assert.equal(mockLocalStorage.getItem('pqguide_sa_session_v1'), null);
+    assert.equal(mockSessionStorage.getItem('pqguide_sa_session_v1'), null);
+
+    // Redis never exposes setup secret, raw password, plaintext TOTP secret, or plaintext recovery codes
     const redisDump = JSON.stringify(redis.snapshotKeys());
     assert.equal(redisDump.includes(SETUP_SECRET), false);
     assert.equal(redisDump.includes('SuperPassword123'), false);
+    assert.equal(redisDump.includes(enrollment.manualSecret), false);
+    for (const rc of initialized.data!.recoveryCodes) {
+      assert.equal(redisDump.includes(rc.replace(/-/g, '')), false);
+    }
+    assert.equal(redisDump.includes('pqguide:sa:pending_init'), false);
 
-    // Server session verifies valid HMAC token
+    // Server session verifies cookie cleanly
     const sessionCheck = await authService.verifyServerSuperAdminSession();
     assert.equal(sessionCheck.verified, true);
     assert.equal(sessionCheck.account?.email, 'pqguide@gmail.com');
 
-    // Sign out, then confirm status shows initialized & second init is permanently locked (409)
-    authService.clearActiveSession(initialized.data?.account, 'manual');
+    // 6. Sign out and verify second init / init-otp attempts are permanently locked (409)
+    await authService.logoutSuperAdminServer(initialized.data?.account, 'manual');
     const stAfter = await authService.getSuperAdminInitStatus();
     assert.equal(stAfter.initialized, true);
 
-    const secondInit = await authService.initializeProductionSuperAdmin({
-      fullName: 'Second Owner',
+    const secondOtp = await authService.requestSuperAdminInitOtp({
       email: 'pqguide@gmail.com',
       setupSecret: SETUP_SECRET,
-      password: 'SuperPassword123',
-      confirmPassword: 'SuperPassword123',
-      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
     });
-    assert.equal(secondInit.ok, false);
-    assert.match(secondInit.error ?? '', /already been initialized/i);
+    assert.equal(secondOtp.ok, false);
+    assert.match(secondOtp.error ?? '', /already been initialized/i);
 
-    // Concurrent raw init calls also fail cleanly with 409
     const dupHttp = await realFetch(`${srv.baseUrl}/api/auth/super-admin/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2151,6 +2326,8 @@ test('23. Production Super Admin enforces one-time setup secret, atomic Redis lo
         fullName: 'Race Owner',
         email: 'pqguide@gmail.com',
         setupSecret: SETUP_SECRET,
+        enrollmentToken: enrollment.enrollmentToken,
+        totpCode: validTotp,
         password: 'SuperPassword123',
         confirmPassword: 'SuperPassword123',
         confirmationPhrase: 'INITIALIZE SUPER ADMIN',
@@ -2158,36 +2335,215 @@ test('23. Production Super Admin enforces one-time setup secret, atomic Redis lo
     });
     assert.equal(dupHttp.status, 409);
 
-    // Wrong password rejected (401), correct password succeeds
-    const badLogin = await authService.signinWithPortal(
+    // Wrong TOTP encryption key fails decryption cleanly on another server instance
+    const wrongKeySrv = await startTestAppServer({
+      SUPER_ADMIN_SETUP_SECRET: SETUP_SECRET,
+      SUPER_ADMIN_BOOTSTRAP_EMAIL: 'pqguide@gmail.com',
+      TOTP_ENCRYPTION_KEY: 'different-wrong-totp-key-minimum-32-chars!',
+    });
+    try {
+      const loginStep = await realFetch(`${wrongKeySrv.baseUrl}/api/auth/super-admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'pqguide@gmail.com', password: 'SuperPassword123' }),
+      });
+      const loginPayload = (await loginStep.json()) as { mfaToken: string };
+      const decryptFail = await realFetch(`${wrongKeySrv.baseUrl}/api/auth/super-admin/verify-totp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfaToken: loginPayload.mfaToken, code: validTotp }),
+      });
+      assert.equal(decryptFail.status, 503);
+    } finally {
+      await wrongKeySrv.close();
+    }
+  } finally {
+    await srv.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 24. Super Admin 2FA login, replay/rate-limit defenses, recovery, reset, CSRF & multi-device revocation
+// ---------------------------------------------------------------------------
+test('24. Super Admin enforces 2FA login, TOTP anti-replay, recovery codes, password reset 2FA lock, CSRF, logout-all, and student/admin isolation', async () => {
+  const SETUP_SECRET = 'pqguide-prod-sa-setup-key-32-chars!';
+  const srv = await startTestAppServer({
+    SUPER_ADMIN_SETUP_SECRET: SETUP_SECRET,
+    SUPER_ADMIN_BOOTSTRAP_EMAIL: 'pqguide@gmail.com',
+  });
+  activeServerBaseUrl = srv.baseUrl;
+
+  try {
+    // Initialize Super Admin via full workflow
+    await authService.requestSuperAdminInitOtp({
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+    });
+    const initCode = resendHarness.capturedEmails[0].code;
+    const verifiedInit = await authService.verifySuperAdminInitOtp({
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+      code: initCode,
+    });
+    const totpSecret = verifiedInit.data!.manualSecret;
+    const initTotp = generateTotpCode(totpSecret, virtualNow);
+    const initRes = await authService.initializeProductionSuperAdmin({
+      fullName: 'Lead Super',
+      email: 'pqguide@gmail.com',
+      setupSecret: SETUP_SECRET,
+      enrollmentToken: verifiedInit.data!.enrollmentToken,
+      totpCode: initTotp,
+      password: 'SuperPassword123',
+      confirmPassword: 'SuperPassword123',
+      confirmationPhrase: 'INITIALIZE SUPER ADMIN',
+    });
+    assert.equal(initRes.ok, true);
+    const recoveryCodes = initRes.data!.recoveryCodes;
+    await authService.logoutSuperAdminServer(initRes.data!.account, 'manual');
+    assert.equal(testCookieJar.size, 0);
+
+    // 1. Direct signinWithPortal cannot bypass Super Admin 2FA
+    const directBypass = await authService.signinWithPortal(
       'super_admin',
       'pqguide@gmail.com',
-      'WrongPassword123'
+      'SuperPassword123'
     );
-    assert.equal(badLogin.ok, false);
+    assert.equal(directBypass.ok, false);
+    assert.match(directBypass.error ?? '', /two-factor/i);
 
-    const goodLogin = await authService.signinWithPortal(
-      'super_admin',
-      'pqguide@gmail.com',
-      'SuperPassword123',
-      true
-    );
-    assert.equal(goodLogin.ok, true);
-    assert.equal(goodLogin.data?.account.role, 'super_admin');
+    // 2. Step 1 login rate limits repeated wrong passwords
+    for (let i = 0; i < 8; i += 1) {
+      const wrongPw = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'WrongPass123');
+      assert.equal(wrongPw.ok, false);
+    }
+    const pwRateLimited = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'WrongPass123');
+    assert.equal(pwRateLimited.ok, false);
+    assert.match(pwRateLimited.error ?? '', /too many failed password attempts/i);
 
-    // Forged / tampered Bearer token is rejected (401)
-    const forgedCheck = await realFetch(`${srv.baseUrl}/api/auth/super-admin/session`, {
+    // Advance past 15-minute password fail window
+    virtualNow += 16 * 60 * 1000;
+
+    // Valid password returns mfaToken ONLY (no session cookie yet)
+    capturedSetCookies.length = 0;
+    const step1 = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'SuperPassword123', true);
+    assert.equal(step1.ok, true);
+    assert.equal(step1.data?.requiresTotp, true);
+    const mfaToken = step1.data?.mfaToken ?? '';
+    assert.ok(mfaToken.length >= 32);
+    assert.equal(testCookieJar.size, 0);
+    assert.equal(authService.getActiveSession(), null);
+
+    // Wrong TOTP fails 5 times & locks mfaToken
+    const badCode = generateTotpCode(totpSecret, virtualNow) === '123456' ? '654321' : '123456';
+    for (let i = 0; i < 5; i += 1) {
+      const badTotp = await authService.verifySuperAdminTotp({
+        mfaToken,
+        totpCode: badCode,
+      });
+      assert.equal(badTotp.ok, false);
+    }
+    // Even valid TOTP on locked mfaToken is rejected
+    const afterMfaLock = await authService.verifySuperAdminTotp({
+      mfaToken,
+      totpCode: generateTotpCode(totpSecret, virtualNow),
+    });
+    assert.equal(afterMfaLock.ok, false);
+
+    // Re-authenticate Step 1 and verify with valid TOTP -> sets HttpOnly cookie
+    const step1b = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'SuperPassword123', true);
+    const validTotpStep = generateTotpCode(totpSecret, virtualNow);
+    const step2 = await authService.verifySuperAdminTotp({
+      mfaToken: step1b.data!.mfaToken!,
+      totpCode: validTotpStep,
+      rememberMe: true,
+    });
+    assert.equal(step2.ok, true);
+    assert.equal(step2.data?.account.role, 'super_admin');
+    assert.ok(testCookieJar.has('pqguide_sa_sid'));
+
+    // Replaying same mfaToken is rejected
+    const replayMfa = await authService.verifySuperAdminTotp({
+      mfaToken: step1b.data!.mfaToken!,
+      totpCode: validTotpStep,
+    });
+    assert.equal(replayMfa.ok, false);
+
+    // Replaying the same TOTP code within the same 30s step on a new login is rejected
+    const deviceACookie = buildCookieHeaderFromJar();
+    const step1Replay = await realFetch(`${srv.baseUrl}/api/auth/super-admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'pqguide@gmail.com', password: 'SuperPassword123' }),
+    });
+    const step1ReplayJson = (await step1Replay.json()) as { mfaToken: string };
+    const replayTotpAttempt = await realFetch(`${srv.baseUrl}/api/auth/super-admin/verify-totp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mfaToken: step1ReplayJson.mfaToken, code: validTotpStep }),
+    });
+    assert.equal(replayTotpAttempt.status, 401);
+
+    // Advancing 30s yields next valid TOTP -> succeeds & creates second independent device cookie
+    virtualNow += 30_000;
+    const devBLogin = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'SuperPassword123', true);
+    testCookieJar.clear();
+    const devBVerify = await authService.verifySuperAdminTotp({
+      mfaToken: devBLogin.data!.mfaToken!,
+      totpCode: generateTotpCode(totpSecret, virtualNow),
+      rememberMe: true,
+    });
+    assert.equal(devBVerify.ok, true);
+    const deviceBCookie = buildCookieHeaderFromJar();
+    assert.notEqual(deviceACookie, deviceBCookie);
+
+    // 3. CSRF protection on state-changing endpoints & forged session/role defense
+    const devASessionCheck = await realFetch(`${srv.baseUrl}/api/auth/super-admin/session`, {
+      method: 'GET',
+      headers: { Cookie: deviceACookie },
+    });
+    assert.equal(devASessionCheck.status, 200);
+    const devASessionJson = (await devASessionCheck.json()) as { csrfToken: string };
+
+    // Missing or wrong X-CSRF-Token on /logout is rejected 403
+    const missingCsrfLogout = await realFetch(`${srv.baseUrl}/api/auth/super-admin/logout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: deviceACookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(missingCsrfLogout.status, 403);
+
+    // Cross-site Sec-Fetch-Site or mismatched Origin is rejected 403
+    const crossSiteRes = await realFetch(`${srv.baseUrl}/api/auth/super-admin/logout`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: 'Bearer forged.token',
+        Cookie: deviceACookie,
+        'X-CSRF-Token': devASessionJson.csrfToken,
+        'Sec-Fetch-Site': 'cross-site',
       },
       body: JSON.stringify({}),
     });
-    assert.equal(forgedCheck.status, 401);
+    assert.equal(crossSiteRes.status, 403);
 
-    // Tampering localStorage role to super_admin in non-dev mode without server token is rejected
-    authService.clearActiveSession(goodLogin.data?.account, 'manual');
+    const badOriginRes = await realFetch(`${srv.baseUrl}/api/auth/super-admin/logout`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'https://evil.example.com',
+        Cookie: deviceACookie,
+        'X-CSRF-Token': devASessionJson.csrfToken,
+      },
+      body: JSON.stringify({}),
+    });
+    assert.equal(badOriginRes.status, 403);
+
+    // Forged cookie and localStorage tampering rejected
+    const forgedCookieRes = await realFetch(`${srv.baseUrl}/api/auth/super-admin/session`, {
+      method: 'GET',
+      headers: { Cookie: 'pqguide_sa_sid=forged.session.id' },
+    });
+    assert.equal(forgedCookieRes.status, 401);
+
     mockLocalStorage.setItem(
       'pqguide_student_accounts_v1',
       JSON.stringify([
@@ -2208,6 +2564,19 @@ test('23. Production Super Admin enforces one-time setup secret, atomic Redis lo
         },
       ])
     );
+    await authService.logoutSuperAdminServer(devBVerify.data!.account, 'manual');
+    // Re-login Device B so we can test logout-all against Device A
+    virtualNow += 30_000;
+    const devBLogin2 = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'SuperPassword123', true);
+    const devBVerify2 = await authService.verifySuperAdminTotp({
+      mfaToken: devBLogin2.data!.mfaToken!,
+      totpCode: generateTotpCode(totpSecret, virtualNow),
+      rememberMe: true,
+    });
+    assert.equal(devBVerify2.ok, true);
+
+    // Ordinary student / localStorage tampering cannot grant Super Admin session when memory session is absent
+    const saMemBackup = devBVerify2.data!.account;
     authService.saveActiveSession(
       {
         id: 'forged-stu',
@@ -2223,34 +2592,106 @@ test('23. Production Super Admin enforces one-time setup secret, atomic Redis lo
       },
       true
     );
+    // Note: saveActiveSession does NOT populate superAdminMemorySession; let's verify unauthorized student localStorage session rejects when saMem cleared
+    // Trigger logout-all from Device B -> revokes BOTH Device B AND Device A immediately!
+    const logoutAllRes = await authService.logoutAllSuperAdminDevices(saMemBackup);
+    assert.equal(logoutAllRes.ok, true);
     assert.equal(authService.getActiveSession(), null);
 
-    // Server-backed Super Admin OTP forgot password + reset flow
+    // Device A cookie is now rejected (401) due to sessionVersion increment
+    const devAAfterLogoutAll = await realFetch(`${srv.baseUrl}/api/auth/super-admin/session`, {
+      method: 'GET',
+      headers: { Cookie: deviceACookie },
+    });
+    assert.equal(devAAfterLogoutAll.status, 401);
+
+    // 4. Single-use recovery code works once for login and cannot be reused
+    const rcLogin1 = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'SuperPassword123');
+    const rcVerify1 = await authService.verifySuperAdminTotp({
+      mfaToken: rcLogin1.data!.mfaToken!,
+      recoveryCode: recoveryCodes[0],
+    });
+    assert.equal(rcVerify1.ok, true);
+    await authService.logoutSuperAdminServer(rcVerify1.data!.account, 'manual');
+
+    const rcLogin2 = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'SuperPassword123');
+    const rcReuse = await authService.verifySuperAdminTotp({
+      mfaToken: rcLogin2.data!.mfaToken!,
+      recoveryCode: recoveryCodes[0],
+    });
+    assert.equal(rcReuse.ok, false);
+    assert.match(rcReuse.error ?? '', /invalid or already used recovery code/i);
+
+    // 5. Password reset requires BOTH verified email OTP AND TOTP/recovery code (email OTP alone blocked)
+    virtualNow += 60_000;
     const forgotRes = await authService.requestPasswordReset('pqguide@gmail.com', 'super_admin');
     assert.equal(forgotRes.ok, true);
-    const resetOtp = resendHarness.capturedEmails[0].code;
+    const resetOtp = resendHarness.capturedEmails[resendHarness.capturedEmails.length - 1].code;
     const verifyReset = await authService.verifyResetCode('pqguide@gmail.com', resetOtp);
     assert.equal(verifyReset.ok, true);
+    const resetToken = verifyReset.data!.resetToken!;
+
+    // Email OTP alone without TOTP/recovery code MUST be rejected
+    const otpOnlyReset = await authService.completePasswordReset(
+      'pqguide@gmail.com',
+      'NewSuperPass456',
+      'NewSuperPass456',
+      resetToken
+    );
+    assert.equal(otpOnlyReset.ok, false);
+    assert.match(otpOnlyReset.error ?? '', /2fa|authenticator|recovery/i);
+
+    // Providing BOTH resetToken + valid TOTP completes reset cleanly
     const completedReset = await authService.completePasswordReset(
       'pqguide@gmail.com',
       'NewSuperPass456',
       'NewSuperPass456',
-      verifyReset.data!.resetToken!
+      resetToken,
+      { totpCode: generateTotpCode(totpSecret, virtualNow) }
     );
     assert.equal(completedReset.ok, true);
 
-    const oldPwLogin = await authService.signinWithPortal(
-      'super_admin',
-      'pqguide@gmail.com',
-      'SuperPassword123'
-    );
+    // Old password rejected, new password + next TOTP succeeds
+    const oldPwLogin = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'SuperPassword123');
     assert.equal(oldPwLogin.ok, false);
-    const newPwLogin = await authService.signinWithPortal(
-      'super_admin',
-      'pqguide@gmail.com',
-      'NewSuperPass456'
-    );
+
+    virtualNow += 30_000;
+    const newPwLogin = await authService.beginSuperAdminLogin('pqguide@gmail.com', 'NewSuperPass456');
     assert.equal(newPwLogin.ok, true);
+    const newPwTotp = await authService.verifySuperAdminTotp({
+      mfaToken: newPwLogin.data!.mfaToken!,
+      totpCode: generateTotpCode(totpSecret, virtualNow),
+    });
+    assert.equal(newPwTotp.ok, true);
+
+    // 6. Ordinary student signup & login remains intact and cannot access Super Admin functionality
+    await authService.logoutSuperAdminServer(newPwTotp.data!.account, 'manual');
+    const stuSignup = await authService.startSignup({
+      fullName: 'Ada Student',
+      matricNumber: '230404888',
+      faculty: 'Science',
+      department: 'Computer Science',
+      email: 'ada.student@gmail.com',
+      password: 'Password123',
+      confirmPassword: 'Password123',
+    });
+    assert.equal(stuSignup.ok, true);
+    const stuOtp = resendHarness.capturedEmails[resendHarness.capturedEmails.length - 1].code;
+    const stuVerify = await authService.verifySignupCode('ada.student@gmail.com', stuOtp);
+    assert.equal(stuVerify.ok, true);
+    assert.equal(stuVerify.data?.account.role, 'student');
+
+    // Student cannot invoke Super Admin session, logout, init, or elevate role
+    const stuSessionRes = await realFetch(`${srv.baseUrl}/api/auth/super-admin/session`, {
+      method: 'GET',
+    });
+    assert.equal(stuSessionRes.status, 401);
+    const stuAdminAction = await authService.createSchoolAdminAccount(stuVerify.data!.account, {
+      fullName: 'Illegal Admin',
+      email: 'illegal@aaua.edu.ng',
+      schoolId: 'sch-aaua',
+    });
+    assert.equal(stuAdminAction.ok, false);
   } finally {
     await srv.close();
   }

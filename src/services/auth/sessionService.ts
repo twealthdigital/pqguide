@@ -4,16 +4,24 @@ import { localStore } from '../storage/localStore';
 
 export const SESSION_KEY = 'pqguide_active_session_v2';
 const LEGACY_SESSION_KEY = 'pqguide_active_session_v1';
-const SA_SESSION_KEY = 'pqguide_sa_session_v1';
+const LEGACY_SA_SESSION_KEY = 'pqguide_sa_session_v1';
+export const SA_SESSION_HINT_KEY = 'pqguide_sa_session_hint_v1';
 const SESSION_EXPIRY_NOTICE_KEY = 'pqguide_session_expired_notice_v1';
 export const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
-interface StoredSuperAdminSession {
-  token: string;
+export interface MemorySuperAdminSession {
   account: AuthenticatedUser;
+  csrfToken: string;
   issuedAt: number;
   expiresAt: number;
 }
+
+/**
+ * Super Admin sessions are backed by a server-issued HttpOnly cookie.
+ * Only the non-sensitive user profile and CSRF token are kept strictly in JS memory
+ * (never in localStorage or sessionStorage).
+ */
+let superAdminMemorySession: MemorySuperAdminSession | null = null;
 
 function getSessionStorage(): Storage | null {
   try {
@@ -39,7 +47,6 @@ function readTransientSession(): ActiveSessionRecord | null {
 function writeTransientSession(record: ActiveSessionRecord): void {
   const ss = getSessionStorage();
   if (!ss) {
-    // Fallback cleanly to localStore when sessionStorage is unavailable
     localStore.setJson(SESSION_KEY, record);
     return;
   }
@@ -55,7 +62,8 @@ function clearTransientSession(): void {
   if (!ss) return;
   try {
     ss.removeItem(SESSION_KEY);
-    ss.removeItem(SA_SESSION_KEY);
+    ss.removeItem(LEGACY_SA_SESSION_KEY);
+    ss.removeItem(SA_SESSION_HINT_KEY);
   } catch {
     // Ignore storage removal errors
   }
@@ -92,28 +100,6 @@ function isValidRecord(parsed: ActiveSessionRecord | null): parsed is ActiveSess
   );
 }
 
-function isValidSuperAdminSession(
-  parsed: StoredSuperAdminSession | null
-): parsed is StoredSuperAdminSession {
-  return Boolean(
-    parsed &&
-      typeof parsed.token === 'string' &&
-      parsed.token.length > 20 &&
-      parsed.account &&
-      typeof parsed.account.id === 'string' &&
-      parsed.account.role === 'super_admin' &&
-      typeof parsed.expiresAt === 'number'
-  );
-}
-
-/**
- * Stores ONLY opaque session reference + expiration timestamps.
- * Never persists password hashes, salts, or unverified role overrides.
- *
- * When `rememberMe` is true (default), persists in localStorage up to 12 hours;
- * when false, stores in sessionStorage so closing the browser tab/window ends the session,
- * while still enforcing the 12-hour TTL.
- */
 export const sessionService = {
   createSession(userId: string, rememberMe = true): ActiveSessionRecord {
     const now = Date.now();
@@ -140,80 +126,83 @@ export const sessionService = {
       writeTransientSession(record);
     }
     localStore.removeItem(LEGACY_SESSION_KEY);
+    localStore.removeItem(LEGACY_SA_SESSION_KEY);
     this.consumeExpiredNotice();
     return record;
   },
 
-  saveSuperAdminSession(
+  setSuperAdminMemorySession(
     account: AuthenticatedUser,
-    token: string,
+    csrfToken: string,
     rememberMe = false
   ): void {
     const now = Date.now();
-    const cleanAccount: AuthenticatedUser = {
-      ...account,
-      role: 'super_admin',
-    };
-    const payload: StoredSuperAdminSession = {
-      token,
-      account: cleanAccount,
+    superAdminMemorySession = {
+      account: {
+        ...account,
+        role: 'super_admin',
+      },
+      csrfToken,
       issuedAt: now,
       expiresAt: now + SESSION_TTL_MS,
     };
+    localStore.removeItem(LEGACY_SA_SESSION_KEY);
     const ss = getSessionStorage();
     if (rememberMe || !ss) {
-      localStore.setJson(SA_SESSION_KEY, payload);
+      localStore.setItem(SA_SESSION_HINT_KEY, '1');
       if (ss) {
         try {
-          ss.removeItem(SA_SESSION_KEY);
+          ss.removeItem(SA_SESSION_HINT_KEY);
+          ss.removeItem(LEGACY_SA_SESSION_KEY);
         } catch {
           // Ignore
         }
       }
     } else {
-      localStore.removeItem(SA_SESSION_KEY);
+      localStore.removeItem(SA_SESSION_HINT_KEY);
       try {
-        ss.setItem(SA_SESSION_KEY, JSON.stringify(payload));
+        ss.setItem(SA_SESSION_HINT_KEY, '1');
+        ss.removeItem(LEGACY_SA_SESSION_KEY);
       } catch {
-        localStore.setJson(SA_SESSION_KEY, payload);
+        localStore.setItem(SA_SESSION_HINT_KEY, '1');
       }
     }
   },
 
-  readSuperAdminSession(): StoredSuperAdminSession | null {
-    const ss = getSessionStorage();
-    let transient: StoredSuperAdminSession | null = null;
-    if (ss) {
-      try {
-        transient = safeParseJson<StoredSuperAdminSession>(ss.getItem(SA_SESSION_KEY));
-      } catch {
-        transient = null;
-      }
-    }
-    const persistent = localStore.getJson<StoredSuperAdminSession>(SA_SESSION_KEY);
-    const parsed = isValidSuperAdminSession(transient)
-      ? transient
-      : isValidSuperAdminSession(persistent)
-        ? persistent
-        : null;
-    if (!parsed) return null;
-    if (Date.now() > parsed.expiresAt) {
-      this.clearSuperAdminSession();
+  readSuperAdminMemorySession(): MemorySuperAdminSession | null {
+    if (!superAdminMemorySession) return null;
+    if (Date.now() > superAdminMemorySession.expiresAt) {
+      superAdminMemorySession = null;
       return null;
     }
-    return parsed;
+    return superAdminMemorySession;
   },
 
-  readSuperAdminToken(): string | null {
-    return this.readSuperAdminSession()?.token ?? null;
+  readSuperAdminCsrfToken(): string | null {
+    return this.readSuperAdminMemorySession()?.csrfToken ?? null;
+  },
+
+  hasSuperAdminSessionHint(): boolean {
+    const ss = getSessionStorage();
+    if (ss) {
+      try {
+        if (ss.getItem(SA_SESSION_HINT_KEY) === '1') return true;
+      } catch {
+        // Ignore
+      }
+    }
+    return localStore.getItem(SA_SESSION_HINT_KEY) === '1';
   },
 
   clearSuperAdminSession(): void {
-    localStore.removeItem(SA_SESSION_KEY);
+    superAdminMemorySession = null;
+    localStore.removeItem(LEGACY_SA_SESSION_KEY);
+    localStore.removeItem(SA_SESSION_HINT_KEY);
     const ss = getSessionStorage();
     if (ss) {
       try {
-        ss.removeItem(SA_SESSION_KEY);
+        ss.removeItem(LEGACY_SA_SESSION_KEY);
+        ss.removeItem(SA_SESSION_HINT_KEY);
       } catch {
         // Ignore
       }
@@ -240,8 +229,12 @@ export const sessionService = {
   },
 
   getSessionRemainingMs(): number | null {
+    const saMem = this.readSuperAdminMemorySession();
     const session = this.readSession();
-    if (!session) return null;
+    if (saMem && (!session || saMem.expiresAt <= session.expiresAt)) {
+      return Math.max(0, saMem.expiresAt - Date.now());
+    }
+    if (!session) return saMem ? Math.max(0, saMem.expiresAt - Date.now()) : null;
     return Math.max(0, session.expiresAt - Date.now());
   },
 

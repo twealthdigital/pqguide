@@ -1,12 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import {
   ArrowLeft,
+  Check,
   CheckCircle2,
+  Copy,
+  KeyRound,
   Lock,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
+  Smartphone,
 } from 'lucide-react';
+import type { AuthenticatedUser } from '../../core/types';
 import {
   authService,
   evaluatePasswordStrength,
@@ -23,7 +29,10 @@ import type { AuthView, PortalAuthProps } from './types';
 
 type SuperAdminActionKey =
   | 'signin'
+  | 'totp_verify'
   | 'dev_bootstrap'
+  | 'prod_init_otp'
+  | 'prod_verify_otp'
   | 'prod_setup'
   | 'dev_reset'
   | 'resend_code'
@@ -31,8 +40,15 @@ type SuperAdminActionKey =
   | 'forgot_verify'
   | 'forgot_save';
 
+type ProdSetupStep =
+  | 'request_otp'
+  | 'verify_otp'
+  | 'totp_and_password'
+  | 'recovery_codes';
+
 const ALLOWED_SUPER_ADMIN_VIEWS = new Set<AuthView>([
   'signin',
+  'super_admin_totp',
   'forgot_request',
   'forgot_verify',
   'forgot_reset',
@@ -62,10 +78,14 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
-  // Sign-in state
+  // Sign-in + 2FA state
   const [signinEmail, setSigninEmail] = useState('');
   const [signinPassword, setSigninPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+  const [pendingMfaToken, setPendingMfaToken] = useState('');
+  const [loginUseRecoveryCode, setLoginUseRecoveryCode] = useState(false);
+  const [loginTotpCode, setLoginTotpCode] = useState('');
+  const [loginRecoveryCode, setLoginRecoveryCode] = useState('');
 
   // Dev-only bootstrap state
   const [devBootstrapAvailable, setDevBootstrapAvailable] = useState(() =>
@@ -77,14 +97,28 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
   const [devPassword, setDevPassword] = useState('');
   const [devConfirmPassword, setDevConfirmPassword] = useState('');
   const [devConfirmPhrase, setDevConfirmPhrase] = useState('');
+  const [showDevResetBox, setShowDevResetBox] = useState(false);
+  const [devResetPhrase, setDevResetPhrase] = useState('');
+
+  // Production multi-step init state
+  const [prodStep, setProdStep] = useState<ProdSetupStep>('request_otp');
   const [prodFullName, setProdFullName] = useState('');
   const [prodEmail, setProdEmail] = useState('');
   const [prodSetupSecret, setProdSetupSecret] = useState('');
+  const [prodInitOtpCode, setProdInitOtpCode] = useState('');
+  const [prodInitDeliveryMode, setProdInitDeliveryMode] = useState<'email' | 'preview'>('email');
+  const [prodInitPreviewCode, setProdInitPreviewCode] = useState('');
+  const [prodEnrollmentToken, setProdEnrollmentToken] = useState('');
+  const [prodManualSecret, setProdManualSecret] = useState('');
+  const [prodQrDataUrl, setProdQrDataUrl] = useState('');
+  const [prodTotpCode, setProdTotpCode] = useState('');
   const [prodPassword, setProdPassword] = useState('');
   const [prodConfirmPassword, setProdConfirmPassword] = useState('');
   const [prodConfirmPhrase, setProdConfirmPhrase] = useState('');
-  const [showDevResetBox, setShowDevResetBox] = useState(false);
-  const [devResetPhrase, setDevResetPhrase] = useState('');
+  const [initializedAccount, setInitializedAccount] = useState<AuthenticatedUser | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [recoverySavedConfirmed, setRecoverySavedConfirmed] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<'secret' | 'recovery' | null>(null);
 
   // Recovery state
   const [pendingEmail, setPendingEmail] = useState('');
@@ -96,6 +130,9 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
   const [pendingResetToken, setPendingResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [resetUseRecoveryCode, setResetUseRecoveryCode] = useState(false);
+  const [resetTotpCode, setResetTotpCode] = useState('');
+  const [resetRecoveryCode, setResetRecoveryCode] = useState('');
 
   const timersRef = useRef<number[]>([]);
   const mountedRef = useRef(true);
@@ -139,6 +176,10 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
   }, [resendCooldown]);
 
   useEffect(() => {
+    if (view === 'super_admin_totp' && !pendingMfaToken) {
+      onSwitchView('signin', { replace: true });
+      return;
+    }
     if (view === 'forgot_verify' && !pendingEmail) {
       onSwitchView('forgot_request', { replace: true });
       return;
@@ -146,7 +187,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     if (view === 'forgot_reset' && (!pendingEmail || !pendingResetToken)) {
       onSwitchView(pendingEmail ? 'forgot_verify' : 'forgot_request', { replace: true });
     }
-  }, [onSwitchView, pendingEmail, pendingResetToken, view]);
+  }, [onSwitchView, pendingEmail, pendingMfaToken, pendingResetToken, view]);
 
   const scheduleDelay = (ms: number) =>
     new Promise<void>((resolve) => {
@@ -168,6 +209,17 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     setErrorMsg(null);
     setInfoMsg(null);
     onGoBack(fallback);
+  };
+
+  const handleCopyText = async (text: string, which: 'secret' | 'recovery') => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(which);
+      const id = window.setTimeout(() => setCopiedKey(null), 1800);
+      timersRef.current.push(id);
+    } catch {
+      // Clipboard restricted
+    }
   };
 
   const devPwReport = useMemo(
@@ -202,10 +254,10 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     devPassword === devConfirmPassword &&
     devConfirmPhrase.trim().toUpperCase() === 'INITIALIZE SUPER ADMIN';
 
-  const isProdSetupFormValid =
+  const isProdFinalizeFormValid =
     prodFullName.trim().length >= 2 &&
-    validateEmailAddress(prodEmail) &&
-    prodSetupSecret.trim().length >= 16 &&
+    prodEnrollmentToken.length > 10 &&
+    /^\d{6}$/.test(prodTotpCode.replace(/\s+/g, '')) &&
     prodPwReport.meetsMinimum &&
     prodPassword === prodConfirmPassword &&
     prodConfirmPhrase.trim().toUpperCase() === 'INITIALIZE SUPER ADMIN';
@@ -220,8 +272,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     await scheduleDelay(420);
     if (!mountedRef.current) return;
 
-    const result = await authService.signinWithPortal(
-      'super_admin',
+    const result = await authService.beginSuperAdminLogin(
       signinEmail,
       signinPassword,
       rememberMe
@@ -234,8 +285,61 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
       return;
     }
 
+    if (result.data.requiresTotp && result.data.mfaToken) {
+      setPendingMfaToken(result.data.mfaToken);
+      setLoginUseRecoveryCode(false);
+      setLoginTotpCode('');
+      setLoginRecoveryCode('');
+      setActiveAction(null);
+      setInfoMsg('Password verified. Enter the 6-digit code from your authenticator app.');
+      navigateView('super_admin_totp', true);
+      return;
+    }
+
+    if (!result.data.account) {
+      setActiveAction(null);
+      setErrorMsg('Authentication could not be completed.');
+      return;
+    }
+
     setActiveAction(null);
     setSuccessAction('signin');
+    await scheduleDelay(420);
+    if (!mountedRef.current) return;
+
+    setSuccessAction(null);
+    onAuthenticated(result.data.account, rememberMe);
+  };
+
+  const handleTotpLoginVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setActiveAction('totp_verify');
+
+    await scheduleDelay(380);
+    if (!mountedRef.current) return;
+
+    const result = await authService.verifySuperAdminTotp({
+      mfaToken: pendingMfaToken,
+      ...(loginUseRecoveryCode
+        ? { recoveryCode: loginRecoveryCode }
+        : { totpCode: loginTotpCode }),
+      rememberMe,
+    });
+    if (!mountedRef.current) return;
+
+    if (!result.ok || !result.data) {
+      setActiveAction(null);
+      setErrorMsg(result.error ?? 'Invalid authenticator verification code.');
+      return;
+    }
+
+    setPendingMfaToken('');
+    setLoginTotpCode('');
+    setLoginRecoveryCode('');
+    setActiveAction(null);
+    setSuccessAction('totp_verify');
     await scheduleDelay(420);
     if (!mountedRef.current) return;
 
@@ -279,6 +383,84 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     onAuthenticated(result.data.account, rememberMe);
   };
 
+  const handleProdSendInitOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setInfoMsg(null);
+    setActiveAction('prod_init_otp');
+
+    await scheduleDelay(380);
+    if (!mountedRef.current) return;
+
+    const res = await authService.requestSuperAdminInitOtp({
+      email: prodEmail,
+      setupSecret: prodSetupSecret,
+    });
+    if (!mountedRef.current) return;
+
+    if (!res.ok || !res.data) {
+      setActiveAction(null);
+      if (res.retryAfterSeconds) setResendCooldown(res.retryAfterSeconds);
+      setErrorMsg(res.error ?? 'Could not send setup verification email.');
+      return;
+    }
+
+    setActiveAction(null);
+    setProdInitDeliveryMode(res.data.deliveryMode);
+    setProdInitPreviewCode(res.data.verificationCode ?? '');
+    setProdInitOtpCode('');
+    setResendCooldown(res.data.cooldownSeconds ?? 30);
+    setProdStep('verify_otp');
+    setInfoMsg(
+      res.data.deliveryMode === 'email'
+        ? `6-digit setup verification code emailed to ${res.data.email}.`
+        : `6-digit setup verification code prepared for ${res.data.email}.`
+    );
+  };
+
+  const handleProdVerifyInitOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isBusy) return;
+    setErrorMsg(null);
+    setActiveAction('prod_verify_otp');
+
+    await scheduleDelay(380);
+    if (!mountedRef.current) return;
+
+    const res = await authService.verifySuperAdminInitOtp({
+      email: prodEmail,
+      setupSecret: prodSetupSecret,
+      code: prodInitOtpCode,
+    });
+    if (!mountedRef.current) return;
+
+    if (!res.ok || !res.data) {
+      setActiveAction(null);
+      setErrorMsg(res.error ?? 'Could not verify setup email code.');
+      return;
+    }
+
+    let qrUrl = '';
+    try {
+      qrUrl = await QRCode.toDataURL(res.data.otpauthUri, {
+        width: 220,
+        margin: 2,
+      });
+    } catch {
+      qrUrl = '';
+    }
+    if (!mountedRef.current) return;
+
+    setProdEnrollmentToken(res.data.enrollmentToken);
+    setProdManualSecret(res.data.manualSecret);
+    setProdQrDataUrl(qrUrl);
+    setProdTotpCode('');
+    setActiveAction(null);
+    setProdStep('totp_and_password');
+    setInfoMsg('Email verified. Scan the QR code with your authenticator app, then set your password.');
+  };
+
   const handleProdSetupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isBusy) return;
@@ -293,6 +475,8 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
       fullName: prodFullName,
       email: prodEmail,
       setupSecret: prodSetupSecret,
+      enrollmentToken: prodEnrollmentToken,
+      totpCode: prodTotpCode,
       password: prodPassword,
       confirmPassword: prodConfirmPassword,
       confirmationPhrase: prodConfirmPhrase,
@@ -307,13 +491,24 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     }
 
     setServerStatus((prev) => (prev ? { ...prev, initialized: true } : prev));
+    setInitializedAccount(result.data.account);
+    setRecoveryCodes(result.data.recoveryCodes);
+    setRecoverySavedConfirmed(false);
+    setProdSetupSecret('');
+    setProdPassword('');
+    setProdConfirmPassword('');
+    setProdManualSecret('');
+    setProdQrDataUrl('');
     setActiveAction(null);
-    setSuccessAction('prod_setup');
-    await scheduleDelay(450);
-    if (!mountedRef.current) return;
+    setProdStep('recovery_codes');
+  };
 
-    setSuccessAction(null);
-    onAuthenticated(result.data.account, rememberMe);
+  const handleEnterControlRoomAfterInit = () => {
+    if (!initializedAccount || !recoverySavedConfirmed) return;
+    const targetAccount = initializedAccount;
+    setInitializedAccount(null);
+    setRecoveryCodes([]);
+    onAuthenticated(targetAccount, rememberMe);
   };
 
   const handleDevResetSubmit = async (e: React.FormEvent) => {
@@ -411,7 +606,10 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     setSuccessAction(null);
     setNewPassword('');
     setConfirmNewPassword('');
-    setInfoMsg('Security code verified. Set a strong new Super Admin password.');
+    setResetTotpCode('');
+    setResetRecoveryCode('');
+    setResetUseRecoveryCode(false);
+    setInfoMsg('Email code verified. Confirm with your authenticator code or a single-use recovery code.');
     navigateView('forgot_reset', true);
   };
 
@@ -428,7 +626,10 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
       pendingEmail,
       newPassword,
       confirmNewPassword,
-      pendingResetToken
+      pendingResetToken,
+      resetUseRecoveryCode
+        ? { recoveryCode: resetRecoveryCode }
+        : { totpCode: resetTotpCode }
     );
     if (!mountedRef.current) return;
 
@@ -439,6 +640,8 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
     }
 
     setPendingResetToken('');
+    setResetTotpCode('');
+    setResetRecoveryCode('');
     setActiveAction(null);
     setSuccessAction('forgot_save');
     setSigninEmail(result.data.identifier);
@@ -489,29 +692,54 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
 
   const headingMap: Record<string, string> = {
     signin: 'Super Admin Console',
+    super_admin_totp: 'Two-Factor Verification',
     forgot_request: 'Super Admin Recovery',
     forgot_verify: 'Verify Security Code',
     forgot_reset: 'Set New Super Admin Password',
     forgot_success: 'Console Password Updated',
     dev_super_admin_setup: 'Dev Super Admin Bootstrap',
-    super_admin_setup: 'Initialize Super Admin',
+    super_admin_setup:
+      prodStep === 'recovery_codes'
+        ? 'Save Recovery Codes'
+        : 'Initialize Super Admin',
   };
 
   const subheadingMap: Record<string, string> = {
     signin: 'Restricted platform control authentication. Enter your registered Super Admin credentials.',
+    super_admin_totp: 'Confirm sign-in using your authenticator app or a single-use recovery code.',
     forgot_request: 'Enter the registered Super Admin email to initiate recovery verification.',
     forgot_verify: `Enter the 6-digit verification code sent to ${pendingEmail}.`,
-    forgot_reset: 'Create a 10+ character password containing uppercase, lowercase, and numbers.',
+    forgot_reset: 'Confirm with 2FA and set a strong 10+ character password.',
     forgot_success: 'Your Super Admin password has been reset successfully.',
     dev_super_admin_setup: 'Development-only one-time initialization for the first local Super Admin account.',
-    super_admin_setup: 'One-time server-authorized setup for the first Super Admin account.',
+    super_admin_setup:
+      prodStep === 'request_otp'
+        ? 'Step 1 of 3 · Verify server authorization key and send email OTP.'
+        : prodStep === 'verify_otp'
+          ? 'Step 2 of 3 · Enter the 6-digit code emailed to your configured bootstrap address.'
+          : prodStep === 'totp_and_password'
+            ? 'Step 3 of 3 · Enroll authenticator 2FA and set your console password.'
+            : 'Store these single-use recovery codes safely. They are shown only once.',
   };
 
   const handleTopBack = () => {
-    if (view === 'forgot_reset') navigateBack('forgot_verify');
+    if (view === 'super_admin_totp') {
+      setPendingMfaToken('');
+      navigateBack('signin');
+    } else if (view === 'super_admin_setup' && prodStep === 'verify_otp') {
+      setProdStep('request_otp');
+      setErrorMsg(null);
+    } else if (view === 'super_admin_setup' && prodStep === 'totp_and_password') {
+      setProdStep('verify_otp');
+      setErrorMsg(null);
+    } else if (view === 'forgot_reset') navigateBack('forgot_verify');
     else if (view === 'forgot_verify') navigateBack('forgot_request');
     else navigateBack('signin');
   };
+
+  const isResetFactorReady = resetUseRecoveryCode
+    ? resetRecoveryCode.replace(/[^a-zA-Z0-9]/g, '').length >= 10
+    : /^\d{6}$/.test(resetTotpCode.replace(/\s+/g, ''));
 
   return (
     <AuthPortalShell
@@ -519,10 +747,12 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
       portalTagTone="super_admin"
       brandHeadline="PQGuide Control Room"
       brandDescription="Platform-wide governance, university administration, moderation audits, broadcasts, and payment verification."
-      brandFooter="Authorized Super Administrator access only · Public registration & social login disabled."
+      brandFooter="Protected by Email OTP + Authenticator TOTP 2FA · Public registration disabled."
       heading={headingMap[view] ?? 'Super Admin Console'}
       subheading={subheadingMap[view] ?? ''}
-      showBackButton={view !== 'signin'}
+      showBackButton={
+        view !== 'signin' && !(view === 'super_admin_setup' && prodStep === 'recovery_codes')
+      }
       onBackClick={handleTopBack}
       disableBack={isBusy}
       errorMsg={errorMsg}
@@ -536,7 +766,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
           <div className="rounded-2xl bg-[#1D1E23] text-white px-4 py-3 flex items-start gap-2.5 text-xs">
             <Lock className="w-4 h-4 text-[#C3C7D2] shrink-0 mt-0.5" />
             <p className="text-[#D4D7E0] leading-relaxed">
-              Privileged governance gateway. Only verified Super Admin credentials provisioned for this console are accepted.
+              Privileged governance gateway. Authenticator 2FA is mandatory for all production Super Admin sessions.
             </p>
           </div>
 
@@ -593,7 +823,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
                 className="h-4 w-4 rounded border-[#1A1B20]/30 accent-[#1D1E23] cursor-pointer"
               />
               <span className="text-xs font-medium text-[#505460]">
-                Remember console session across tab reloads (max 12 hours)
+                Keep console session active across reloads (max 12 hours)
               </span>
             </label>
 
@@ -608,7 +838,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
               successLabel="Console Unlocked!"
               disabled={isBusy}
             >
-              Authenticate Super Admin
+              Continue to 2FA Verification
             </TactileButton>
           </form>
 
@@ -618,7 +848,10 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
               {serverStatus.setupConfigured ? (
                 <button
                   type="button"
-                  onClick={() => navigateView('super_admin_setup')}
+                  onClick={() => {
+                    setProdStep('request_otp');
+                    navigateView('super_admin_setup');
+                  }}
                   className="w-full min-h-[44px] rounded-2xl border border-[#1A1B20]/12 bg-[#F6F7F9] hover:bg-[#ECEEF3] px-3.5 py-2.5 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -628,7 +861,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
                         First-Time Setup: Initialize Super Admin
                       </p>
                       <p className="text-[11px] text-[#686C78] truncate">
-                        Requires server setup key · Locks permanently after initialization
+                        Requires setup key, email OTP, and authenticator QR setup
                       </p>
                     </div>
                   </div>
@@ -636,11 +869,19 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
               ) : (
                 !(import.meta.env.DEV && IS_DEV_BOOTSTRAP_ENV) && (
                   <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3.5 py-2.5 text-[11px] text-[#505460] leading-relaxed">
-                    No Super Admin has been initialized yet. Add{' '}
+                    No Super Admin has been initialized yet. Configure{' '}
                     <span className="font-mono-tabular font-semibold text-[#1A1B20]">
                       SUPER_ADMIN_SETUP_SECRET
+                    </span>
+                    ,{' '}
+                    <span className="font-mono-tabular font-semibold text-[#1A1B20]">
+                      SUPER_ADMIN_BOOTSTRAP_EMAIL
+                    </span>
+                    , and{' '}
+                    <span className="font-mono-tabular font-semibold text-[#1A1B20]">
+                      TOTP_ENCRYPTION_KEY
                     </span>{' '}
-                    in your server environment variables to unlock one-time setup.
+                    in server environment variables to unlock setup.
                   </div>
                 )
               )}
@@ -717,17 +958,101 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
         </div>
       )}
 
-      {/* SERVER-AUTHORIZED ONE-TIME SUPER ADMIN SETUP */}
-      {view === 'super_admin_setup' && (
-        <div className="space-y-4 page-enter">
-          <div className="rounded-2xl bg-[#1D1E23] text-white px-4 py-3 text-xs leading-relaxed">
-            <p className="font-bold">One-Time Server-Authorized Initialization</p>
-            <p className="mt-0.5 text-[#D4D7E0]">
-              Protected by your server setup key. Once completed, this initialization endpoint permanently locks.
+      {/* LOGIN: AUTHENTICATOR TOTP / RECOVERY STEP */}
+      {view === 'super_admin_totp' && (
+        <form onSubmit={handleTotpLoginVerify} className="space-y-4 page-enter" noValidate>
+          <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-4 py-3 flex items-start gap-2.5 text-xs text-[#505460]">
+            <Smartphone className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              {loginUseRecoveryCode
+                ? 'Enter one unused 12-character single-use recovery code from your initialization sheet.'
+                : 'Open Google Authenticator or your TOTP app and enter the current 6-digit PQGuide code.'}
             </p>
           </div>
 
-          {serverStatus?.initialized ? (
+          {!loginUseRecoveryCode ? (
+            <div>
+              <label
+                htmlFor="sa-login-totp"
+                className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+              >
+                6-Digit Authenticator Code
+              </label>
+              <input
+                id="sa-login-totp"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                disabled={isBusy}
+                value={loginTotpCode}
+                onChange={(e) => setLoginTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="000000"
+                className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-center font-mono-tabular text-lg tracking-[0.35em] text-[#1A1B20]"
+              />
+            </div>
+          ) : (
+            <div>
+              <label
+                htmlFor="sa-login-recovery"
+                className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+              >
+                Single-Use Recovery Code
+              </label>
+              <input
+                id="sa-login-recovery"
+                type="text"
+                autoComplete="off"
+                disabled={isBusy}
+                value={loginRecoveryCode}
+                onChange={(e) => setLoginRecoveryCode(e.target.value.toUpperCase())}
+                placeholder="XXXX-XXXX-XXXX"
+                className="h-12 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-center font-mono-tabular text-sm tracking-[0.15em] text-[#1A1B20]"
+              />
+            </div>
+          )}
+
+          <div className="text-right">
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => {
+                setErrorMsg(null);
+                setLoginUseRecoveryCode((v) => !v);
+              }}
+              className="text-xs font-semibold text-[#1D1E23] hover:underline underline-offset-4 cursor-pointer"
+            >
+              {loginUseRecoveryCode
+                ? 'Use 6-digit authenticator code instead'
+                : 'Use a single-use recovery code'}
+            </button>
+          </div>
+
+          <TactileButton
+            type="submit"
+            variant="dark"
+            size="lg"
+            fullWidth
+            className="rounded-full"
+            loading={activeAction === 'totp_verify'}
+            success={successAction === 'totp_verify'}
+            successLabel="Console Unlocked!"
+            disabled={
+              isBusy ||
+              (loginUseRecoveryCode
+                ? loginRecoveryCode.replace(/[^a-zA-Z0-9]/g, '').length < 10
+                : loginTotpCode.length !== 6)
+            }
+          >
+            Verify & Unlock Console
+          </TactileButton>
+        </form>
+      )}
+
+      {/* SERVER-AUTHORIZED ONE-TIME SUPER ADMIN SETUP */}
+      {view === 'super_admin_setup' && (
+        <div className="space-y-4 page-enter">
+          {serverStatus?.initialized && prodStep !== 'recovery_codes' ? (
             <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-5 text-center space-y-3">
               <p className="text-sm font-bold text-[#1A1B20]">Setup Permanently Locked</p>
               <p className="text-xs text-[#505460]">
@@ -742,8 +1067,157 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
                 Return to Sign In
               </TactileButton>
             </div>
-          ) : (
+          ) : prodStep === 'request_otp' ? (
+            <form onSubmit={handleProdSendInitOtp} className="space-y-3.5" noValidate>
+              <div className="rounded-2xl bg-[#1D1E23] text-white px-4 py-3 text-xs leading-relaxed">
+                <p className="font-bold">Step 1 · Bootstrap Email & Setup Key</p>
+                <p className="mt-0.5 text-[#D4D7E0]">
+                  We send a 6-digit setup verification code directly to your configured{' '}
+                  <span className="font-mono-tabular">SUPER_ADMIN_BOOTSTRAP_EMAIL</span>.
+                </p>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="prod-sa-email"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                >
+                  Configured Super Admin Bootstrap Email
+                </label>
+                <input
+                  id="prod-sa-email"
+                  type="email"
+                  disabled={isBusy}
+                  value={prodEmail}
+                  onChange={(e) => setProdEmail(e.target.value)}
+                  placeholder="superadmin@pqguide.org"
+                  className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
+                />
+              </div>
+
+              <PasswordField
+                id="prod-sa-setup-secret"
+                label="Server Setup Key (SUPER_ADMIN_SETUP_SECRET)"
+                value={prodSetupSecret}
+                onChange={setProdSetupSecret}
+                placeholder="Enter server setup secret key"
+                disabled={isBusy}
+                autoComplete="off"
+                compact
+              />
+
+              <TactileButton
+                type="submit"
+                variant="dark"
+                size="lg"
+                fullWidth
+                className="rounded-full"
+                loading={activeAction === 'prod_init_otp'}
+                disabled={
+                  isBusy ||
+                  !validateEmailAddress(prodEmail) ||
+                  prodSetupSecret.trim().length < 16
+                }
+              >
+                Send Setup Verification Email
+              </TactileButton>
+            </form>
+          ) : prodStep === 'verify_otp' ? (
+            <form onSubmit={handleProdVerifyInitOtp} className="space-y-4" noValidate>
+              <OtpVerificationStep
+                email={prodEmail.trim().toLowerCase()}
+                otpCode={prodInitOtpCode}
+                onOtpChange={setProdInitOtpCode}
+                previewCode={prodInitPreviewCode}
+                deliveryMode={prodInitDeliveryMode}
+                disabled={isBusy}
+                hasError={Boolean(errorMsg)}
+                changeEmailLabel="Edit setup details"
+                onChangeEmail={() => setProdStep('request_otp')}
+              />
+
+              <TactileButton
+                type="submit"
+                variant="dark"
+                size="lg"
+                fullWidth
+                className="rounded-full"
+                loading={activeAction === 'prod_verify_otp'}
+                disabled={isBusy || prodInitOtpCode.length !== 6}
+              >
+                Verify Email & Generate Authenticator QR
+              </TactileButton>
+
+              <TactileButton
+                type="button"
+                variant="light"
+                size="md"
+                fullWidth
+                className="rounded-full"
+                icon={<RefreshCw className="w-3.5 h-3.5" />}
+                disabled={isBusy || resendCooldown > 0}
+                onClick={handleProdSendInitOtp}
+              >
+                {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend setup code'}
+              </TactileButton>
+            </form>
+          ) : prodStep === 'totp_and_password' ? (
             <form onSubmit={handleProdSetupSubmit} className="space-y-3.5" noValidate>
+              <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-4 space-y-3 text-center">
+                <p className="text-xs font-bold text-[#1A1B20]">
+                  Scan in Google Authenticator / Authy
+                </p>
+                {prodQrDataUrl && (
+                  <img
+                    src={prodQrDataUrl}
+                    alt="Super Admin TOTP enrollment QR code"
+                    className="w-44 h-44 rounded-xl border border-[#1A1B20]/10 bg-white p-2 mx-auto"
+                  />
+                )}
+                <div className="space-y-1">
+                  <p className="text-[11px] text-[#686C78]">Manual setup key</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <code className="px-2.5 py-1 rounded-lg bg-white border border-[#1A1B20]/10 text-xs font-mono-tabular text-[#1A1B20] select-all">
+                      {prodManualSecret}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyText(prodManualSecret, 'secret')}
+                      aria-label="Copy manual authenticator key"
+                      className="h-8 px-2.5 rounded-lg bg-white border border-[#1A1B20]/10 text-xs font-semibold text-[#1A1B20] hover:bg-[#ECEEF3] inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedKey === 'secret' ? (
+                        <Check className="w-3.5 h-3.5 text-[#16A34A]" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>{copiedKey === 'secret' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="prod-sa-totp-code"
+                  className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
+                >
+                  Confirm 6-Digit Authenticator Code
+                </label>
+                <input
+                  id="prod-sa-totp-code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  disabled={isBusy}
+                  value={prodTotpCode}
+                  onChange={(e) => setProdTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000"
+                  className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-center font-mono-tabular text-base tracking-[0.3em] text-[#1A1B20]"
+                />
+              </div>
+
               <div>
                 <label
                   htmlFor="prod-sa-name"
@@ -761,40 +1235,6 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
                   className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
                 />
               </div>
-
-              <div>
-                <label
-                  htmlFor="prod-sa-email"
-                  className="block text-xs font-semibold text-[#1A1B20] mb-1 pl-1"
-                >
-                  Super Admin Email
-                </label>
-                <input
-                  id="prod-sa-email"
-                  type="email"
-                  disabled={isBusy}
-                  value={prodEmail}
-                  onChange={(e) => setProdEmail(e.target.value)}
-                  placeholder="superadmin@pqguide.org"
-                  className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-sm text-[#1A1B20]"
-                />
-                {serverStatus?.emailLockedToConfigured && (
-                  <p className="mt-1 pl-1 text-[11px] text-[#686C78]">
-                    Must match your configured server bootstrap email.
-                  </p>
-                )}
-              </div>
-
-              <PasswordField
-                id="prod-sa-setup-secret"
-                label="Server Setup Key (SUPER_ADMIN_SETUP_SECRET)"
-                value={prodSetupSecret}
-                onChange={setProdSetupSecret}
-                placeholder="Enter server setup secret key"
-                disabled={isBusy}
-                autoComplete="off"
-                compact
-              />
 
               <PasswordField
                 id="prod-sa-password"
@@ -846,26 +1286,88 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
                 fullWidth
                 className="rounded-full"
                 loading={activeAction === 'prod_setup'}
-                success={successAction === 'prod_setup'}
-                successLabel="Super Admin Initialized!"
-                disabled={isBusy || !isProdSetupFormValid}
+                disabled={isBusy || !isProdFinalizeFormValid}
               >
-                Initialize Super Admin
+                Enable 2FA & Initialize Super Admin
               </TactileButton>
             </form>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] p-4 text-xs text-[#92400E] leading-relaxed">
+                <p className="font-bold">Save Your 10 Single-Use Recovery Codes</p>
+                <p className="mt-1">
+                  If you ever lose your authenticator device, each code unlocks one sign-in or password recovery. They cannot be viewed again after leaving this screen.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3.5">
+                {recoveryCodes.map((code) => (
+                  <code
+                    key={code}
+                    className="rounded-lg bg-white border border-[#1A1B20]/10 px-2.5 py-1.5 text-center font-mono-tabular text-xs font-semibold text-[#1A1B20]"
+                  >
+                    {code}
+                  </code>
+                ))}
+              </div>
+
+              <TactileButton
+                type="button"
+                variant="light"
+                size="md"
+                fullWidth
+                className="rounded-full"
+                icon={
+                  copiedKey === 'recovery' ? (
+                    <Check className="w-3.5 h-3.5 text-[#16A34A]" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )
+                }
+                onClick={() => void handleCopyText(recoveryCodes.join('\n'), 'recovery')}
+              >
+                {copiedKey === 'recovery' ? 'Recovery Codes Copied' : 'Copy All Recovery Codes'}
+              </TactileButton>
+
+              <label className="flex items-start gap-2.5 pl-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={recoverySavedConfirmed}
+                  onChange={(e) => setRecoverySavedConfirmed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-[#1A1B20]/30 accent-[#1D1E23] cursor-pointer"
+                />
+                <span className="text-xs font-medium text-[#505460] leading-snug">
+                  I have securely stored these single-use recovery codes offline.
+                </span>
+              </label>
+
+              <TactileButton
+                type="button"
+                variant="dark"
+                size="lg"
+                fullWidth
+                className="rounded-full"
+                disabled={!recoverySavedConfirmed}
+                onClick={handleEnterControlRoomAfterInit}
+              >
+                Enter Super Admin Control Room
+              </TactileButton>
+            </div>
           )}
 
-          <div className="text-center pt-1">
-            <button
-              type="button"
-              disabled={isBusy}
-              onClick={() => navigateBack('signin')}
-              className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back to Super Admin Sign In</span>
-            </button>
-          </div>
+          {prodStep !== 'recovery_codes' && (
+            <div className="text-center pt-1">
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => navigateBack('signin')}
+                className="text-xs font-semibold text-[#686C78] hover:text-[#1A1B20] inline-flex items-center gap-1 cursor-pointer"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Super Admin Sign In</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -875,7 +1377,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
           <div className="rounded-2xl bg-[#FFFBEB] border border-[#FDE68A] px-4 py-3 text-xs text-[#92400E] leading-relaxed">
             <p className="font-bold">Local Development Only — Disabled in Production</p>
             <p className="mt-0.5">
-              Creates your first local Super Admin in browser storage and permanently locks further bootstrap attempts unless local dev data is reset.
+              Creates your first local Super Admin in browser storage and locks further bootstrap attempts unless local dev data is reset.
             </p>
           </div>
 
@@ -1104,9 +1606,74 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
         </form>
       )}
 
-      {/* RECOVERY: NEW PASSWORD */}
+      {/* RECOVERY: NEW PASSWORD + MANDATORY 2FA FACTOR */}
       {view === 'forgot_reset' && (
         <form onSubmit={handleForgotResetSave} className="space-y-4 page-enter" noValidate>
+          <div className="rounded-2xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3.5 py-2.5 flex items-start gap-2.5 text-xs text-[#505460]">
+            <KeyRound className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              Authenticator 2FA or a single-use recovery code is required in addition to your verified email OTP.
+            </p>
+          </div>
+
+          {!resetUseRecoveryCode ? (
+            <div>
+              <label
+                htmlFor="sa-reset-totp"
+                className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+              >
+                6-Digit Authenticator Code
+              </label>
+              <input
+                id="sa-reset-totp"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                disabled={isBusy}
+                value={resetTotpCode}
+                onChange={(e) => setResetTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="000000"
+                className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-center font-mono-tabular text-base tracking-[0.3em] text-[#1A1B20]"
+              />
+            </div>
+          ) : (
+            <div>
+              <label
+                htmlFor="sa-reset-recovery"
+                className="block text-xs font-semibold text-[#1A1B20] mb-1.5 pl-1"
+              >
+                Single-Use Recovery Code
+              </label>
+              <input
+                id="sa-reset-recovery"
+                type="text"
+                autoComplete="off"
+                disabled={isBusy}
+                value={resetRecoveryCode}
+                onChange={(e) => setResetRecoveryCode(e.target.value.toUpperCase())}
+                placeholder="XXXX-XXXX-XXXX"
+                className="h-11 w-full rounded-full border border-[#1A1B20]/15 bg-white px-4 text-center font-mono-tabular text-sm tracking-[0.15em] text-[#1A1B20]"
+              />
+            </div>
+          )}
+
+          <div className="text-right -mt-1">
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() => {
+                setErrorMsg(null);
+                setResetUseRecoveryCode((v) => !v);
+              }}
+              className="text-xs font-semibold text-[#1D1E23] hover:underline underline-offset-4 cursor-pointer"
+            >
+              {resetUseRecoveryCode
+                ? 'Use 6-digit authenticator code instead'
+                : 'Lost authenticator? Use single-use recovery code'}
+            </button>
+          </div>
+
           <PasswordField
             id="super-admin-new-pw"
             label="New Super Admin Password"
@@ -1140,7 +1707,10 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
             success={successAction === 'forgot_save'}
             successLabel="Password Updated!"
             disabled={
-              isBusy || !resetPwReport.meetsMinimum || newPassword !== confirmNewPassword
+              isBusy ||
+              !isResetFactorReady ||
+              !resetPwReport.meetsMinimum ||
+              newPassword !== confirmNewPassword
             }
           >
             Update Super Admin Password
@@ -1164,7 +1734,7 @@ export const SuperAdminAuthPortal: React.FC<PortalAuthProps> = ({
               </div>
             </div>
             <p className="text-xs text-[#166534] leading-relaxed">
-              Your Super Admin credentials have been updated cleanly. Sign in below to enter the Control Room.
+              Your Super Admin credentials have been updated and all prior sessions were revoked. Sign in with your new password and authenticator code.
             </p>
           </div>
 

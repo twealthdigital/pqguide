@@ -14,12 +14,81 @@ export type NodeHttpResponse = ServerResponse & {
 
 const MAX_BODY_BYTES = 64 * 1024;
 
-function sendJson(res: NodeHttpResponse, statusCode: number, data: unknown): void {
+function sendJson(
+  res: NodeHttpResponse,
+  statusCode: number,
+  data: unknown,
+  setCookie?: string
+): void {
+  if (setCookie) {
+    res.setHeader('Set-Cookie', setCookie);
+  }
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'no-store');
   res.statusCode = statusCode;
   res.end(JSON.stringify(data));
+}
+
+function getHeaderSingle(
+  req: NodeHttpRequest,
+  name: string
+): string | undefined {
+  const val = req.headers[name];
+  if (typeof val === 'string') return val.trim();
+  if (Array.isArray(val) && val.length > 0) return val[0]?.trim();
+  return undefined;
+}
+
+function isRequestHttps(req: NodeHttpRequest): boolean {
+  const proto = getHeaderSingle(req, 'x-forwarded-proto');
+  if (proto) {
+    return proto.split(',')[0].trim().toLowerCase() === 'https';
+  }
+  const sock = req.socket as { encrypted?: boolean } | undefined;
+  return Boolean(sock?.encrypted);
+}
+
+function checkSameOriginRequest(req: NodeHttpRequest): { ok: true } | { ok: false; error: string } {
+  const fetchSite = getHeaderSingle(req, 'sec-fetch-site')?.toLowerCase();
+  if (fetchSite === 'cross-site') {
+    return { ok: false, error: 'Cross-site requests are not permitted.' };
+  }
+  const expectedHost = (
+    getHeaderSingle(req, 'x-forwarded-host') ||
+    getHeaderSingle(req, 'host') ||
+    ''
+  )
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+
+  const origin = getHeaderSingle(req, 'origin');
+  if (origin) {
+    try {
+      const parsedOriginHost = new URL(origin).host.toLowerCase();
+      if (!expectedHost || parsedOriginHost !== expectedHost) {
+        return { ok: false, error: 'Origin mismatch rejected.' };
+      }
+    } catch {
+      return { ok: false, error: 'Malformed request origin rejected.' };
+    }
+    return { ok: true };
+  }
+
+  const referer = getHeaderSingle(req, 'referer');
+  if (referer) {
+    try {
+      const parsedRefHost = new URL(referer).host.toLowerCase();
+      if (!expectedHost || parsedRefHost !== expectedHost) {
+        return { ok: false, error: 'Referer mismatch rejected.' };
+      }
+    } catch {
+      return { ok: false, error: 'Malformed request referer rejected.' };
+    }
+  }
+
+  return { ok: true };
 }
 
 function getClientIp(req: NodeHttpRequest): string {
@@ -165,10 +234,64 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
     sendJson(res, result.status, result.body);
   }
 
+  async function handleInitOtp(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+      return;
+    }
+    const result = await engine.sendInitOtp({ body, clientIp: getClientIp(req) });
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleInitVerifyOtp(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+      return;
+    }
+    const result = await engine.verifyInitOtp({ body, clientIp: getClientIp(req) });
+    sendJson(res, result.status, result.body);
+  }
+
   async function handleInit(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
       sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
       return;
     }
     let body: unknown;
@@ -182,14 +305,20 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
     const result = await engine.initializeFirstSuperAdmin({
       body,
       clientIp: getClientIp(req),
+      isHttps: isRequestHttps(req),
     });
-    sendJson(res, result.status, result.body);
+    sendJson(res, result.status, result.body, result.setCookie);
   }
 
   async function handleLogin(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
       sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
       return;
     }
     let body: unknown;
@@ -207,6 +336,33 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
     sendJson(res, result.status, result.body);
   }
 
+  async function handleVerifyTotp(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
+      return;
+    }
+    const result = await engine.verifyTotp({
+      body,
+      clientIp: getClientIp(req),
+      isHttps: isRequestHttps(req),
+    });
+    sendJson(res, result.status, result.body, result.setCookie);
+  }
+
   async function handleVerifySession(
     req: NodeHttpRequest,
     res: NodeHttpResponse
@@ -216,31 +372,60 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
       sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
       return;
     }
-    let body: unknown = {};
-    if (req.method === 'POST') {
-      try {
-        body = await readJsonBody(req);
-      } catch (err) {
-        const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
-        sendJson(res, code, { ok: false, error: 'Invalid request payload.' });
-        return;
-      }
-    }
-    const authHeader =
-      typeof req.headers.authorization === 'string'
-        ? req.headers.authorization
-        : undefined;
     const result = await engine.verifySession({
-      body,
-      authorizationHeader: authHeader,
+      cookieHeader: getHeaderSingle(req, 'cookie'),
+      isHttps: isRequestHttps(req),
     });
-    sendJson(res, result.status, result.body);
+    sendJson(res, result.status, result.body, result.setCookie);
+  }
+
+  async function handleLogout(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    const result = await engine.logoutSession({
+      cookieHeader: getHeaderSingle(req, 'cookie'),
+      csrfTokenHeader: getHeaderSingle(req, 'x-csrf-token'),
+      isHttps: isRequestHttps(req),
+    });
+    sendJson(res, result.status, result.body, result.setCookie);
+  }
+
+  async function handleLogoutAll(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    const result = await engine.logoutAllDevices({
+      cookieHeader: getHeaderSingle(req, 'cookie'),
+      csrfTokenHeader: getHeaderSingle(req, 'x-csrf-token'),
+      isHttps: isRequestHttps(req),
+    });
+    sendJson(res, result.status, result.body, result.setCookie);
   }
 
   async function handleForgot(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.setHeader('Allow', 'POST');
       sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
       return;
     }
     let body: unknown;
@@ -267,6 +452,11 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
       sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
       return;
     }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
     let body: unknown;
     try {
       body = await readJsonBody(req);
@@ -284,9 +474,14 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
 
   return {
     handleStatus,
+    handleInitOtp,
+    handleInitVerifyOtp,
     handleInit,
     handleLogin,
+    handleVerifyTotp,
     handleVerifySession,
+    handleLogout,
+    handleLogoutAll,
     handleForgot,
     handleResetPassword,
   };

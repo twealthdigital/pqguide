@@ -721,6 +721,23 @@ function AppContent() {
     };
   }, []);
 
+  // Hydrate Super Admin HttpOnly cookie session on reload if no in-memory session is present yet
+  useEffect(() => {
+    if (authRef.current) return;
+    const saPortalOrHint =
+      detectAuthPortal() === 'super_admin' || authService.hasSuperAdminSessionHint();
+    if (!saPortalOrHint) return;
+    let active = true;
+    void authService.verifyServerSuperAdminSession().then((res) => {
+      if (active && res.verified && res.account) {
+        setAuthenticatedStudent(res.account);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Watch 12-hour session expiration, cross-tab sign-out, & account status revocation
   useEffect(() => {
     if (!authenticatedStudent) return;
@@ -1535,6 +1552,18 @@ function AppContent() {
     });
   }, [resetSessionLocalState]);
 
+  const handleSignOutAllDevices = useCallback(() => {
+    runNavigationGuard(() => {
+      const current = authRef.current;
+      void authService.logoutAllSuperAdminDevices(current).finally(() => {
+        resetSessionLocalState('super_admin', {
+          tone: 'info',
+          message: 'All active Super Admin sessions have been signed out.',
+        });
+      });
+    });
+  }, [resetSessionLocalState]);
+
   const handleDismissDropIn = useCallback(() => {
     setActiveDropIn(null);
   }, []);
@@ -1655,6 +1684,9 @@ function AppContent() {
       unreadCount={unreadCount}
       student={authenticatedStudent}
       onSignOut={handleSignOut}
+      onSignOutAllDevices={
+        authenticatedStudent.role === 'super_admin' ? handleSignOutAllDevices : undefined
+      }
     >
       <Suspense fallback={<HomeScreenSkeleton />}>
         {activeScreen === 'home' && (
@@ -1783,11 +1815,27 @@ function AppContent() {
 type BootPhase = 'splash' | 'reveal' | 'done';
 
 export default function App() {
-  // Signed-out visitors get the splash. The app mounts underneath it as the
-  // splash starts to fade, so the fade reveals the real first screen.
+  // Signed-out visitors get the splash. For returning Super Admins (HttpOnly cookie),
+  // hydrate server session during initial splash reveal so reload stays signed in seamlessly.
   const [phase, setPhase] = useState<BootPhase>(() =>
     authService.getActiveSession() === null ? 'splash' : 'done'
   );
+
+  useEffect(() => {
+    const shouldCheckCookie =
+      detectAuthPortal() === 'super_admin' || authService.hasSuperAdminSessionHint();
+    if (!shouldCheckCookie || authService.getActiveSession() !== null) return;
+
+    let cancelled = false;
+    void authService.verifyServerSuperAdminSession().then((res) => {
+      if (!cancelled && res.verified && res.account) {
+        setPhase('done');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <>
