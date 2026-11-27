@@ -1893,14 +1893,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   // now added to the hero's own height so the headline/search stay put
                   // while the hero image reaches up behind the header.
                   '--hero-extra': `${
-                    showMarquee ||
-                    (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange)
-                      ? 64 +
-                        (showMarquee ? 46 : 0) +
-                        (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange
-                          ? 50
-                          : 0)
-                      : 0
+                    (showMarquee ? 46 : 0) +
+                    (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange
+                      ? 50
+                      : 0)
                   }px`,
                 } as React.CSSProperties)
               : undefined
@@ -1916,7 +1912,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <div
             className={
               hasBanner
-                ? 'lg:hidden absolute inset-x-4 sm:inset-x-6 top-[calc(64px+env(safe-area-inset-top))] z-30 space-y-3'
+                ? 'lg:hidden fixed inset-x-4 sm:inset-x-6 top-[calc(64px+env(safe-area-inset-top))] z-[35] space-y-3'
                 : 'contents'
             }
           >
