@@ -124,7 +124,7 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
             Back
           </TactileButton>
 
-          <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
+          <h1 className="mt-3.5 font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight leading-[1.1]">
             {courseHeading(doc)}
           </h1>
           <p className="mt-1.5 text-xs text-[#C3C7D2] font-mono-tabular">

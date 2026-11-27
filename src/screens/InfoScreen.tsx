@@ -536,7 +536,7 @@ export const InfoScreen: React.FC<InfoScreenProps> = ({
   return (
     <div className="space-y-5 page-enter lg:mx-auto lg:max-w-3xl">
       <DarkHeaderCard>
-        <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">{header.title}</h1>
+        <h1 className="font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight leading-[1.1]">{header.title}</h1>
         <p className="mt-1.5 text-xs text-[#C3C7D2]">{header.subtitle}</p>
         {page === 'help' && (
           <SearchField

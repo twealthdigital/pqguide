@@ -150,7 +150,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           >
             Back
           </TactileButton>
-          <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
+          <h1 className="mt-3.5 font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight leading-[1.1]">
             {perfCms.overallHeading}
           </h1>
           <p className="mt-1.5 text-xs text-[#C3C7D2]">
@@ -350,7 +350,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           >
             Back to performance
           </TactileButton>
-          <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
+          <h1 className="mt-3.5 font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight leading-[1.1]">
             {rec.courseLabel} · {examTypeBadge(rec.examType)}
           </h1>
           <p className="mt-1.5 text-xs text-[#C3C7D2]">
@@ -657,7 +657,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       <DarkHeaderCard>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="font-display text-xl sm:text-2xl font-bold leading-snug">
+            <h1 className="font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight leading-[1.1]">
               {perfCms.heading}
             </h1>
             <p className="mt-1.5 text-xs text-[#C3C7D2]">

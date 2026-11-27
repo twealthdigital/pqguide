@@ -629,7 +629,7 @@ export const MockExamScreen: React.FC<MockExamScreenProps> = ({
         </TactileButton>
       )}
 
-      <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
+      <h1 className="mt-3.5 font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight leading-[1.1]">
         {phase === 'setup'
           ? setupHeaderTitle
           : phase === 'review'

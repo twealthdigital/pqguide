@@ -138,7 +138,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           )}
         </div>
 
-        <h1 className="mt-3.5 font-display text-xl sm:text-2xl font-bold leading-snug">
+        <h1 className="mt-3.5 font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight leading-[1.1]">
           {isSuperAdminFeed ? 'Platform Activity Alerts' : notifCms.heading}
         </h1>
 

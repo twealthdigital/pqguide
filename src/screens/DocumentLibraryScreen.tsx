@@ -144,7 +144,7 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
               <FolderOpen className="w-4 h-4" />
               <span>Student Document Library</span>
             </span>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold text-white leading-tight">
+            <h1 className="font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight text-white leading-[1.1]">
               Verified Scanned Academic Library
             </h1>
             <p className="text-sm text-[#B8BCC8] max-w-2xl">

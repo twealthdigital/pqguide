@@ -511,7 +511,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
               />
               <span>Document Intelligence Scanner</span>
             </div>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold text-white leading-tight">
+            <h1 className="font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight text-white leading-[1.1]">
               Scan &amp; Verify Academic Documents
             </h1>
             <p className="text-sm text-[#B8BCC8] max-w-2xl">

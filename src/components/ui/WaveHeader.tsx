@@ -181,7 +181,7 @@ export const WaveHeader: React.FC<WaveHeaderProps> = React.memo(
           {/* Foreground Content: Bold Headline + Crisp Integrated Search Bar + Anchored Floating Dropdown */}
           <div className="relative z-30 max-w-2xl">
             <h1
-              className="font-display text-[34px] sm:text-[40px] lg:text-[40px] font-extrabold tracking-tight text-white leading-[1.12]"
+              className="font-display text-[42px] sm:text-[50px] lg:text-[56px] font-extrabold tracking-tight text-white leading-[1.08]"
               style={{ textWrap: 'balance' }}
             >
               {title}

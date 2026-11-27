@@ -99,6 +99,20 @@ function getStudentInitials(fullName: string): string {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
+const DEFAULT_MARQUEE_MESSAGE =
+  'Welcome to PQGuide — free past questions, answers and study materials for every student.';
+const MARQUEE_HEIGHT = 36;
+
+const MarqueeTrack: React.FC<{ message: string }> = ({ message }) => (
+  <div className="animate-marquee-x whitespace-nowrap">
+    {Array.from({ length: 8 }).map((_, i) => (
+      <span key={i} aria-hidden={i > 0 ? true : undefined} className="pr-16">
+        {message}
+      </span>
+    ))}
+  </div>
+);
+
 export const NavigationShell: React.FC<NavigationShellProps> = ({
   activeScreen,
   parentScreen = 'home',
@@ -426,19 +440,26 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const showStudentBottomBar = !isAdminWorkspace;
   const showSubscriptionCta = !isSchoolAdmin && (!isSuperAdmin || effectiveWorkspace === 'student');
 
-  const showMarquee = Boolean(
+  // A Super Admin broadcast wins when one is live for this audience. Otherwise the
+  // notice bar still shows a default welcome message so it is always on screen.
+  const hasAdminBroadcast = Boolean(
     marquee?.enabled &&
       marquee.message.trim() &&
       (marquee.audience === 'all' ||
         (isAdminWorkspace ? marquee.audience === 'admins' : marquee.audience === 'students'))
   );
+  const marqueeMessage = hasAdminBroadcast && marquee
+    ? marquee.message
+    : DEFAULT_MARQUEE_MESSAGE;
+  const showMarquee = true;
 
-  const marqueeToneClass =
-    marquee?.tone === 'urgent'
+  const marqueeToneClass = hasAdminBroadcast
+    ? marquee?.tone === 'urgent'
       ? 'bg-[#B91C1C] text-white'
       : marquee?.tone === 'important'
         ? 'bg-[#92400E] text-white'
-        : 'bg-[#1D1E23] text-white';
+        : 'bg-[#1D1E23] text-white'
+    : 'bg-[#1D1E23] text-white';
 
   // On mobile the hero banner only sits directly under the fixed header when no
   // notice bar / admin bar is pushing it down. Otherwise the header floats over the
@@ -1328,9 +1349,39 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           </div>
         </header>
 
+        {/* Fixed notice bar (mobile/tablet): pinned under the header on every screen */}
+        <div
+          role="region"
+          aria-label="Platform broadcast notice"
+          style={{
+            top: 'calc(3.5rem + env(safe-area-inset-top))',
+            height: MARQUEE_HEIGHT,
+          }}
+          className={`lg:hidden fixed inset-x-0 z-[39] flex items-center gap-2.5 px-4 sm:px-6 text-xs font-semibold overflow-hidden border-t border-white/10 ${marqueeToneClass}`}
+        >
+          <Megaphone className="w-3.5 h-3.5 shrink-0" />
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <MarqueeTrack message={marqueeMessage} />
+          </div>
+        </div>
+
         {/* Desktop 3-Zone Top Bar (Workspace switcher consolidated into sidebar dropdown) */}
+        {/* Fixed notice bar (desktop): stays pinned at the top however the page scrolls */}
+        <div
+          role="region"
+          aria-label="Platform broadcast notice"
+          style={{ height: MARQUEE_HEIGHT }}
+          className={`hidden lg:flex items-center gap-3 px-8 text-xs font-semibold overflow-hidden sticky top-0 z-40 ${marqueeToneClass}`}
+        >
+          <Megaphone className="w-3.5 h-3.5 shrink-0 opacity-90" />
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <MarqueeTrack message={marqueeMessage} />
+          </div>
+        </div>
+
         <header
-          className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky top-0 z-30"
+          style={{ top: MARQUEE_HEIGHT }}
+          className="hidden lg:flex items-center justify-between gap-8 px-8 py-4 bg-white border-b border-[#1A1B20]/[0.06] sticky z-30"
         >
           <nav aria-label="Company links" className="flex items-center gap-7 text-sm font-medium">
             {infoLinks.map((item) => {
@@ -1418,22 +1469,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             </TooltipBubble>
           </div>
         </header>
-
-        {/* Live Super Admin Broadcast Header Marquee (Desktop Top Ribbon) */}
-        {showMarquee && marquee && (
-          <div
-            role="region"
-            aria-label="Platform broadcast notice"
-            className={`hidden lg:flex items-center gap-3 px-8 py-2 text-xs font-semibold overflow-hidden ${marqueeToneClass}`}
-          >
-            <Megaphone className="w-3.5 h-3.5 shrink-0 opacity-90" />
-            <div className="min-w-0 flex-1 overflow-hidden">
-              <div className="animate-marquee-x whitespace-nowrap">
-                {marquee.message}
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Super Admin Preview Return Strip */}
         {isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange && (
@@ -1893,7 +1928,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   // now added to the hero's own height so the headline/search stay put
                   // while the hero image reaches up behind the header.
                   '--hero-extra': `${
-                    (showMarquee ? 46 : 0) +
+                    (showMarquee ? MARQUEE_HEIGHT : 0) +
                     (isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange
                       ? 50
                       : 0)
@@ -1904,7 +1939,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           className={`relative flex-1 w-full mx-auto ${showStudentBottomBar ? 'pb-24' : 'pb-10'} ${
             hasBanner
               ? 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-0 lg:pt-8 lg:pb-8'
-              : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
+              : 'max-w-6xl px-4 sm:px-6 lg:px-8 pt-[calc(68px+36px+env(safe-area-inset-top))] lg:pt-8 lg:pb-8'
           }`}
         >
           {/* Mobile notices: on hero screens they float over the hero image so the image
@@ -1912,28 +1947,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           <div
             className={
               hasBanner
-                ? 'lg:hidden fixed inset-x-4 sm:inset-x-6 top-[calc(64px+env(safe-area-inset-top))] z-[35] space-y-3'
+                ? 'lg:hidden fixed inset-x-4 sm:inset-x-6 top-[calc(64px+36px+env(safe-area-inset-top))] z-[35] space-y-3'
                 : 'contents'
             }
           >
-          {/* Mobile Marquee Banner */}
-          {showMarquee && marquee && (
-            <div
-              role="region"
-              aria-label="Platform broadcast notice"
-              className={`lg:hidden rounded-xl px-3.5 py-2 text-xs font-semibold flex items-center gap-2.5 overflow-hidden ${
-                hasBanner ? 'ring-1 ring-white/10' : 'mb-3'
-              } ${marqueeToneClass}`}
-            >
-              <Megaphone className="w-3.5 h-3.5 shrink-0" />
-              <div className="min-w-0 flex-1 overflow-hidden">
-                <div className="animate-marquee-x whitespace-nowrap">
-                  {marquee.message}
-                </div>
-              </div>
-            </div>
-          )}
-
           {isSuperAdmin && effectiveWorkspace !== 'super_admin' && onWorkspaceModeChange && (
             <div
               className={`lg:hidden rounded-xl bg-[#ECEEF3] border border-[#1A1B20]/10 px-3.5 py-2 flex items-center justify-between gap-2 text-xs ${

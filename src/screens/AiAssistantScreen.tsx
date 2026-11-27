@@ -174,7 +174,7 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({
                 {aiConfigured ? 'Gemini Connected' : 'Grounded Archive Mode'}
               </span>
             </div>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold text-white leading-tight">
+            <h1 className="font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight text-white leading-[1.1]">
               Structured Academic Research &amp; Study Tutor
             </h1>
             <p className="text-sm text-[#B8BCC8] max-w-2xl">
