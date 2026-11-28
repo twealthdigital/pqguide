@@ -237,6 +237,11 @@ export const AUDIT_ACTION_META: Record<AuditActionType, AuditActionMeta> = {
     whatItDoes: 'An uploaded file could not be processed. Only the Super Admin is told about failed uploads.',
     verb: 'had an upload fail',
   },
+  doc_edited: {
+    label: 'Document Edited',
+    whatItDoes: 'Changed the details of an uploaded document. A School Admin edit sends the document back to pending.',
+    verb: 'edited an uploaded document',
+  },
   doc_deleted: {
     label: 'Document Deleted',
     whatItDoes: 'Permanently removed an uploaded document, including any typed copy published to the past questions catalog.',

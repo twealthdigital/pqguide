@@ -161,6 +161,12 @@ export interface AppNotification {
    * written by an admin). These are for admins only and never reach students.
    */
   uploadActivity?: boolean;
+  /**
+   * Explicit recipients chosen by the Super Admin when publishing or updating a
+   * document. When set it overrides `audience` (students only, School Admins only,
+   * or both). The Super Admin always sees everything.
+   */
+  recipients?: DocumentAlertRecipients;
   createdAt: string;
   updatedAt?: string;
   isRead: boolean;
@@ -491,6 +497,7 @@ export type AuditActionType =
   | 'doc_review_rejected'
   | 'doc_resubmission_requested'
   | 'doc_deleted'
+  | 'doc_edited'
   | 'doc_upload_failed'
   | 'dev_data_reset';
 
@@ -502,6 +509,19 @@ export type AcademicDocCategory =
   | 'lecture_note'
   | 'lab_diagram'
   | 'reference';
+
+/** Where a published document appears on the student side. */
+export type DocumentDestination = 'past_question' | 'study_material';
+
+/** Who is alerted when a document is published. */
+export type DocumentAlertRecipients = 'students' | 'school_admins' | 'both';
+
+export interface DocumentPublishOptions {
+  /** `auto` lets the scanner's detected category decide. */
+  destination: 'auto' | DocumentDestination;
+  /** `none` publishes quietly. */
+  notify: DocumentAlertRecipients | 'none';
+}
 
 export type DocumentPipelineDecision =
   | 'auto_approved'
@@ -660,6 +680,8 @@ export interface AcademicDocumentRecord {
   aiFindings?: AiCrossCheckFindings;
   decision: DocumentPipelineDecision;
   publicationStatus: DocumentPublicationStatus;
+  /** Where the live copy appears for students once published. */
+  publishedTo?: DocumentDestination;
   riskLevel: DocumentRiskLevel;
   reviewerId?: string;
   reviewerName?: string;

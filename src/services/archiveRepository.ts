@@ -28,6 +28,8 @@ import type {
   AuthenticatedUser,
   BroadcastAudience,
   ContentStatus,
+  DocumentDestination,
+  DocumentPublishOptions,
   HeaderMarqueeConfig,
   ManagedAccount,
   PastQuestionDoc,
@@ -387,21 +389,28 @@ function buildNewDocumentNotification(args: {
   schoolId: string;
   schoolCode: string;
   exceptUserId?: string;
+  /** Material notices have no past-question page to open. */
+  kind?: DocumentDestination;
+  recipients?: AppNotification['recipients'];
 }): AppNotification {
+  const isMaterial = args.kind === 'study_material';
   return {
     id: `notif-new-${args.docId}`,
     title: `${args.courseCode} was uploaded`,
-    message: `${args.schoolCode} uploaded ${args.session} ${args.semester}.`,
+    message: isMaterial
+      ? `${args.schoolCode} added a new study material.`
+      : `${args.schoolCode} uploaded ${args.session} ${args.semester}.`,
     category: 'upload',
     audience: 'students',
     schoolId: args.schoolId,
     schoolCode: args.schoolCode,
     createdAt: new Date().toISOString(),
     isRead: false,
-    targetDocId: args.docId,
+    targetDocId: isMaterial ? undefined : args.docId,
     approvalStatus: 'approved',
     exceptUserId: args.exceptUserId,
     uploadActivity: true,
+    recipients: args.recipients,
   };
 }
 
@@ -545,6 +554,17 @@ class ArchiveRepository {
     userId?: string
   ): boolean {
     if ((n.approvalStatus ?? 'approved') !== 'approved') return false;
+    if (n.recipients) {
+      // The Super Admin chose exactly who is alerted. It overrides the audience rules.
+      if (n.exceptUserId && n.exceptUserId === userId) return false;
+      if (workspace === 'super_admin') return true;
+      if (n.schoolId && userId) {
+        const me = this.state.accounts.find((a) => a.id === userId);
+        if (me?.schoolId && me.schoolId !== n.schoolId) return false;
+      }
+      if (n.recipients === 'both') return true;
+      return n.recipients === 'students' ? workspace === 'student' : workspace === 'school_admin';
+    }
     if (workspace === 'student' && isUploadActivityNotice(n)) return false;
     if (n.exceptUserId && n.exceptUserId === userId) return false;
     if (n.targetUserId) {
@@ -2317,6 +2337,8 @@ class ArchiveRepository {
       riskLevel: AcademicDocumentRecord['riskLevel'];
       decisionReason?: string;
       parentZipName?: string;
+      /** Replace an existing upload (School Admin "Update") instead of adding a new one. */
+      replaceDocId?: string;
     }
   ): AcademicDocumentRecord {
     this.requirePermission(
@@ -2332,7 +2354,18 @@ class ArchiveRepository {
     const school =
       this.state.schools.find((s) => s.id === requestedSchoolId) ?? this.state.schools[0];
 
-    const duplicate = this.findDocumentBySha256(payload.sha256);
+    const replacing = payload.replaceDocId
+      ? this.state.academicDocuments.find((d) => d.id === payload.replaceDocId)
+      : undefined;
+    if (payload.replaceDocId) {
+      if (!replacing) throw new Error('The document you are updating no longer exists.');
+      if (actor.role !== 'super_admin' && replacing.submittedById !== actor.id) {
+        throw new Error('You can only update your own uploads.');
+      }
+    }
+
+    const foundDuplicate = this.findDocumentBySha256(payload.sha256);
+    const duplicate = foundDuplicate && foundDuplicate.id !== replacing?.id ? foundDuplicate : undefined;
     const now = new Date().toISOString();
 
     let finalDecision = payload.decision;
@@ -2350,7 +2383,8 @@ class ArchiveRepository {
           ? 'flagged'
           : 'pending_review';
 
-    const docId = payload.id || `adoc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const docId =
+      replacing?.id ?? (payload.id || `adoc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
     const record: AcademicDocumentRecord = {
       id: docId,
       title: sanitizeSingleLine(payload.title, 180) || sanitizeSingleLine(payload.originalFileName, 120),
@@ -2431,6 +2465,19 @@ class ArchiveRepository {
       ],
     };
 
+    if (replacing) {
+      // An update keeps the original owner and upload date; it just goes back to pending.
+      Object.assign(record, {
+        submittedById: replacing.submittedById,
+        submittedByName: replacing.submittedByName,
+        submittedByRole: replacing.submittedByRole,
+        submittedAt: replacing.submittedAt,
+        schoolId: replacing.schoolId,
+        schoolCode: replacing.schoolCode,
+      });
+      this.syncCatalogFromAcademicDoc(replacing, true);
+    }
+
     const auditAction: AuditActionType = aiOk ? 'doc_auto_approved' : 'doc_flagged';
     const aiReason = sanitizeSingleLine(
       payload.decisionReason || record.aiFindings?.reason || 'Integrity or AI checks did not pass.',
@@ -2491,8 +2538,11 @@ class ArchiveRepository {
 
       return {
         ...prev,
-        academicDocuments: [record, ...prev.academicDocuments].slice(0, 120),
-        notifications: aiOk ? [submitterNotification, ...prev.notifications] : prev.notifications,
+        academicDocuments: [record, ...prev.academicDocuments.filter((d) => d.id !== docId)].slice(0, 120),
+        notifications:
+          aiOk && actor.role !== 'super_admin'
+            ? [submitterNotification, ...prev.notifications]
+            : prev.notifications,
         auditLogs: [...auditEntries.reverse(), ...prev.auditLogs].slice(0, 300),
       };
     });
@@ -2534,7 +2584,7 @@ class ArchiveRepository {
     actor: AuthenticatedUser | null | undefined,
     docId: string,
     action: 'approve' | 'reject' | 'request_resubmission',
-    options?: { rejectionReason?: string; note?: string }
+    options?: { rejectionReason?: string; note?: string; publish?: DocumentPublishOptions }
   ): AcademicDocumentRecord {
     this.requirePermission(
       actor,
@@ -2614,10 +2664,10 @@ class ArchiveRepository {
           ? 'doc_resubmission_requested'
           : 'doc_review_rejected';
 
-    this.update((prev) => ({
-      ...prev,
-      academicDocuments: prev.academicDocuments.map((d) => (d.id === docId ? updated : d)),
-      notifications: [
+    const uploaderNotice: AppNotification[] =
+      updated.submittedByRole === 'super_admin'
+        ? []
+        : [
         {
           id: `notif-rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           title:
@@ -2635,8 +2685,12 @@ class ArchiveRepository {
           approvalStatus: 'approved' as const,
           uploadActivity: true,
         },
-        ...prev.notifications,
-      ],
+      ];
+
+    this.update((prev) => ({
+      ...prev,
+      academicDocuments: prev.academicDocuments.map((d) => (d.id === docId ? updated : d)),
+      notifications: [...uploaderNotice, ...prev.notifications],
       auditLogs: [
         createAuditEntry(
           actor,
@@ -2652,28 +2706,46 @@ class ArchiveRepository {
       ].slice(0, 300),
     }));
 
-    this.syncCatalogFromAcademicDoc(updated);
+    // Route the document to the right place on the student side (Past Questions or
+    // Materials), based on what the scanner detected unless the Super Admin chose.
+    const destination = this.syncCatalogFromAcademicDoc(
+      updated,
+      false,
+      options?.publish?.destination ?? 'auto'
+    );
+    if (action === 'approve' && destination) {
+      updated.publishedTo = destination;
+      this.update((prev) => ({
+        ...prev,
+        academicDocuments: prev.academicDocuments.map((d) =>
+          d.id === docId ? { ...d, publishedTo: destination } : d
+        ),
+      }));
 
-    // Tell students (and School Admins) once a past question is really live.
-    if (action === 'approve') {
-      const catalogId = `pqdoc-${updated.id}`;
-      const school = this.state.schools.find((s) => s.id === updated.schoolId);
-      const isLive = this.state.documents.some((d) => d.id === catalogId);
-      const alreadyAnnounced = this.state.notifications.some(
-        (n) => n.id === `notif-new-${catalogId}`
-      );
-      if (isLive && !alreadyAnnounced) {
-        const notice = buildNewDocumentNotification({
-          docId: catalogId,
-          courseCode: updated.courseCode,
-          session: updated.session,
-          semester: updated.semester,
-          schoolId: updated.schoolId,
-          schoolCode: school?.code ?? updated.schoolCode,
-          // The uploader already got "was approved" above
-          exceptUserId: updated.submittedById,
-        });
-        this.update((prev) => ({ ...prev, notifications: [notice, ...prev.notifications] }));
+      // Alert only who the Super Admin picked. Default: students.
+      const notify = options?.publish?.notify ?? 'students';
+      if (notify !== 'none') {
+        const catalogId =
+          destination === 'past_question' ? `pqdoc-${updated.id}` : `matdoc-${updated.id}`;
+        const school = this.state.schools.find((s) => s.id === updated.schoolId);
+        const alreadyAnnounced = this.state.notifications.some(
+          (n) => n.id === `notif-new-${catalogId}`
+        );
+        if (!alreadyAnnounced) {
+          const notice = buildNewDocumentNotification({
+            docId: catalogId,
+            courseCode: updated.courseCode,
+            session: updated.session,
+            semester: updated.semester,
+            schoolId: updated.schoolId,
+            schoolCode: school?.code ?? updated.schoolCode,
+            // The uploader already got "was approved" above
+            exceptUserId: updated.submittedById,
+            kind: destination,
+            recipients: notify,
+          });
+          this.update((prev) => ({ ...prev, notifications: [notice, ...prev.notifications] }));
+        }
       }
     }
 
@@ -2681,17 +2753,53 @@ class ArchiveRepository {
   }
 
   /**
-   * Keeps the student Past Questions catalog in step with a scanned document. Only an
-   * approved past question with real numbered questions is published; any other status
-   * (declined, resubmission, deleted) removes its typed copy.
+   * Decides where a published document lives for students. A past question with real
+   * numbered questions goes to Past Questions; everything else (lecture notes, study
+   * material, diagrams, references, or a "past question" with no readable questions)
+   * goes to Materials so nothing published is ever invisible.
    */
-  private syncCatalogFromAcademicDoc(doc: AcademicDocumentRecord, removeOnly = false): void {
+  private resolveDocDestination(
+    doc: AcademicDocumentRecord,
+    preferred: 'auto' | DocumentDestination = 'auto'
+  ): DocumentDestination {
+    const wantsPastQuestion =
+      preferred === 'past_question' || (preferred === 'auto' && doc.category === 'past_question');
+    if (wantsPastQuestion && extractQuestionsFromText(doc.extractedText).length > 0) {
+      return 'past_question';
+    }
+    return 'study_material';
+  }
+
+  /**
+   * Keeps the student side in step with a scanned document: adds its typed copy to
+   * Past Questions or Materials once published, and removes it from both when it is
+   * declined, sent back to pending, or deleted. Returns where it now lives.
+   */
+  private syncCatalogFromAcademicDoc(
+    doc: AcademicDocumentRecord,
+    removeOnly = false,
+    preferred: 'auto' | DocumentDestination = 'auto'
+  ): DocumentDestination | undefined {
+    const live = doc.publicationStatus === 'published' && !removeOnly;
+    const destination = live ? this.resolveDocDestination(doc, preferred) : undefined;
+    this.syncPastQuestionEntry(doc, destination === 'past_question');
+    this.syncMaterialEntry(doc, destination === 'study_material');
+    if (!destination) {
+      // No longer live: its "was uploaded" alert should not linger.
+      const staleIds = new Set([`notif-new-pqdoc-${doc.id}`, `notif-new-matdoc-${doc.id}`]);
+      if (this.state.notifications.some((n) => staleIds.has(n.id))) {
+        this.update((prev) => ({
+          ...prev,
+          notifications: prev.notifications.filter((n) => !staleIds.has(n.id)),
+        }));
+      }
+    }
+    return destination;
+  }
+
+  private syncPastQuestionEntry(doc: AcademicDocumentRecord, shouldPublish: boolean): void {
     const catalogId = `pqdoc-${doc.id}`;
-    const questions =
-      doc.category === 'past_question' && doc.publicationStatus === 'published' && !removeOnly
-        ? extractQuestionsFromText(doc.extractedText)
-        : [];
-    const shouldPublish = questions.length > 0;
+    const questions = shouldPublish ? extractQuestionsFromText(doc.extractedText) : [];
     const existing = this.state.documents.find((d) => d.id === catalogId);
     if (!shouldPublish && !existing) return;
 
@@ -2739,22 +2847,231 @@ class ArchiveRepository {
     }));
   }
 
-  deleteAcademicDocument(actor: AuthenticatedUser | null | undefined, docId: string): void {
+  private syncMaterialEntry(doc: AcademicDocumentRecord, shouldPublish: boolean): void {
+    const materialId = `matdoc-${doc.id}`;
+    const existing = this.state.materials.find((m) => m.id === materialId);
+    if (!shouldPublish && !existing) return;
+
+    if (!shouldPublish) {
+      this.update((prev) => ({
+        ...prev,
+        materials: prev.materials.filter((m) => m.id !== materialId),
+      }));
+      return;
+    }
+
+    const school = this.state.schools.find((s) => s.id === doc.schoolId);
+    const pageSections = (doc.pages ?? [])
+      .map((pg, idx) => ({
+        heading: sanitizeSingleLine(doc.headings[idx] ?? `Page ${pg.pageNumber}`, 140) || `Page ${pg.pageNumber}`,
+        paragraphs: pg.text
+          .split(/\n{2,}/)
+          .map((para) => sanitizePlainText(para, 2000))
+          .filter(Boolean)
+          .slice(0, 40),
+        points: [] as string[],
+      }))
+      .filter((sec) => sec.paragraphs.length > 0)
+      .slice(0, 40);
+    const sections =
+      pageSections.length > 0
+        ? pageSections
+        : [
+            {
+              heading: sanitizeSingleLine(doc.title, 140) || 'Document',
+              paragraphs: doc.extractedText
+                .split(/\n{2,}/)
+                .map((para) => sanitizePlainText(para, 2000))
+                .filter(Boolean)
+                .slice(0, 40),
+              points: [] as string[],
+            },
+          ];
+    const wordCount = doc.extractedText.split(/\s+/).filter(Boolean).length;
+
+    const entry: StudyMaterial = {
+      id: materialId,
+      schoolId: doc.schoolId,
+      schoolCode: school?.code ?? doc.schoolCode,
+      faculty: doc.faculty,
+      department: doc.department,
+      courseCode: doc.courseCode,
+      courseTitle: doc.courseTitle,
+      level: doc.level,
+      title: doc.title,
+      summary: doc.summary,
+      readMinutes: Math.max(1, Math.min(120, Math.round(wordCount / 200))),
+      sections,
+      sourceType: doc.detectedFormat === 'image' ? 'scanned_image' : 'typed_document',
+      originalFileName: doc.originalFileName,
+      extractedText: sanitizePlainText(doc.extractedText, 8000),
+      attachmentPreviewUrl: doc.optimizedPreviewUrl,
+      status: 'published',
+      uploadedBy: doc.submittedByName,
+      uploadedAt: doc.submittedAt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      materials: existing
+        ? prev.materials.map((m) => (m.id === materialId ? entry : m))
+        : [entry, ...prev.materials],
+    }));
+  }
+
+  /**
+   * Edit the details of an upload.
+   * - School Admin: only their own uploads. The document goes back to Pending and is
+   *   taken off the student side until the Super Admin verifies it again.
+   * - Super Admin: any upload. Live documents stay live, and only the School Admin who
+   *   uploaded it is alerted (never students).
+   */
+  updateAcademicDocumentDetails(
+    actor: AuthenticatedUser | null | undefined,
+    docId: string,
+    patch: Partial<
+      Pick<
+        AcademicDocumentRecord,
+        'title' | 'courseCode' | 'courseTitle' | 'level' | 'session' | 'semester' | 'category'
+      >
+    >
+  ): AcademicDocumentRecord {
     this.requirePermission(
       actor,
-      'docs:review_all',
-      'Only Super Administrators can delete uploaded documents.'
+      'docs:scan_submit',
+      'Only active School Admin or Super Admin accounts can edit documents.'
     );
+    const existing = this.state.academicDocuments.find((d) => d.id === docId);
+    if (!existing) throw new Error('Submitted document not found.');
+    const isSuper = actor.role === 'super_admin';
+    if (!isSuper && existing.submittedById !== actor.id) {
+      throw new Error('You can only edit your own uploads.');
+    }
+
+    const now = new Date().toISOString();
+    const categoryChanged = patch.category !== undefined && patch.category !== existing.category;
+    const updated: AcademicDocumentRecord = {
+      ...existing,
+      title: sanitizeSingleLine(patch.title ?? existing.title, 180) || existing.title,
+      courseCode:
+        sanitizeIdentifier(patch.courseCode ?? existing.courseCode, 24).toUpperCase() ||
+        existing.courseCode,
+      courseTitle: sanitizeSingleLine(patch.courseTitle ?? existing.courseTitle, 160) || existing.courseTitle,
+      level: patch.level ?? existing.level,
+      session: sanitizeIdentifier(patch.session ?? existing.session, 20) || existing.session,
+      semester: patch.semester ?? existing.semester,
+      category: patch.category ?? existing.category,
+      updatedAt: now,
+      processingHistory: [
+        ...existing.processingHistory,
+        {
+          id: `ph-${Date.now()}-edit`,
+          timestamp: now,
+          stage: isSuper ? 'Edited by Super Admin' : 'Edited by School Admin',
+          status: 'completed' as const,
+          actorName: actor.fullName,
+          actorRole: actor.role,
+          detail: isSuper
+            ? 'Details updated.'
+            : 'Details updated. Waiting for the Super Admin to verify again.',
+        },
+      ],
+    };
+
+    if (!isSuper) {
+      updated.publicationStatus = 'pending_review';
+      updated.publishedTo = undefined;
+      updated.rejectionReason = undefined;
+      updated.reviewerId = undefined;
+      updated.reviewerName = undefined;
+      updated.reviewedAt = undefined;
+    }
+
+    const alertUploader =
+      isSuper && existing.submittedById !== actor.id && existing.submittedByRole !== 'super_admin';
+
+    this.update((prev) => ({
+      ...prev,
+      academicDocuments: prev.academicDocuments.map((d) => (d.id === docId ? updated : d)),
+      notifications: alertUploader
+        ? [
+            {
+              id: `notif-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              title: `${updated.courseCode} was updated`,
+              message: 'The Super Admin updated your upload.',
+              category: 'upload' as const,
+              audience: 'admins' as BroadcastAudience,
+              targetUserId: existing.submittedById,
+              createdAt: now,
+              isRead: false,
+              approvalStatus: 'approved' as const,
+              uploadActivity: true,
+            },
+            ...prev.notifications,
+          ]
+        : prev.notifications,
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'doc_edited',
+          'academic_document',
+          docId,
+          isSuper
+            ? `Edited "${updated.title}" (${updated.courseCode})`
+            : `School Admin edited "${updated.title}" (${updated.courseCode}); back to pending`,
+          updated.schoolId
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
+
+    if (!isSuper) {
+      this.syncCatalogFromAcademicDoc(updated, true);
+    } else if (updated.publicationStatus === 'published') {
+      const destination = this.syncCatalogFromAcademicDoc(
+        updated,
+        false,
+        categoryChanged ? 'auto' : (existing.publishedTo ?? 'auto')
+      );
+      if (destination && destination !== existing.publishedTo) {
+        updated.publishedTo = destination;
+        this.update((prev) => ({
+          ...prev,
+          academicDocuments: prev.academicDocuments.map((d) =>
+            d.id === docId ? { ...d, publishedTo: destination } : d
+          ),
+        }));
+      }
+    }
+
+    return updated;
+  }
+
+  deleteAcademicDocument(actor: AuthenticatedUser | null | undefined, docId: string): void {
+    if (!actor) throw new Error('Sign in again to continue.');
     const existing = this.state.academicDocuments.find((d) => d.id === docId);
     if (!existing) {
       throw new Error('Submitted document not found.');
     }
+    const ownsIt = actor.role === 'school_admin' && existing.submittedById === actor.id;
+    if (ownsIt) {
+      this.requirePermission(actor, 'docs:scan_submit', 'Your account cannot delete documents right now.');
+    } else {
+      this.requirePermission(
+        actor,
+        'docs:review_all',
+        'Only Super Administrators can delete other admins\' uploads.'
+      );
+    }
     const now = new Date().toISOString();
     this.syncCatalogFromAcademicDoc(existing, true);
+    // Tell the uploader only when someone else removed their document.
+    const tellUploader = existing.submittedById !== actor.id && existing.submittedByRole !== 'super_admin';
     this.update((prev) => ({
       ...prev,
       academicDocuments: prev.academicDocuments.filter((d) => d.id !== docId),
-      notifications: [
+      notifications: !tellUploader ? prev.notifications : [
         {
           id: `notif-del-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           title: `Document Removed: ${existing.courseCode}`,

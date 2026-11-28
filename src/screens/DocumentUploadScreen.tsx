@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Archive,
@@ -7,6 +7,7 @@ import {
   Eye,
   FileText,
   Loader2,
+  Pencil,
   RotateCcw,
   ShieldAlert,
   Trash2,
@@ -17,6 +18,7 @@ import type {
   AcademicDocCategory,
   AcademicDocumentRecord,
   AuthenticatedUser,
+  DocumentPublishOptions,
   SemesterType,
   StudentLevel,
 } from '../core/types';
@@ -71,6 +73,36 @@ interface QueueItem {
   inputFile?: ScanInputFile;
   abortController?: AbortController;
   record?: AcademicDocumentRecord;
+  /** Set when this file replaces an existing upload ("Update"). */
+  replaceDocId?: string;
+}
+
+const CATEGORY_LABELS: Record<AcademicDocCategory, string> = {
+  past_question: 'Past question',
+  study_material: 'Study material',
+  lecture_note: 'Lecture note',
+  lab_diagram: 'Lab diagram',
+  reference: 'Reference',
+};
+
+const LEVEL_OPTIONS: StudentLevel[] = ['100L', '200L', '300L', '400L', '500L'];
+const SEMESTER_OPTIONS: SemesterType[] = ['First Semester', 'Second Semester'];
+
+const DESTINATION_OPTIONS: Array<{ value: DocumentPublishOptions['destination']; label: string }> = [
+  { value: 'auto', label: 'Auto-detect' },
+  { value: 'past_question', label: 'Past Questions' },
+  { value: 'study_material', label: 'Materials' },
+];
+
+const NOTIFY_OPTIONS: Array<{ value: DocumentPublishOptions['notify']; label: string }> = [
+  { value: 'students', label: 'Students' },
+  { value: 'school_admins', label: 'School Admins' },
+  { value: 'both', label: 'Both' },
+  { value: 'none', label: 'No alert' },
+];
+
+function destinationLabel(d?: string): string {
+  return d === 'past_question' ? 'Past Questions' : d === 'study_material' ? 'Materials' : 'the student side';
 }
 
 function formatBytes(bytes: number): string {
@@ -91,18 +123,15 @@ function uploadStatus(
   note: string;
   toneClass: string;
 } {
-  // School admins never see automated verification problems. Anything the checks
-  // flagged or blocked simply stays Pending for them while the Super Admin decides.
-  const automatedProblem =
-    (record.publicationStatus === 'flagged' ||
-      record.publicationStatus === 'rejected' ||
-      record.decision !== 'auto_approved') &&
-    record.publicationStatus !== 'published' &&
-    !record.reviewerId;
-  if (!isSuperAdmin && automatedProblem) {
+  // School admins only ever see Pending until the Super Admin publishes, or explicitly
+  // declines / asks for a new copy. Automated check results are never shown to them.
+  const decidedBySuperAdmin =
+    Boolean(record.reviewerId) &&
+    (record.publicationStatus === 'rejected' || record.publicationStatus === 'resubmission_requested');
+  if (!isSuperAdmin && record.publicationStatus !== 'published' && !decidedBySuperAdmin) {
     return {
       label: 'Pending',
-      note: 'Being processed.',
+      note: 'Waiting for the Super Admin.',
       toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
     };
   }
@@ -165,6 +194,30 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
   const [declineReason, setDeclineReason] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  // Super Admin: where published documents go and who is alerted.
+  const [publishOptions, setPublishOptions] = useState<DocumentPublishOptions>({
+    destination: 'auto',
+    notify: 'students',
+  });
+  const publishOptionsRef = useRef(publishOptions);
+  useEffect(() => {
+    publishOptionsRef.current = publishOptions;
+  }, [publishOptions]);
+
+  // Edit dialog + "Update" (replace file)
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
+  const [replaceTargetId, setReplaceTargetId] = useState<string | null>(null);
+  const [editingDoc, setEditingDoc] = useState<AcademicDocumentRecord | null>(null);
+  const [editForm, setEditForm] = useState({
+    title: '',
+    courseCode: '',
+    courseTitle: '',
+    level: '100L' as StudentLevel,
+    session: '',
+    semester: 'First Semester' as SemesterType,
+    category: 'past_question' as AcademicDocCategory,
+  });
+
   const restricted = isRestrictedAccount(currentUser);
 
   // Failed uploads are reported to the Super Admin only (never to the uploader).
@@ -180,7 +233,11 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
     setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
 
-  const processSingleQueueItem = async (id: string, inputFile: ScanInputFile) => {
+  const processSingleQueueItem = async (
+    id: string,
+    inputFile: ScanInputFile,
+    replaceDocId?: string
+  ) => {
     const controller = new AbortController();
     patchQueueItem(id, {
       status: 'processing',
@@ -340,13 +397,28 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
         riskLevel: validation.riskLevel,
         decisionReason: validation.decisionReason,
         parentZipName: artifact.parentZipName,
+        replaceDocId,
       });
+
+      // Super Admin uploads go live straight away (when the checks pass), routed to the
+      // chosen destination and alerting only the chosen recipients.
+      let finalRecord = saved;
+      if (isSuperAdmin && saved.decision === 'auto_approved' && saved.publicationStatus === 'pending_review') {
+        try {
+          finalRecord = archiveRepository.reviewSubmittedDocument(currentUser, saved.id, 'approve', {
+            publish: publishOptionsRef.current,
+          });
+          setNotice(`"${finalRecord.title}" published to ${destinationLabel(finalRecord.publishedTo)}.`);
+        } catch {
+          /* stays pending; the Publish button is still available */
+        }
+      }
 
       patchQueueItem(id, {
         status: 'completed',
         stage: 'completed',
-        stageLabel: uploadStatus(saved).label,
-        record: saved,
+        stageLabel: uploadStatus(finalRecord).label,
+        record: finalRecord,
         abortController: undefined,
       });
     } catch (err) {
@@ -372,7 +444,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
     }
   };
 
-  const enqueueFiles = async (rawFiles: FileList | File[]) => {
+  const enqueueFiles = async (rawFiles: FileList | File[], replaceDocId?: string) => {
     setBannerError(null);
     if (restricted) {
       setBannerError(
@@ -390,7 +462,12 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
       return;
     }
 
-    const workQueue: Array<{ id: string; input: ScanInputFile }> = [];
+    if (replaceDocId && files.length !== 1) {
+      setBannerError('Choose one file to update this document.');
+      return;
+    }
+
+    const workQueue: Array<{ id: string; input: ScanInputFile; replaceDocId?: string }> = [];
 
     for (const file of files) {
       if (file.size === 0) {
@@ -455,6 +532,11 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
         continue;
       }
 
+      if (replaceDocId && quickCheck.format === 'zip') {
+        setBannerError('Choose a single document (not a ZIP) to update this upload.');
+        continue;
+      }
+
       if (quickCheck.format === 'zip') {
         try {
           const unpacked = await inspectAndExtractZipEntries(input.bytes, input.name);
@@ -504,22 +586,23 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
             stage: 'queued',
             stageLabel: 'Queued for scanning',
             inputFile: input,
+            replaceDocId,
           },
           ...prev,
         ]);
-        workQueue.push({ id, input });
+        workQueue.push({ id, input, replaceDocId });
       }
     }
 
     // Process queue items sequentially so progress & OCR memory stay smooth
     for (const job of workQueue) {
-      await processSingleQueueItem(job.id, job.input);
+      await processSingleQueueItem(job.id, job.input, job.replaceDocId);
     }
   };
 
   const handleRetryItem = (item: QueueItem) => {
     if (!item.inputFile || item.status === 'processing') return;
-    void processSingleQueueItem(item.id, item.inputFile);
+    void processSingleQueueItem(item.id, item.inputFile, item.replaceDocId);
   };
 
   const handleRemoveItem = (id: string) => {
@@ -543,12 +626,11 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
       .sort((x, y) => (y.submittedAt > x.submittedAt ? 1 : -1));
   }, [store.academicDocuments, isSuperAdmin, currentUser.assignedSchoolId, currentUser.id]);
 
-  const runAction = (fn: () => void, success: string) => {
+  const runAction = (fn: () => string | void, success: string) => {
     setBannerError(null);
     setNotice(null);
     try {
-      fn();
-      setNotice(success);
+      setNotice(fn() || success);
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : 'That action could not be completed.');
     }
@@ -557,7 +639,10 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
   const handlePublish = (doc: AcademicDocumentRecord) =>
     runAction(
       () => {
-        archiveRepository.reviewSubmittedDocument(currentUser, doc.id, 'approve');
+        const published = archiveRepository.reviewSubmittedDocument(currentUser, doc.id, 'approve', {
+          publish: publishOptions,
+        });
+        return `"${doc.title}" published to ${destinationLabel(published.publishedTo)}.`;
       },
       `"${doc.title}" published.`
     );
@@ -576,6 +661,41 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
       archiveRepository.deleteAcademicDocument(currentUser, doc.id);
       setConfirmDeleteId(null);
     }, `"${doc.title}" deleted.`);
+
+  const openEdit = (doc: AcademicDocumentRecord) => {
+    setEditForm({
+      title: doc.title,
+      courseCode: doc.courseCode,
+      courseTitle: doc.courseTitle,
+      level: doc.level,
+      session: doc.session,
+      semester: doc.semester,
+      category: doc.category,
+    });
+    setEditingDoc(doc);
+    setDecliningId(null);
+    setConfirmDeleteId(null);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingDoc) return;
+    const doc = editingDoc;
+    runAction(() => {
+      archiveRepository.updateAcademicDocumentDetails(currentUser, doc.id, editForm);
+      setEditingDoc(null);
+      return isSuperAdmin
+        ? `"${editForm.title}" updated${doc.submittedByRole === 'school_admin' ? '. Only its School Admin was alerted.' : '.'}`
+        : `"${editForm.title}" updated. It is Pending until the Super Admin verifies it.`;
+    }, 'Updated.');
+  };
+
+  const startReplace = (doc: AcademicDocumentRecord) => {
+    setReplaceTargetId(doc.id);
+    replaceInputRef.current?.click();
+  };
+
+  const canManage = (doc: AcademicDocumentRecord) =>
+    isSuperAdmin || doc.submittedById === currentUser.id;
 
   return (
     <div className="space-y-6 page-enter">
@@ -597,8 +717,8 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
               while it is converted into a typed document and cross-checked in the background, then
               updates to Success.
               {isSuperAdmin
-                ? ' As Super Admin you can publish, decline or delete any upload.'
-                : ' The Super Admin publishes documents once they pass.'}
+                ? ' Documents are sent to Past Questions or Materials automatically. Your own uploads go live straight away; choose where and who is alerted below.'
+                : ' You can edit, update or delete your uploads. Everything stays Pending until the Super Admin publishes it.'}
             </p>
           </div>
         </div>
@@ -623,6 +743,76 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
           <span>{notice}</span>
         </div>
       )}
+
+      {isSuperAdmin && (
+        <SurfaceCard tone="white" className="p-5 space-y-4">
+          <div>
+            <h3 className="font-display text-sm font-bold text-[#1A1B20]">Publish settings</h3>
+            <p className="mt-0.5 text-xs text-[#505460]">
+              Used for your own uploads and for every Publish / Force publish button below.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[#686C78]">Publish to</p>
+            <div className="flex flex-wrap gap-2">
+              {DESTINATION_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={publishOptions.destination === opt.value}
+                  onClick={() => setPublishOptions((prev) => ({ ...prev, destination: opt.value }))}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer border ${
+                    publishOptions.destination === opt.value
+                      ? 'bg-[#1D1E23] text-white border-[#1D1E23]'
+                      : 'bg-white text-[#505460] border-[#1A1B20]/10'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {publishOptions.destination === 'auto' && (
+              <p className="text-[11px] text-[#686C78]">
+                Past questions go to Past Questions; notes, materials and everything else go to Materials.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[#686C78]">Send alert to</p>
+            <div className="flex flex-wrap gap-2">
+              {NOTIFY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={publishOptions.notify === opt.value}
+                  onClick={() => setPublishOptions((prev) => ({ ...prev, notify: opt.value }))}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer border ${
+                    publishOptions.notify === opt.value
+                      ? 'bg-[#1D1E23] text-white border-[#1D1E23]'
+                      : 'bg-white text-[#505460] border-[#1A1B20]/10'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </SurfaceCard>
+      )}
+
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.txt,.md,.csv"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          const target = replaceTargetId;
+          e.target.value = '';
+          setReplaceTargetId(null);
+          if (file && target) void enqueueFiles([file], target);
+        }}
+        className="hidden"
+      />
 
       <SurfaceCard tone="white" className="p-5">
         <div
@@ -803,9 +993,9 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                     </div>
                   </div>
 
-                  {isSuperAdmin && (
+                  {canManage(doc) && (
                     <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[#1A1B20]/[0.07]">
-                      {!isPublished && (
+                      {isSuperAdmin && !isPublished && (
                         <TactileButton
                           variant="dark"
                           size="sm"
@@ -817,7 +1007,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                             : 'Publish'}
                         </TactileButton>
                       )}
-                      {doc.publicationStatus !== 'rejected' && (
+                      {isSuperAdmin && doc.publicationStatus !== 'rejected' && (
                         <TactileButton
                           variant="light"
                           size="sm"
@@ -831,6 +1021,23 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                           Decline
                         </TactileButton>
                       )}
+                      <TactileButton
+                        variant="light"
+                        size="sm"
+                        icon={<Pencil className="w-3.5 h-3.5" />}
+                        onClick={() => openEdit(doc)}
+                      >
+                        Edit
+                      </TactileButton>
+                      <TactileButton
+                        variant="light"
+                        size="sm"
+                        icon={<UploadCloud className="w-3.5 h-3.5" />}
+                        disabled={restricted}
+                        onClick={() => startReplace(doc)}
+                      >
+                        Update
+                      </TactileButton>
                       <TactileButton
                         variant="light"
                         size="sm"
@@ -860,7 +1067,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                     </div>
                   )}
 
-                  {isSuperAdmin && confirmDeleteId === doc.id && (
+                  {canManage(doc) && confirmDeleteId === doc.id && (
                     <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#FEF2F2] border border-[#FECACA] px-3 py-2">
                       <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0" />
                       <span className="text-xs font-semibold text-[#B91C1C] flex-1 min-w-[160px]">
@@ -1005,6 +1212,97 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
             )}
           </div>
         )}
+      </DetailDialog>
+
+      <DetailDialog
+        open={Boolean(editingDoc)}
+        onClose={() => setEditingDoc(null)}
+        title="Edit document"
+        subtitle={
+          isSuperAdmin
+            ? 'Changes apply right away. Only the School Admin who uploaded it is alerted.'
+            : 'After you update, this document shows Pending until the Super Admin verifies it.'
+        }
+        icon={<Pencil className="w-5 h-5" />}
+        footer={
+          <div className="flex justify-end gap-2">
+            <TactileButton variant="light" size="md" onClick={() => setEditingDoc(null)}>
+              Cancel
+            </TactileButton>
+            <TactileButton variant="dark" size="md" onClick={handleSaveEdit}>
+              Update
+            </TactileButton>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          {(
+            [
+              ['Title', 'title'],
+              ['Course code', 'courseCode'],
+              ['Course title', 'courseTitle'],
+              ['Session (e.g. 2023/2024)', 'session'],
+            ] as const
+          ).map(([label, key]) => (
+            <label key={key} className="block text-xs font-semibold text-[#505460]">
+              {label}
+              <input
+                type="text"
+                value={editForm[key]}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                className="mt-1 w-full min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-sm text-[#1A1B20]"
+              />
+            </label>
+          ))}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="block text-xs font-semibold text-[#505460]">
+              Level
+              <select
+                value={editForm.level}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, level: e.target.value as StudentLevel }))}
+                className="mt-1 w-full min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-2 text-sm text-[#1A1B20]"
+              >
+                {LEVEL_OPTIONS.map((lvl) => (
+                  <option key={lvl} value={lvl}>
+                    {lvl}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold text-[#505460]">
+              Semester
+              <select
+                value={editForm.semester}
+                onChange={(e) =>
+                  setEditForm((prev) => ({ ...prev, semester: e.target.value as SemesterType }))
+                }
+                className="mt-1 w-full min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-2 text-sm text-[#1A1B20]"
+              >
+                {SEMESTER_OPTIONS.map((sem) => (
+                  <option key={sem} value={sem}>
+                    {sem}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs font-semibold text-[#505460]">
+              Type
+              <select
+                value={editForm.category}
+                onChange={(e) =>
+                  setEditForm((prev) => ({ ...prev, category: e.target.value as AcademicDocCategory }))
+                }
+                className="mt-1 w-full min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-2 text-sm text-[#1A1B20]"
+              >
+                {(Object.keys(CATEGORY_LABELS) as AcademicDocCategory[]).map((cat) => (
+                  <option key={cat} value={cat}>
+                    {CATEGORY_LABELS[cat]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
       </DetailDialog>
     </div>
   );

@@ -714,9 +714,10 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     const flagged = archiveRepository.submitScannedDocument(schoolAdmin, basePayload);
     assert.equal(flagged.publicationStatus, 'flagged');
 
-    // School admins can never publish, decline or delete.
+    // School admins can never publish or decline, and cannot delete someone else's upload.
     assert.throws(() => archiveRepository.reviewSubmittedDocument(schoolAdmin, flagged.id, 'approve'));
-    assert.throws(() => archiveRepository.deleteAcademicDocument(schoolAdmin, flagged.id));
+    const anotherAdmin: AuthenticatedUser = { ...schoolAdmin, id: 'usr-sadmin-9', email: 'nine@aaua.edu.ng' };
+    assert.throws(() => archiveRepository.deleteAcademicDocument(anotherAdmin, flagged.id));
     assert.ok(archiveRepository.getDocumentsForSubmitter(schoolAdmin.id).some((d) => d.id === flagged.id));
 
     // Super Admin force publishes a flagged document; the typed past question reaches the catalog.
@@ -899,14 +900,15 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     assert.equal(adminFeed().find((n) => n.title === 'CSC 301 was uploaded')?.message, 'It will go live once it is checked.');
     assert.equal(titles(adminFeed(otherAdmin)).includes('CSC 301 was uploaded'), false);
 
-    // 2. Approved: other admins see the public notice, the uploader gets the result, students get nothing
+    // 2. Approved (default alert = students): students hear about it, other School Admins
+    //    do not, and the uploader gets the result
     archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
-    const publicNotice = adminFeed(otherAdmin).find((n) => n.title === 'CSC 301 was uploaded');
-    assert.ok(publicNotice, 'other School Admins see the new document');
+    const publicNotice = studentFeed().find((n) => n.title === 'CSC 301 was uploaded');
+    assert.ok(publicNotice, 'students see the new document');
     assert.equal(publicNotice.message, 'AAUA uploaded 2023/2024 First Semester.');
     assert.equal(publicNotice.targetDocId, `pqdoc-${doc.id}`);
-    assert.equal(titles(studentFeed()).includes('CSC 301 was uploaded'), false, 'students never see uploads');
-    assert.equal(titles(studentFeed(otherStudent)).includes('CSC 301 was uploaded'), false);
+    assert.ok(titles(studentFeed(otherStudent)).includes('CSC 301 was uploaded'));
+    assert.equal(titles(adminFeed(otherAdmin)).includes('CSC 301 was uploaded'), false, 'other School Admins are not alerted by default');
     const approved = adminFeed().find((n) => n.title === 'CSC 301 was approved');
     assert.equal(approved?.message, 'Your upload is now live.');
     assert.equal(
@@ -918,7 +920,7 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
 
     // approving again does not announce it twice
     archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
-    assert.equal(adminFeed(otherAdmin).filter((n) => n.title === 'CSC 301 was uploaded').length, 1);
+    assert.equal(studentFeed().filter((n) => n.title === 'CSC 301 was uploaded').length, 1);
 
     // 3. Rejected: the uploader sees the reason, students see nothing new
     const bad = archiveRepository.submitScannedDocument(uploader, payload('CSC 302', 'f'));
@@ -992,7 +994,7 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     noWhoDidIt(adminFeed());
   });
 
-  test('15. Students have no document library permission and get no upload or approval notices', () => {
+  test('15. Students have no document library permission; they hear only when a document goes live', () => {
     const student = makeStudent('stu-perm-1');
     assert.equal(hasPermission(student, 'docs:read_library'), false, 'students lose the old library permission');
     assert.equal(hasPermission(student, 'pq:read'), true);
@@ -1047,13 +1049,126 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     });
     const before = titles(studentFeed());
     archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
-    archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'reject', { rejectionReason: 'Changed my mind' });
-    assert.deepEqual(titles(studentFeed()), before, 'approve and reject add nothing for students');
-    assert.equal(
-      titles(studentFeed()).some((t) => /MTH 101/.test(t)),
-      false,
-      'no MTH 101 notice of any kind for students'
+    assert.deepEqual(
+      titles(studentFeed()).filter((t) => !before.includes(t)),
+      ['MTH 101 was uploaded'],
+      'going live alerts students once'
     );
+    assert.equal(titles(studentFeed()).some((t) => /MTH 101 was (approved|rejected)/.test(t)), false);
+    archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'reject', { rejectionReason: 'Changed my mind' });
+    assert.deepEqual(titles(studentFeed()), before, 'taking it down removes the alert; no rejection notice reaches students');
+  });
+
+  test('16. Uploads route to Past Questions or Materials; School Admin edits go Pending; Super Admin picks who is alerted', () => {
+    const superAdmin = makeSuperAdmin();
+    const schoolAdmin = makeSchoolAdmin();
+    const otherAdmin: AuthenticatedUser = { ...schoolAdmin, id: 'usr-sadmin-2', email: 'two@aaua.edu.ng' };
+    const student = makeStudent('stu-route-1');
+
+    const studentTitles = () => archiveRepository.getNotificationsForWorkspace('student', student.id).map((n) => n.title);
+    const uploaderTitles = () => archiveRepository.getNotificationsForWorkspace('school_admin', schoolAdmin.id).map((n) => n.title);
+    const otherAdminTitles = () => archiveRepository.getNotificationsForWorkspace('school_admin', otherAdmin.id).map((n) => n.title);
+
+    const payload = (code: string, sha: string, category: 'past_question' | 'lecture_note', text: string) => ({
+      schoolId: 'sch-aaua',
+      title: `${code} Document`,
+      courseCode: code,
+      courseTitle: 'Test Course',
+      level: '200L' as const,
+      session: '2023/2024',
+      semester: 'First Semester' as const,
+      category,
+      originalFileName: `${code}.pdf`,
+      mimeType: 'application/pdf',
+      detectedFormat: 'pdf' as const,
+      fileSizeBytes: 2048,
+      sha256: sha.repeat(64),
+      pageCount: 1,
+      extractedText: text,
+      summary: 'summary',
+      headings: [],
+      pages: [],
+      diagrams: [],
+      tables: [],
+      formulas: [],
+      qrCodesFound: [],
+      averageOcrConfidence: 95,
+      deterministicChecks: [],
+      decision: 'auto_approved' as const,
+      riskLevel: 'low' as const,
+    });
+
+    // A lecture note is routed to Materials automatically; only School Admins are alerted when chosen
+    const note = archiveRepository.submitScannedDocument(
+      schoolAdmin,
+      payload('BIO 201', '1', 'lecture_note', 'BIO 201 notes\n\nCells are the basic unit of life.\n\nMitochondria produce energy.')
+    );
+    assert.equal(note.publicationStatus, 'pending_review');
+    const published = archiveRepository.reviewSubmittedDocument(superAdmin, note.id, 'approve', {
+      publish: { destination: 'auto', notify: 'school_admins' },
+    });
+    assert.equal(published.publishedTo, 'study_material');
+    assert.ok(archiveRepository.getPublishedMaterials('sch-aaua').some((m) => m.id === `matdoc-${note.id}`), 'appears in Materials');
+    assert.equal(archiveRepository.getPublishedDocuments().some((d) => d.id === `pqdoc-${note.id}`), false);
+    assert.ok(otherAdminTitles().includes('BIO 201 was uploaded'), 'chosen: School Admins alerted');
+    assert.equal(studentTitles().includes('BIO 201 was uploaded'), false, 'students were not chosen');
+
+    // A past question goes to Past Questions; the default alert reaches students only
+    const pq = archiveRepository.submitScannedDocument(
+      schoolAdmin,
+      payload('CHM 201', '2', 'past_question', 'CHM 201 2023/2024\n1. Define an acid.\n2. State Le Chatelier principle.')
+    );
+    const pqPublished = archiveRepository.reviewSubmittedDocument(superAdmin, pq.id, 'approve');
+    assert.equal(pqPublished.publishedTo, 'past_question');
+    assert.ok(archiveRepository.getPublishedDocuments().some((d) => d.id === `pqdoc-${pq.id}`));
+    assert.ok(studentTitles().includes('CHM 201 was uploaded'));
+    assert.equal(otherAdminTitles().includes('CHM 201 was uploaded'), false);
+
+    // Super Admin can override the destination
+    const forced = archiveRepository.submitScannedDocument(
+      schoolAdmin,
+      payload('PHY 201', '3', 'past_question', 'PHY 201 2023/2024\n1. Define velocity.\n2. State Newton law.')
+    );
+    const moved = archiveRepository.reviewSubmittedDocument(superAdmin, forced.id, 'approve', {
+      publish: { destination: 'study_material', notify: 'none' },
+    });
+    assert.equal(moved.publishedTo, 'study_material');
+    assert.equal(studentTitles().includes('PHY 201 was uploaded'), false, 'no alert when none chosen');
+
+    // Super Admin edits a School Admin upload: only that School Admin is alerted
+    const studentBefore = studentTitles();
+    const otherBefore = otherAdminTitles();
+    archiveRepository.updateAcademicDocumentDetails(superAdmin, note.id, { title: 'BIO 201 Revised Notes' });
+    assert.ok(uploaderTitles().includes('BIO 201 was updated'));
+    assert.deepEqual(studentTitles(), studentBefore, 'students not alerted');
+    assert.deepEqual(otherAdminTitles(), otherBefore, 'other School Admins not alerted');
+    assert.equal(
+      archiveRepository.getPublishedMaterials('sch-aaua').find((m) => m.id === `matdoc-${note.id}`)?.title,
+      'BIO 201 Revised Notes'
+    );
+
+    // School Admin edit: back to Pending and off the student side; cannot touch others' uploads
+    assert.throws(() => archiveRepository.updateAcademicDocumentDetails(otherAdmin, note.id, { title: 'Hijack' }));
+    const edited = archiveRepository.updateAcademicDocumentDetails(schoolAdmin, note.id, { courseCode: 'BIO 202' });
+    assert.equal(edited.publicationStatus, 'pending_review');
+    assert.equal(edited.courseCode, 'BIO 202');
+    assert.equal(archiveRepository.getPublishedMaterials('sch-aaua').some((m) => m.id === `matdoc-${note.id}`), false);
+
+    // School Admin can delete their own upload
+    archiveRepository.deleteAcademicDocument(schoolAdmin, note.id);
+    assert.equal(archiveRepository.getDocumentsForSubmitter(schoolAdmin.id).some((d) => d.id === note.id), false);
+
+    // Super Admin's own upload goes only where chosen: students, not School Admins
+    const own = archiveRepository.submitScannedDocument(
+      superAdmin,
+      payload('GST 111', '4', 'lecture_note', 'GST 111 notes\n\nUse of English.')
+    );
+    archiveRepository.reviewSubmittedDocument(superAdmin, own.id, 'approve', {
+      publish: { destination: 'auto', notify: 'students' },
+    });
+    assert.ok(studentTitles().includes('GST 111 was uploaded'));
+    assert.equal(otherAdminTitles().includes('GST 111 was uploaded'), false);
+    assert.equal(uploaderTitles().includes('GST 111 was uploaded'), false);
   });
 });
 
