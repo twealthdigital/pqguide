@@ -56,6 +56,7 @@ import {
   ROLE_LABELS,
 } from '../../core/permissions';
 import { FREE_TIER_ENABLED, useSubscription, type PaywallContext } from '../../core/subscription';
+import { lockPageScroll } from '../../core/scrollLock';
 import { BrandLockup } from './BrandLockup';
 import { useBackHandler } from '../../core/navGuard';
 import { BrandLogo } from './BrandLogo';
@@ -294,8 +295,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       gestureAxisRef.current = null;
       return;
     }
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const unlockScroll = lockPageScroll();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -305,7 +305,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.body.style.overflow = prevOverflow;
+      unlockScroll();
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [drawerOpen]);

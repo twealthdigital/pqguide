@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { lockPageScroll } from '../../core/scrollLock';
 import { X } from 'lucide-react';
 import { useBackHandler } from '../../core/navGuard';
 import { TooltipBubble } from './TooltipBubble';
@@ -37,12 +38,11 @@ export const DetailDialog: React.FC<DetailDialogProps> = ({
       }
     };
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const unlockScroll = lockPageScroll();
     document.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      document.body.style.overflow = previousOverflow;
+      unlockScroll();
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [open, onClose]);

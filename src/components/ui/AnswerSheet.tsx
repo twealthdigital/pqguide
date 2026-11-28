@@ -1,6 +1,7 @@
 import { useBackHandler } from '../../core/navGuard';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { lockPageScroll } from '../../core/scrollLock';
 import { X } from 'lucide-react';
 import type { QuestionSolution } from '../../core/types';
 import { RichInlineText } from '../academic/AcademicContentRenderer';
@@ -153,17 +154,7 @@ const MobileAnswerSheet: React.FC<AnswerSheetProps> = ({
 
   // ---- page lock + inert background + Esc + resize ----------------------
   useEffect(() => {
-    const html = document.documentElement;
-    const body = document.body;
-    const prev = {
-      htmlOverflow: html.style.overflow,
-      bodyOverflow: body.style.overflow,
-      bodyPad: body.style.paddingRight,
-    };
-    const scrollbar = window.innerWidth - html.clientWidth;
-    html.style.overflow = 'hidden';
-    body.style.overflow = 'hidden';
-    if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`;
+    const unlockScroll = lockPageScroll();
 
     const root = document.getElementById('root');
     root?.setAttribute('inert', '');
@@ -179,9 +170,7 @@ const MobileAnswerSheet: React.FC<AnswerSheetProps> = ({
     window.addEventListener('resize', onResize);
 
     return () => {
-      html.style.overflow = prev.htmlOverflow;
-      body.style.overflow = prev.bodyOverflow;
-      body.style.paddingRight = prev.bodyPad;
+      unlockScroll();
       root?.removeAttribute('inert');
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onResize);
@@ -503,17 +492,7 @@ const AnswerDialog: React.FC<AnswerSheetProps> = ({
 
   // Page lock + inert background + Esc
   useEffect(() => {
-    const html = document.documentElement;
-    const body = document.body;
-    const prev = {
-      htmlOverflow: html.style.overflow,
-      bodyOverflow: body.style.overflow,
-      bodyPad: body.style.paddingRight,
-    };
-    const scrollbar = window.innerWidth - html.clientWidth;
-    html.style.overflow = 'hidden';
-    body.style.overflow = 'hidden';
-    if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`;
+    const unlockScroll = lockPageScroll();
     const root = document.getElementById('root');
     root?.setAttribute('inert', '');
 
@@ -522,9 +501,7 @@ const AnswerDialog: React.FC<AnswerSheetProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => {
-      html.style.overflow = prev.htmlOverflow;
-      body.style.overflow = prev.bodyOverflow;
-      body.style.paddingRight = prev.bodyPad;
+      unlockScroll();
       root?.removeAttribute('inert');
       window.removeEventListener('keydown', onKey);
     };
