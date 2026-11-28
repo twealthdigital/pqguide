@@ -154,6 +154,8 @@ export interface AppNotification {
   category: 'upload' | 'access' | 'system';
   audience?: BroadcastAudience;
   targetUserId?: string;
+  /** Hide this notice from one person who already got a more specific one. */
+  exceptUserId?: string;
   createdAt: string;
   updatedAt?: string;
   isRead: boolean;

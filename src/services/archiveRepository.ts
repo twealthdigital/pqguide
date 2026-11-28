@@ -366,6 +366,35 @@ function saveState(state: AppStoreState): void {
   localStore.setJson(STORAGE_KEY, state);
 }
 
+/**
+ * The public "new document" notice. Students and School Admins both see it.
+ * Kept short and plain: what was uploaded, and by which university.
+ */
+function buildNewDocumentNotification(args: {
+  docId: string;
+  courseCode: string;
+  session: string;
+  semester: string;
+  schoolId: string;
+  schoolCode: string;
+  exceptUserId?: string;
+}): AppNotification {
+  return {
+    id: `notif-new-${args.docId}`,
+    title: `${args.courseCode} was uploaded`,
+    message: `${args.schoolCode} uploaded ${args.session} ${args.semester}.`,
+    category: 'upload',
+    audience: 'students',
+    schoolId: args.schoolId,
+    schoolCode: args.schoolCode,
+    createdAt: new Date().toISOString(),
+    isRead: false,
+    targetDocId: args.docId,
+    approvalStatus: 'approved',
+    exceptUserId: args.exceptUserId,
+  };
+}
+
 function createAuditEntry(
   actor: Pick<AuthenticatedUser, 'id' | 'fullName' | 'email' | 'role'>,
   action: AuditActionType,
@@ -492,19 +521,36 @@ class ArchiveRepository {
     }));
   }
 
+  /**
+   * Who sees a notification.
+   * - Students: public notices (new documents, announcements) and anything sent to them.
+   * - School Admins: everything students see, admin notices, and anything sent to them
+   *   (for example the result of their uploads).
+   * Notices for one university only reach people from that university.
+   */
+  private isNotificationVisible(
+    n: AppNotification,
+    workspace: WorkspaceViewMode,
+    userId?: string
+  ): boolean {
+    if ((n.approvalStatus ?? 'approved') !== 'approved') return false;
+    if (n.exceptUserId && n.exceptUserId === userId) return false;
+    if (n.targetUserId) {
+      if (workspace === 'super_admin') return true;
+      return Boolean(userId && n.targetUserId === userId);
+    }
+    if (n.schoolId && workspace !== 'super_admin' && userId) {
+      const me = this.state.accounts.find((a) => a.id === userId);
+      if (me?.schoolId && me.schoolId !== n.schoolId) return false;
+    }
+    const audience = n.audience ?? 'all';
+    if (audience === 'all') return true;
+    if (audience === 'students') return workspace === 'student' || workspace === 'school_admin';
+    return workspace !== 'student';
+  }
+
   getNotificationsForWorkspace(workspace: WorkspaceViewMode, userId?: string): AppNotification[] {
-    return this.state.notifications.filter((n) => {
-      if ((n.approvalStatus ?? 'approved') !== 'approved') {
-        return false;
-      }
-      if (n.targetUserId) {
-        if (workspace === 'super_admin') return true;
-        return Boolean(userId && n.targetUserId === userId);
-      }
-      const audience = n.audience ?? 'all';
-      if (audience === 'all') return true;
-      return workspace === 'student' ? audience === 'students' : audience === 'admins';
-    });
+    return this.state.notifications.filter((n) => this.isNotificationVisible(n, workspace, userId));
   }
 
   getPendingNotifications(): AppNotification[] {
@@ -536,19 +582,9 @@ class ArchiveRepository {
   markAllNotificationsReadForWorkspace(workspace: WorkspaceViewMode, userId?: string): void {
     this.update((prev) => ({
       ...prev,
-      notifications: prev.notifications.map((n) => {
-        if ((n.approvalStatus ?? 'approved') !== 'approved') return n;
-        if (n.targetUserId) {
-          const matchesTarget =
-            workspace === 'super_admin' || Boolean(userId && n.targetUserId === userId);
-          return matchesTarget ? { ...n, isRead: true } : n;
-        }
-        const audience = n.audience ?? 'all';
-        const matches =
-          audience === 'all' ||
-          (workspace === 'student' ? audience === 'students' : audience === 'admins');
-        return matches ? { ...n, isRead: true } : n;
-      }),
+      notifications: prev.notifications.map((n) =>
+        this.isNotificationVisible(n, workspace, userId) ? { ...n, isRead: true } : n
+      ),
     }));
   }
 
@@ -752,15 +788,14 @@ class ArchiveRepository {
       const nextNotifications =
         sanitizedDoc.status === 'published'
           ? [
-              {
-                id: `notif-${Date.now()}`,
-                title: `Uploaded ${sanitizedDoc.courseCode} (${sanitizedDoc.session})`,
-                message: `${courseHeading(sanitizedDoc)} — ${sanitizedDoc.semester} (${school.code}) was indexed.`,
-                category: 'upload' as const,
-                createdAt: new Date().toISOString(),
-                isRead: false,
-                targetDocId: sanitizedDoc.id,
-              },
+              buildNewDocumentNotification({
+                docId: sanitizedDoc.id,
+                courseCode: sanitizedDoc.courseCode,
+                session: sanitizedDoc.session,
+                semester: sanitizedDoc.semester,
+                schoolId: school.id,
+                schoolCode: school.code,
+              }),
               ...prev.notifications,
             ]
           : prev.notifications;
@@ -1529,13 +1564,13 @@ class ArchiveRepository {
       notifications: [
         {
           id: `notif-pay-${Date.now()}`,
-          title: `${record.tierName} Activated`,
-          message: `${providerLabel} verified payment of ₦${record.amountNaira.toLocaleString()} (Ref: ${record.reference}). Your plan is now active.`,
+          title: `${record.tierName} is active`,
+          message: `Payment of ₦${record.amountNaira.toLocaleString()} received. Ref ${record.reference}.`,
           category: 'system',
-          audience: user.role === 'student' ? 'students' : 'all',
+          audience: user.role === 'student' ? 'students' : 'admins',
+          targetUserId: user.id,
           createdAt: now,
           isRead: false,
-          createdBy: providerLabel,
         },
         ...prev.notifications,
       ],
@@ -1747,18 +1782,40 @@ class ArchiveRepository {
             reviewedBy: reviewer,
             reviewedAt: now,
             reviewNote: cleanNote,
+            // The sender gets the "is live" notice below instead of a copy of their own post
+            exceptUserId: existing.submittedById,
           }
         : {
             ...existing,
             approvalStatus: 'rejected',
             reviewedBy: reviewer,
             reviewedAt: now,
-            reviewNote: cleanNote || 'Declined by Super Admin',
+            reviewNote: cleanNote || 'Not approved.',
           };
+
+    const senderNotice: AppNotification | null = existing.submittedById
+      ? {
+          id: `notif-ann-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title: decision === 'approve' ? 'Your notification is live' : 'Your notification was declined',
+          message:
+            decision === 'approve'
+              ? `"${updated.title}" was sent to students.`
+              : `"${updated.title}": ${cleanNote || 'Not approved.'}`,
+          category: 'system',
+          audience: 'admins',
+          targetUserId: existing.submittedById,
+          createdAt: now,
+          isRead: false,
+          approvalStatus: 'approved',
+        }
+      : null;
 
     this.update((prev) => ({
       ...prev,
-      notifications: prev.notifications.map((n) => (n.id === notifId ? updated : n)),
+      notifications: [
+        ...(senderNotice ? [senderNotice] : []),
+        ...prev.notifications.map((n) => (n.id === notifId ? updated : n)),
+      ],
       auditLogs: [
         createAuditEntry(
           actor,
@@ -2373,14 +2430,13 @@ class ArchiveRepository {
       // uploads are reported to the Super Admin alone (through the audit entries below).
       const submitterNotification = {
         id: `notif-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        title: `Upload Successful: ${record.courseCode}`,
-        message: `"${record.title}" was converted to a typed document and passed the automatic checks. The Super Admin will publish it.`,
+        title: `${record.courseCode} was uploaded`,
+        message: 'It will go live once it is checked.',
         category: 'upload' as const,
         audience: 'admins' as BroadcastAudience,
         targetUserId: actor.id,
         createdAt: now,
         isRead: false,
-        createdBy: 'PQGuide Verification Engine',
         approvalStatus: 'approved' as const,
       };
 
@@ -2553,20 +2609,16 @@ class ArchiveRepository {
           id: `notif-rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           title:
             action === 'approve'
-              ? `Document Approved: ${updated.courseCode}`
+              ? `${updated.courseCode} was approved`
               : action === 'request_resubmission'
-                ? `Resubmission Requested: ${updated.courseCode}`
-                : `Document Rejected: ${updated.courseCode}`,
-          message:
-            action === 'approve'
-              ? `"${updated.title}" was approved and published by the Super Admin.`
-              : `Your upload "${updated.title}" requires attention: ${cleanReason}`,
+                ? `${updated.courseCode} needs a new upload`
+                : `${updated.courseCode} was rejected`,
+          message: action === 'approve' ? 'Your upload is now live.' : cleanReason,
           category: 'upload' as const,
           audience: 'admins' as BroadcastAudience,
           targetUserId: updated.submittedById,
           createdAt: now,
           isRead: false,
-          createdBy: sanitizeSingleLine(actor.fullName, 120),
           approvalStatus: 'approved' as const,
         },
         ...prev.notifications,
@@ -2587,6 +2639,29 @@ class ArchiveRepository {
     }));
 
     this.syncCatalogFromAcademicDoc(updated);
+
+    // Tell students (and School Admins) once a past question is really live.
+    if (action === 'approve') {
+      const catalogId = `pqdoc-${updated.id}`;
+      const school = this.state.schools.find((s) => s.id === updated.schoolId);
+      const isLive = this.state.documents.some((d) => d.id === catalogId);
+      const alreadyAnnounced = this.state.notifications.some(
+        (n) => n.id === `notif-new-${catalogId}`
+      );
+      if (isLive && !alreadyAnnounced) {
+        const notice = buildNewDocumentNotification({
+          docId: catalogId,
+          courseCode: updated.courseCode,
+          session: updated.session,
+          semester: updated.semester,
+          schoolId: updated.schoolId,
+          schoolCode: school?.code ?? updated.schoolCode,
+          // The uploader already got "was approved" above
+          exceptUserId: updated.submittedById,
+        });
+        this.update((prev) => ({ ...prev, notifications: [notice, ...prev.notifications] }));
+      }
+    }
 
     return updated;
   }

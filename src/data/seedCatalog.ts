@@ -272,9 +272,8 @@ export const SEED_PAST_QUESTIONS: PastQuestionDoc[] = [
 export const SEED_NOTIFICATIONS: AppNotification[] = [
   {
     id: 'notif-1',
-    title: 'New AAUA 2024/2025 Harmattan Past Questions Indexed',
-    message:
-      'GNS 102 and GNS 103 general studies past questions have been scanned, indexed, and added to the searchable on Home.',
+    title: 'GNS 102 and GNS 103 were uploaded',
+    message: 'AAUA uploaded 2024/2025 First Semester.',
     category: 'upload',
     createdAt: '2026-11-22T16:35:00.000Z',
     isRead: false,
@@ -282,18 +281,16 @@ export const SEED_NOTIFICATIONS: AppNotification[] = [
   },
   {
     id: 'notif-2',
-    title: 'AAUA Portal Live for All Departments',
-    message:
-      'Filter instantly by Academic Session, Semester, and Course Code. Every past question is free to read.',
+    title: 'AAUA past questions are live',
+    message: 'Search by course code, session or semester.',
     category: 'system',
     createdAt: '2026-11-21T08:00:00.000Z',
     isRead: false,
   },
   {
     id: 'notif-3',
-    title: 'New: Materials Reading Guides',
-    message:
-      'Study notes for GNS 101, GNS 102 and GNS 103 are now in the Materials tab. Read them to prepare for your exams.',
+    title: 'Materials are here',
+    message: 'Reading guides for GNS 101, GNS 102 and GNS 103 are in the Materials tab.',
     category: 'system',
     createdAt: '2026-11-25T09:00:00.000Z',
     isRead: false,

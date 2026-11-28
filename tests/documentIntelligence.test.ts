@@ -832,7 +832,7 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
       riskLevel: 'low',
     });
     assert.equal(uploaderFeed().length, baseUploader + 1);
-    assert.match(uploaderFeed()[0].title, /Upload Successful/i);
+    assert.equal(uploaderFeed()[0].title, 'PHY 101 was uploaded');
     assert.equal(studentFeed().length, baseStudent);
 
     // A Super Admin decision with a reason is still sent to the uploader.
@@ -843,7 +843,152 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
       rejectionReason: 'Photo is altered',
     });
     assert.equal(uploaderFeed().length, baseUploader + 2);
+    assert.equal(uploaderFeed()[0].title, 'PHY 101 was rejected');
+    assert.equal(uploaderFeed()[0].message, 'Photo is altered');
     assert.equal(studentFeed().length, baseStudent);
+  });
+
+  test('14. Notifications are role based, short, and never say who did it', () => {
+    const superAdmin = makeSuperAdmin();
+    const uploader = makeSchoolAdmin();
+    const otherAdmin: AuthenticatedUser = { ...makeSchoolAdmin(), id: 'usr-sadmin-2', email: 'two@aaua.edu.ng' };
+    const student = makeStudent('stu-feed-1');
+    const otherStudent = makeStudent('stu-feed-2', 'Ada Obi');
+
+    const studentFeed = (u = student) => archiveRepository.getNotificationsForWorkspace('student', u.id);
+    const adminFeed = (u = uploader) => archiveRepository.getNotificationsForWorkspace('school_admin', u.id);
+    const titles = (list: Array<{ title: string }>) => list.map((n) => n.title);
+    const noWhoDidIt = (list: Array<{ title: string; message: string }>) =>
+      list.forEach((n) => assert.doesNotMatch(`${n.title} ${n.message}`, /super\s*admin/i));
+
+    const payload = (code: string, sha: string) => ({
+      schoolId: 'sch-aaua',
+      title: `${code} Exam Paper`,
+      courseCode: code,
+      courseTitle: 'Test Course',
+      level: '200L' as const,
+      session: '2023/2024',
+      semester: 'First Semester' as const,
+      category: 'past_question' as const,
+      originalFileName: `${code}.pdf`,
+      mimeType: 'application/pdf',
+      detectedFormat: 'pdf' as const,
+      fileSizeBytes: 2048,
+      sha256: sha.repeat(64),
+      pageCount: 1,
+      extractedText: `${code} 2023/2024\n1. Define a set.\n2. State the pigeonhole principle.`,
+      summary: 's',
+      headings: [],
+      pages: [],
+      diagrams: [],
+      tables: [],
+      formulas: [],
+      qrCodesFound: [],
+      averageOcrConfidence: 95,
+      deterministicChecks: [],
+      decision: 'auto_approved' as const,
+      riskLevel: 'low' as const,
+    });
+
+    // 1. Upload passes the checks: only the uploader hears about it, in plain words
+    const doc = archiveRepository.submitScannedDocument(uploader, payload('CSC 301', 'e'));
+    assert.deepEqual(titles(studentFeed()), titles(studentFeed()), 'sanity');
+    assert.equal(titles(studentFeed()).includes('CSC 301 was uploaded'), false);
+    assert.ok(titles(adminFeed()).includes('CSC 301 was uploaded'));
+    assert.equal(adminFeed().find((n) => n.title === 'CSC 301 was uploaded')?.message, 'It will go live once it is checked.');
+    assert.equal(titles(adminFeed(otherAdmin)).includes('CSC 301 was uploaded'), false);
+
+    // 2. Approved: students and other admins see the public notice, the uploader gets the result
+    archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
+    const publicNotice = studentFeed().find((n) => n.title === 'CSC 301 was uploaded');
+    assert.ok(publicNotice, 'student sees the new document');
+    assert.equal(publicNotice.message, 'AAUA uploaded 2023/2024 First Semester.');
+    assert.equal(publicNotice.targetDocId, `pqdoc-${doc.id}`);
+    assert.ok(studentFeed(otherStudent).some((n) => n.title === 'CSC 301 was uploaded'));
+    assert.ok(adminFeed(otherAdmin).some((n) => n.title === 'CSC 301 was uploaded'), 'other School Admins see it too');
+    const approved = adminFeed().find((n) => n.title === 'CSC 301 was approved');
+    assert.equal(approved?.message, 'Your upload is now live.');
+    assert.equal(
+      adminFeed().some((n) => n.id === publicNotice.id),
+      false,
+      'uploader is not shown the same upload twice'
+    );
+    assert.equal(titles(studentFeed()).includes('CSC 301 was approved'), false, 'students never see upload results');
+
+    // approving again does not announce it twice
+    archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
+    assert.equal(studentFeed().filter((n) => n.title === 'CSC 301 was uploaded').length, 1);
+
+    // 3. Rejected: the uploader sees the reason, students see nothing new
+    const bad = archiveRepository.submitScannedDocument(uploader, payload('CSC 302', 'f'));
+    const studentCount = studentFeed().length;
+    archiveRepository.reviewSubmittedDocument(superAdmin, bad.id, 'reject', {
+      rejectionReason: 'Scan is too blurry to read',
+    });
+    const rejected = adminFeed().find((n) => n.title === 'CSC 302 was rejected');
+    assert.equal(rejected?.message, 'Scan is too blurry to read');
+    assert.equal(studentFeed().length, studentCount);
+    assert.equal(titles(adminFeed(otherAdmin)).includes('CSC 302 was rejected'), false);
+
+    // 4. Resubmission asked: reason only
+    const redo = archiveRepository.submitScannedDocument(uploader, payload('CSC 303', 'a'));
+    archiveRepository.reviewSubmittedDocument(superAdmin, redo.id, 'request_resubmission', {
+      rejectionReason: 'Please upload page 2 as well',
+    });
+    assert.equal(adminFeed().find((n) => n.title === 'CSC 303 needs a new upload')?.message, 'Please upload page 2 as well');
+
+    // 5. Announcements: students only see them after they are approved, sender is told either way
+    const live = archiveRepository.submitSchoolAdminNotification(uploader, {
+      schoolId: 'sch-aaua',
+      title: 'Exams start Monday',
+      message: 'Check your timetable.',
+    });
+    assert.equal(titles(studentFeed()).includes('Exams start Monday'), false, 'pending announcements stay hidden');
+    archiveRepository.verifySchoolAdminNotification(superAdmin, live.id, 'approve');
+    assert.ok(titles(studentFeed()).includes('Exams start Monday'));
+    assert.ok(titles(adminFeed(otherAdmin)).includes('Exams start Monday'));
+    assert.equal(titles(adminFeed()).includes('Exams start Monday'), false, 'sender gets the result instead of a copy');
+    assert.equal(adminFeed().find((n) => n.title === 'Your notification is live')?.message, '"Exams start Monday" was sent to students.');
+
+    const declined = archiveRepository.submitSchoolAdminNotification(uploader, {
+      schoolId: 'sch-aaua',
+      title: 'Free data for all',
+      message: 'Click here.',
+    });
+    archiveRepository.verifySchoolAdminNotification(superAdmin, declined.id, 'reject', 'Not an official notice');
+    assert.equal(titles(studentFeed()).includes('Free data for all'), false);
+    assert.equal(
+      adminFeed().find((n) => n.title === 'Your notification was declined')?.message,
+      '"Free data for all": Not an official notice'
+    );
+
+    // 6. Super Admin notices reach the right people
+    archiveRepository.sendBroadcastNotification(superAdmin, { title: 'For students', message: 'Hello students.', category: 'system', audience: 'students' });
+    archiveRepository.sendBroadcastNotification(superAdmin, { title: 'For admins', message: 'Hello admins.', category: 'system', audience: 'admins' });
+    archiveRepository.sendBroadcastNotification(superAdmin, { title: 'For everyone', message: 'Hello all.', category: 'system', audience: 'all' });
+    assert.deepEqual(['For everyone', 'For students'].every((t) => titles(studentFeed()).includes(t)), true);
+    assert.equal(titles(studentFeed()).includes('For admins'), false);
+    assert.deepEqual(['For everyone', 'For students', 'For admins'].every((t) => titles(adminFeed()).includes(t)), true);
+
+    // 7. A payment receipt is for the person who paid, not every student
+    archiveRepository.recordPaymentTransaction(student, {
+      reference: 'REF-123',
+      provider: 'paystack' as never,
+      userId: student.id,
+      userName: student.fullName,
+      userEmail: student.email,
+      tierId: 'standard',
+      tierName: 'Standard Plan',
+      billingPeriod: 'semester',
+      amountNaira: 1500,
+    });
+    assert.ok(titles(studentFeed()).includes('Standard Plan is active'));
+    assert.equal(titles(studentFeed(otherStudent)).includes('Standard Plan is active'), false);
+    assert.equal(titles(adminFeed(otherAdmin)).includes('Standard Plan is active'), false);
+
+    // 8. Nothing anyone can see here says who did it
+    noWhoDidIt(studentFeed());
+    noWhoDidIt(adminFeed());
   });
 });
 

@@ -277,7 +277,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                         · Updated
                       </span>
                     )}
-                    {notif.targetUserId && (
+                    {notif.targetUserId && notif.category !== 'upload' && (
                       <span className="font-mono-tabular text-[11px] font-medium text-[#505460]">
                         · Direct message
                       </span>
