@@ -1,4 +1,10 @@
-import type { ExtractedDiagramAsset, VectorDiagramScene } from '../../core/types';
+import type {
+  DiagramEdgeItem,
+  DiagramNodeItem,
+  DiagramSemanticType,
+  ExtractedDiagramAsset,
+  VectorDiagramScene,
+} from '../../core/types';
 import { encodeGrayToPngDataUrl } from './imagePreprocessor';
 
 export interface PdfTextTokenLike {
@@ -564,27 +570,42 @@ export function extractPdfVectorDiagrams(params: {
     const sceneWidth = Math.max(40, Math.round(boxMaxX - boxMinX + viewPad * 2));
     const sceneHeight = Math.max(40, Math.round(boxMaxY - boxMinY + viewPad * 2));
 
+    const polylines = cluster.paths.slice(0, 120).map((p) => ({
+      points: p.points.map(([x, y]) => [
+        Number((x - originX).toFixed(1)),
+        Number((y - originY).toFixed(1)),
+      ] as [number, number]),
+      closed: p.closed,
+      dashed: p.dashed,
+      fill: p.fill,
+    }));
+
+    const labels =
+      nearbyLabels.length > 0
+        ? nearbyLabels.slice(0, 40).map((lbl) => ({
+            x: Number((lbl.x - originX).toFixed(1)),
+            y: Number((lbl.y - originY).toFixed(1)),
+            text: lbl.str,
+            fontSize: Math.max(9, Math.min(16, Math.round(lbl.h || 11))),
+          }))
+        : undefined;
+
+    const structured = analyzeVectorDiagramSemantics({
+      paths: cluster.paths,
+      originX,
+      originY,
+      labels: labels ?? [],
+    });
+
     const vectorScene: VectorDiagramScene = {
       width: sceneWidth,
       height: sceneHeight,
-      polylines: cluster.paths.slice(0, 120).map((p) => ({
-        points: p.points.map(([x, y]) => [
-          Number((x - originX).toFixed(1)),
-          Number((y - originY).toFixed(1)),
-        ]),
-        closed: p.closed,
-        dashed: p.dashed,
-        fill: p.fill,
-      })),
-      labels:
-        nearbyLabels.length > 0
-          ? nearbyLabels.slice(0, 40).map((lbl) => ({
-              x: Number((lbl.x - originX).toFixed(1)),
-              y: Number((lbl.y - originY).toFixed(1)),
-              text: lbl.str,
-              fontSize: Math.max(9, Math.min(16, Math.round(lbl.h || 11))),
-            }))
-          : undefined,
+      diagramType: structured.diagramType,
+      nodes: structured.nodes.length > 0 ? structured.nodes : undefined,
+      edges: structured.edges.length > 0 ? structured.edges : undefined,
+      measurements: structured.measurements.length > 0 ? structured.measurements : undefined,
+      polylines,
+      labels,
     };
 
     const labelSummary = nearbyLabels
@@ -598,7 +619,8 @@ export function extractPdfVectorDiagrams(params: {
       caption: labelSummary
         ? `Drawn figure ${diagrams.length + 1} (${labelSummary}) · Page ${pageNumber}`
         : `Drawn geometric figure ${diagrams.length + 1} · Page ${pageNumber}`,
-      kind: 'diagram',
+      kind: structured.diagramType === 'math_graph' ? 'chart' : 'diagram',
+      diagramType: structured.diagramType,
       width: sceneWidth,
       height: sceneHeight,
       bbox: {
@@ -608,10 +630,232 @@ export function extractPdfVectorDiagrams(params: {
         height: sceneHeight,
       },
       vectorScene,
+      extractedNodes: structured.nodes.length > 0 ? structured.nodes : undefined,
+      extractedEdges: structured.edges.length > 0 ? structured.edges : undefined,
+      extractedMeasurements:
+        structured.measurements.length > 0 ? structured.measurements : undefined,
+      extractedLabels:
+        nearbyLabels.length > 0 ? nearbyLabels.slice(0, 30).map((l) => l.str) : undefined,
     });
   }
 
   return diagrams;
+}
+
+const MEASUREMENT_REGEX =
+  /\b\d+(?:\.\d+)?\s*(?:cm|mm|km|m|Ω|ohms?|kΩ|MΩ|V|mV|kV|A|mA|µA|Hz|kHz|MHz|W|kW|N|kN|J|kJ|Pa|kPa|kg|g|°|deg|rad)\b/gi;
+
+function extractMeasurementsFromStrings(strings: string[]): string[] {
+  const found = new Set<string>();
+  for (const s of strings) {
+    const matches = s.match(MEASUREMENT_REGEX);
+    if (matches) {
+      for (const m of matches) found.add(m.trim());
+    }
+  }
+  return Array.from(found).slice(0, 20);
+}
+
+function classifyDiagramTypeFromSignals(params: {
+  joinedLabels: string;
+  rectCount: number;
+  diamondCount: number;
+  circleCount: number;
+  triangleCount: number;
+  dashedCount: number;
+  directedCount: number;
+  axisAlignedCount: number;
+  totalPaths: number;
+}): DiagramSemanticType {
+  const txt = params.joinedLabels.toLowerCase();
+
+  if (/\b(<<class>>|<<interface>>|\+\s*\w+\s*\(|-\s*\w+\s*:|class\s+diagram)\b/i.test(txt)) {
+    return 'uml_class';
+  }
+  if (/\b(sequence\s+diagram|alt|loop|opt|participant|actor)\b/i.test(txt) && params.dashedCount >= 2) {
+    return 'uml_sequence';
+  }
+  if (/\b(<<include>>|<<extend>>|use\s+case)\b/i.test(txt)) {
+    return 'uml_use_case';
+  }
+  if (/\b(1\.\.n|0\.\.n|1:n|m:n|entity|primary\s+key|foreign\s+key|pk|fk)\b/i.test(txt)) {
+    return 'erd';
+  }
+  if (/\b(resistor|capacitor|inductor|diode|transistor|vcc|gnd|ohm|volt|amp|circuit|switch)\b/i.test(txt) || /[Ωµ]/.test(params.joinedLabels)) {
+    return 'circuit';
+  }
+  if (/\b(router|switch|lan|wan|subnet|ip|node|topology|packet|server|gateway|firewall)\b/i.test(txt)) {
+    return 'network';
+  }
+  if (/\b(f\(x\)|y\s*=|x-axis|y-axis|origin|slope|gradient|plot|histogram|frequency)\b/i.test(txt)) {
+    return 'math_graph';
+  }
+  if (/\b(cell|nucleus|mitochondria|xylem|phloem|organ|membrane|specimen|apparatus|beaker|burette)\b/i.test(txt)) {
+    return 'scientific_illustration';
+  }
+  if (/\b(beam|load|truss|torque|cross[\s-]section|tolerance|blueprint|elevation|isometric)\b/i.test(txt)) {
+    return 'engineering';
+  }
+  if (/\b(start|end|decision|yes|no|process|flowchart|if\s+|then)\b/i.test(txt) || (params.diamondCount >= 1 && params.directedCount >= 1)) {
+    return 'flowchart';
+  }
+  if (params.triangleCount >= 1 || /\b(angle|triangle|circle|radius|diameter|chord|tangent|θ|∠)\b/i.test(txt)) {
+    return 'geometric';
+  }
+  if (params.rectCount >= 2 && params.directedCount >= 1) {
+    return 'flowchart';
+  }
+  if (params.dashedCount >= 2 && params.rectCount >= 2) {
+    return 'uml_sequence';
+  }
+  if (params.circleCount >= 2 && params.totalPaths >= 4 && params.axisAlignedCount < params.totalPaths) {
+    return 'network';
+  }
+  return 'general_diagram';
+}
+
+function analyzeVectorDiagramSemantics(params: {
+  paths: RawVectorPath[];
+  originX: number;
+  originY: number;
+  labels: Array<{ x: number; y: number; text: string }>;
+}): {
+  diagramType: DiagramSemanticType;
+  nodes: DiagramNodeItem[];
+  edges: DiagramEdgeItem[];
+  measurements: string[];
+} {
+  const nodes: DiagramNodeItem[] = [];
+  const edges: DiagramEdgeItem[] = [];
+  let rectCount = 0;
+  let diamondCount = 0;
+  let circleCount = 0;
+  let triangleCount = 0;
+  let dashedCount = 0;
+  let axisAlignedCount = 0;
+
+  for (let idx = 0; idx < params.paths.length; idx += 1) {
+    const p = params.paths[idx];
+    if (p.dashed) dashedCount += 1;
+    if (p.isAxisAligned) axisAlignedCount += 1;
+    const w = p.maxX - p.minX;
+    const h = p.maxY - p.minY;
+    const relBbox = {
+      x: Number((p.minX - params.originX).toFixed(1)),
+      y: Number((p.minY - params.originY).toFixed(1)),
+      width: Number(w.toFixed(1)),
+      height: Number(h.toFixed(1)),
+    };
+
+    const vertexCount =
+      p.closed && p.points.length >= 2 &&
+      Math.hypot(p.points[0][0] - p.points[p.points.length - 1][0], p.points[0][1] - p.points[p.points.length - 1][1]) < 2
+        ? p.points.length - 1
+        : p.points.length;
+
+    if (p.closed && w >= 12 && h >= 10) {
+      let shape: DiagramNodeItem['shape'] = 'unknown';
+      if (p.hasCurve && Math.abs(w - h) <= Math.max(w, h) * 0.25) {
+        shape = 'circle';
+        circleCount += 1;
+      } else if (p.hasCurve) {
+        shape = 'oval';
+        circleCount += 1;
+      } else if (vertexCount === 3) {
+        shape = 'triangle';
+        triangleCount += 1;
+      } else if (vertexCount === 4) {
+        if (p.isAxisAligned) {
+          shape = 'rectangle';
+          rectCount += 1;
+        } else {
+          shape = 'diamond';
+          diamondCount += 1;
+        }
+      }
+
+      const insideLabels = params.labels
+        .filter(
+          (l) =>
+            l.x >= relBbox.x - 4 &&
+            l.x <= relBbox.x + relBbox.width + 6 &&
+            l.y >= relBbox.y - 4 &&
+            l.y <= relBbox.y + relBbox.height + 6
+        )
+        .map((l) => l.text)
+        .join(' ')
+        .trim();
+
+      nodes.push({
+        id: `node-${nodes.length + 1}`,
+        shape,
+        label: insideLabels || undefined,
+        bbox: relBbox,
+      });
+    } else if (!p.closed && p.points.length >= 2) {
+      const startPt = p.points[0];
+      const endPt = p.points[p.points.length - 1];
+      const len = Math.hypot(endPt[0] - startPt[0], endPt[1] - startPt[1]);
+      if (len >= 10) {
+        edges.push({
+          id: `edge-${edges.length + 1}`,
+          directed: false,
+          dashed: p.dashed,
+          points: p.points.map(([x, y]) => [
+            Number((x - params.originX).toFixed(1)),
+            Number((y - params.originY).toFixed(1)),
+          ]),
+        });
+      }
+    }
+  }
+
+  // Link small closed triangles near open edge endpoints as directed arrowheads
+  let directedCount = 0;
+  for (const edge of edges) {
+    const end = edge.points[edge.points.length - 1];
+    const start = edge.points[0];
+    const nearArrowHead = nodes.some(
+      (n) =>
+        n.shape === 'triangle' &&
+        n.bbox.width < 18 &&
+        n.bbox.height < 18 &&
+        (Math.hypot(n.bbox.x - end[0], n.bbox.y - end[1]) < 16 ||
+          Math.hypot(n.bbox.x - start[0], n.bbox.y - start[1]) < 16)
+    );
+    if (nearArrowHead) {
+      edge.directed = true;
+      directedCount += 1;
+    }
+
+    // Attach fromNodeId / toNodeId strictly when endpoints terminate near node boxes
+    const findNearNode = (pt: [number, number]) =>
+      nodes.find(
+        (n) =>
+          pt[0] >= n.bbox.x - 10 &&
+          pt[0] <= n.bbox.x + n.bbox.width + 10 &&
+          pt[1] >= n.bbox.y - 10 &&
+          pt[1] <= n.bbox.y + n.bbox.height + 10
+      );
+    edge.fromNodeId = findNearNode(start)?.id;
+    edge.toNodeId = findNearNode(end)?.id;
+  }
+
+  const labelStrings = params.labels.map((l) => l.text);
+  const measurements = extractMeasurementsFromStrings(labelStrings);
+  const diagramType = classifyDiagramTypeFromSignals({
+    joinedLabels: labelStrings.join(' '),
+    rectCount,
+    diamondCount,
+    circleCount,
+    triangleCount,
+    dashedCount,
+    directedCount,
+    axisAlignedCount,
+    totalPaths: params.paths.length,
+  });
+
+  return { diagramType, nodes, edges, measurements };
 }
 
 /**
@@ -693,8 +937,10 @@ export async function extractRasterDiagramsFromGrayscale(params: {
   height: number;
   pageNumber: number;
   maxFigures?: number;
+  wordBoxes?: Array<{ text: string; x0: number; y0: number; x1: number; y1: number }>;
+  ocrText?: string;
 }): Promise<ExtractedDiagramAsset[]> {
-  const { gray, width, height, pageNumber, maxFigures = 4 } = params;
+  const { gray, width, height, pageNumber, maxFigures = 4, wordBoxes, ocrText } = params;
   if (width < 120 || height < 120 || gray.length < width * height) return [];
 
   const scale = Math.min(1, 420 / width);
@@ -818,14 +1064,14 @@ export async function extractRasterDiagramsFromGrayscale(params: {
     if (cw > aw * 0.88 && ch > ah * 0.88) continue;
     if ((ch <= 4 && cw > aw * 0.22) || (cw <= 4 && ch > ah * 0.22)) continue;
     const fillRatio = c.area / (cw * ch);
-    // Line drawings / geometric diagrams have 0.02..0.60 ink occupancy inside bounding box
+    // Line drawings / geometric diagrams have 0.015..0.68 ink occupancy inside bounding box
     if (fillRatio < 0.015 || fillRatio > 0.68) continue;
     figureBoxes.push({ ...c });
   }
 
   if (figureBoxes.length === 0) return [];
 
-  // Attach nearby small label components (e.g. A, B, C, theta) within 16px on analysis scale
+  // Attach nearby small label components (e.g. A, B, C, theta) within 14px on analysis scale
   const labelPad = 14;
   for (const fig of figureBoxes) {
     for (const c of rawComps) {
@@ -874,7 +1120,7 @@ export async function extractRasterDiagramsFromGrayscale(params: {
     }
   }
 
-  // Sort top-to-bottom and encode crisp stroke-completed PNG crops
+  // Sort top-to-bottom and encode crisp stroke-completed PNG crops + raw original reference crop
   figureBoxes.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
   const outDiagrams: ExtractedDiagramAsset[] = [];
 
@@ -888,20 +1134,63 @@ export async function extractRasterDiagramsFromGrayscale(params: {
     const cropH = ry1 - ry0 + 1;
     if (cropW < 40 || cropH < 32) continue;
 
+    // Preserve unedited original crop reference
+    const rawCrop = new Uint8Array(cropW * cropH);
+    for (let y = 0; y < cropH; y += 1) {
+      const srcOff = (ry0 + y) * width + rx0;
+      rawCrop.set(gray.subarray(srcOff, srcOff + cropW), y * cropW);
+    }
+
     const cleanCrop = completeAndCrispShapeRegion(gray, width, rx0, ry0, cropW, cropH);
-    const encoded = await encodeGrayToPngDataUrl(cleanCrop, cropW, cropH);
+    const [encoded, origEncoded] = await Promise.all([
+      encodeGrayToPngDataUrl(cleanCrop, cropW, cropH),
+      encodeGrayToPngDataUrl(rawCrop, cropW, cropH),
+    ]);
+
+    const insideLabels = (wordBoxes ?? [])
+      .filter((w) => {
+        const cx = (w.x0 + w.x1) / 2;
+        const cy = (w.y0 + w.y1) / 2;
+        return cx >= rx0 && cx <= rx1 && cy >= ry0 && cy <= ry1;
+      })
+      .map((w) => w.text.trim())
+      .filter(Boolean);
+
+    const extractedMeasurements = extractMeasurementsFromStrings([
+      ...insideLabels,
+      ...(ocrText ? [ocrText] : []),
+    ]);
+
+    const diagramType = classifyDiagramTypeFromSignals({
+      joinedLabels: [...insideLabels, ocrText ?? ''].join(' '),
+      rectCount: 1,
+      diamondCount: 0,
+      circleCount: 0,
+      triangleCount: 0,
+      dashedCount: 0,
+      directedCount: 0,
+      axisAlignedCount: 1,
+      totalPaths: 4,
+    });
+
     outDiagrams.push({
       id: `fig-${pageNumber}-${outDiagrams.length + 1}`,
       pageNumber,
       caption: `Drawn figure / diagram ${outDiagrams.length + 1} · Page ${pageNumber}`,
-      kind: 'diagram',
+      kind: diagramType === 'math_graph' ? 'chart' : 'diagram',
+      diagramType,
       mimeType: 'image/png',
       dataUrl: encoded.dataUrl,
+      originalCropDataUrl: origEncoded.dataUrl,
       width: cropW,
       height: cropH,
       bbox: { x: rx0, y: ry0, width: cropW, height: cropH },
+      extractedMeasurements:
+        extractedMeasurements.length > 0 ? extractedMeasurements : undefined,
+      extractedLabels: insideLabels.length > 0 ? insideLabels.slice(0, 30) : undefined,
     });
   }
 
   return outDiagrams;
 }
+

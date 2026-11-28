@@ -20,6 +20,16 @@ export interface ImageQualityAnalysis extends PageImageQualityMetrics {
   isUnevenLighting: boolean;
   isBlurry: boolean;
   isLikelyBlank: boolean;
+  isTornOrDamaged: boolean;
+  isFadedPrinting: boolean;
+  hasStrongShadows: boolean;
+  hasStainsOrMarks: boolean;
+  excessiveRotationDeg: number;
+  hasCroppedEdgeText: boolean;
+  hasFoldLinesOrCreases: boolean;
+  isIncompleteCapture: boolean;
+  unreadableRegionsCount: number;
+  actionableWarnings: string[];
 }
 
 export interface QuadPoint {
@@ -39,6 +49,8 @@ export interface PreprocessedImageResult {
   previewDataUrl: string;
   ocrBytes?: Uint8Array;
   ocrGray?: Uint8Array;
+  rawRgba?: Uint8ClampedArray;
+  rawGray?: Uint8Array;
   width: number;
   height: number;
   originalWidth: number;
@@ -278,9 +290,174 @@ export function analyzeGrayscaleQuality(
 
   const isLowResolution = width < 1200 || height < 1000;
   const isVeryLarge = width > 2800 || height > 3600;
+  const hasStrongShadows = shadowVariance >= 22;
   const isUnevenLighting = shadowVariance >= 13 || darkBorderFraction >= 0.25;
   const isBlurry = sharpnessScore < 9.5;
   const isLikelyBlank = blankRatio < 0.0012 && contrastSpread < 25;
+
+  // Faded printing: visible strokes exist, but darkest ink percentile is shallow/pale
+  const isFadedPrinting = !isLikelyBlank && p5 > 118 && contrastSpread < 92;
+
+  // Cropped edge text: foreground ink strokes touching within 3px of page frame borders
+  let borderInkHits = 0;
+  let borderTotalChecks = 0;
+  const edgeCut = Math.max(20, Math.min(135, p50 - 48));
+  if (width >= 40 && height >= 40) {
+    const marginPx = 3;
+    for (let x = marginPx; x < width - marginPx; x += Math.max(1, Math.floor(width / 180))) {
+      if (gray[marginPx * width + x] < edgeCut) borderInkHits += 1;
+      if (gray[(height - 1 - marginPx) * width + x] < edgeCut) borderInkHits += 1;
+      borderTotalChecks += 2;
+    }
+    for (let y = marginPx; y < height - marginPx; y += Math.max(1, Math.floor(height / 180))) {
+      if (gray[y * width + marginPx] < edgeCut) borderInkHits += 1;
+      if (gray[y * width + (width - 1 - marginPx)] < edgeCut) borderInkHits += 1;
+      borderTotalChecks += 2;
+    }
+  }
+  const borderInkRatio = borderTotalChecks > 0 ? borderInkHits / borderTotalChecks : 0;
+  const hasCroppedEdgeText = borderInkRatio > 0.025 && borderInkRatio < 0.42 && darkBorderFraction < 0.22;
+
+  // Stains / marks & unreadable degraded tiles on inner 8x8 grid
+  let stainTiles = 0;
+  let unreadableRegionsCount = 0;
+  for (let gy = 0; gy < 8; gy += 1) {
+    for (let gx = 0; gx < 8; gx += 1) {
+      const tx0 = xStart + gx * tileW;
+      const ty0 = yStart + gy * tileH;
+      const tx1 = Math.min(xEnd - 1, tx0 + tileW);
+      const ty1 = Math.min(yEnd - 1, ty0 + tileH);
+      let tSum = 0;
+      let tGrad = 0;
+      let tCount = 0;
+      let midDarkCount = 0;
+      for (let y = ty0 + 1; y < ty1; y += 2) {
+        const off = y * width;
+        for (let x = tx0 + 1; x < tx1; x += 2) {
+          const c = gray[off + x];
+          tSum += c;
+          if (c < p50 - 24 && c > p5 + 22) midDarkCount += 1;
+          const mag =
+            Math.abs(gray[off + x + 1] - gray[off + x - 1]) +
+            Math.abs(gray[(y + 1) * width + x] - gray[(y - 1) * width + x]);
+          tGrad += mag;
+          tCount += 1;
+        }
+      }
+      if (tCount === 0) continue;
+      const tMean = tSum / tCount;
+      const meanGrad = tGrad / tCount;
+      const stainFrac = midDarkCount / tCount;
+      if (tMean < tileAvg - 22 && meanGrad < 12 && stainFrac > 0.28) {
+        stainTiles += 1;
+      }
+      if (tMean < 105 && meanGrad < 8 && contrastSpread > 35) {
+        unreadableRegionsCount += 1;
+      }
+    }
+  }
+  const hasStainsOrMarks = stainTiles >= 2;
+
+  // Fold lines / creases: continuous subtle-to-medium vertical or horizontal shadow/ridge band
+  let hasFoldLinesOrCreases = false;
+  if (width >= 100 && height >= 100) {
+    let creaseRows = 0;
+    for (let y = Math.floor(height * 0.15); y < Math.floor(height * 0.85); y += 3) {
+      let rowSum = 0;
+      let bandDrop = 0;
+      const off = y * width;
+      for (let x = xStart; x < xEnd; x += 4) {
+        rowSum += gray[off + x];
+        if (gray[off + x] < tileAvg - 14 && gray[off + x] > 75) bandDrop += 1;
+      }
+      const n = Math.max(1, Math.floor((xEnd - xStart) / 4));
+      if (rowSum / n < tileAvg - 12 && bandDrop / n > 0.62) {
+        creaseRows += 1;
+      }
+    }
+    let creaseCols = 0;
+    for (let x = Math.floor(width * 0.15); x < Math.floor(width * 0.85); x += 3) {
+      let colSum = 0;
+      let bandDrop = 0;
+      for (let y = yStart; y < yEnd; y += 4) {
+        const val = gray[y * width + x];
+        colSum += val;
+        if (val < tileAvg - 14 && val > 75) bandDrop += 1;
+      }
+      const n = Math.max(1, Math.floor((yEnd - yStart) / 4));
+      if (colSum / n < tileAvg - 12 && bandDrop / n > 0.62) {
+        creaseCols += 1;
+      }
+    }
+    hasFoldLinesOrCreases = creaseRows >= 2 || creaseCols >= 2;
+  }
+
+  // Torn / damaged outer corners or missing sheet chunks when inner paper is bright
+  let darkCorners = 0;
+  const cornerSz = Math.max(8, Math.floor(Math.min(width, height) * 0.06));
+  const checkCornerMean = (cx0: number, cy0: number) => {
+    let s = 0;
+    let c = 0;
+    for (let y = cy0; y < Math.min(height, cy0 + cornerSz); y += 2) {
+      for (let x = cx0; x < Math.min(width, cx0 + cornerSz); x += 2) {
+        s += gray[y * width + x];
+        c += 1;
+      }
+    }
+    return c > 0 ? s / c : 255;
+  };
+  const cornerMeans = [
+    checkCornerMean(0, 0),
+    checkCornerMean(Math.max(0, width - cornerSz), 0),
+    checkCornerMean(0, Math.max(0, height - cornerSz)),
+    checkCornerMean(Math.max(0, width - cornerSz), Math.max(0, height - cornerSz)),
+  ];
+  for (const cm of cornerMeans) {
+    if (cm < tileAvg - 65) darkCorners += 1;
+  }
+  const isTornOrDamaged =
+    tileAvg > 155 &&
+    darkBorderFraction < 0.25 &&
+    darkCorners >= 1 &&
+    darkCorners <= 2 &&
+    Math.max(...cornerMeans) - Math.min(...cornerMeans) > 65;
+
+  const isIncompleteCapture =
+    hasCroppedEdgeText || (darkCorners >= 2 && darkBorderFraction >= 0.35 && borderInkRatio > 0.04);
+
+  const actionableWarnings: string[] = [];
+  if (isLowResolution) {
+    actionableWarnings.push(`Low resolution (${width}x${height}px) — re-capture closer or at higher DPI if small subscripts are unclear.`);
+  }
+  if (isBlurry) {
+    actionableWarnings.push('Image blur detected; check small numbers, punctuation, and mathematical symbols.');
+  }
+  if (isFadedPrinting) {
+    actionableWarnings.push('Faded printing or light ink detected; verify faint text lines.');
+  }
+  if (hasStrongShadows) {
+    actionableWarnings.push('Strong shadow gradients detected across the page.');
+  } else if (isUnevenLighting) {
+    actionableWarnings.push('Uneven lighting detected; adaptive illumination correction applied.');
+  }
+  if (hasStainsOrMarks) {
+    actionableWarnings.push('Stains, smudges, or dark blotch marks detected on the sheet.');
+  }
+  if (hasFoldLinesOrCreases) {
+    actionableWarnings.push('Paper fold lines or creases detected across text area.');
+  }
+  if (isTornOrDamaged) {
+    actionableWarnings.push('Possible torn corner or damaged page margin detected.');
+  }
+  if (hasCroppedEdgeText || isIncompleteCapture) {
+    actionableWarnings.push('Text or sheet edges touch the frame boundary — page capture may be cropped or incomplete.');
+  }
+  if (unreadableRegionsCount > 0) {
+    actionableWarnings.push(`${unreadableRegionsCount} heavily degraded/unreadable image region(s) flagged for review.`);
+  }
+  if (isLikelyBlank) {
+    actionableWarnings.push('Page appears blank or nearly empty.');
+  }
 
   return {
     width,
@@ -297,6 +474,16 @@ export function analyzeGrayscaleQuality(
     isUnevenLighting,
     isBlurry,
     isLikelyBlank,
+    isTornOrDamaged,
+    isFadedPrinting,
+    hasStrongShadows,
+    hasStainsOrMarks,
+    excessiveRotationDeg: 0,
+    hasCroppedEdgeText,
+    hasFoldLinesOrCreases,
+    isIncompleteCapture,
+    unreadableRegionsCount,
+    actionableWarnings,
   };
 }
 
@@ -1163,55 +1350,6 @@ export function selectPreprocessingStrategy(
   return 'clean_digital';
 }
 
-async function decodeBytesBrowser(
-  bytes: Uint8Array,
-  mimeType: string
-): Promise<{
-  gray: Uint8Array;
-  width: number;
-  height: number;
-  qrMatches: string[];
-}> {
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  const blob = new Blob([copy.buffer], { type: mimeType });
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('Failed to decode uploaded image.'));
-      el.src = objectUrl;
-    });
-    const width = img.naturalWidth || img.width;
-    const height = img.naturalHeight || img.height;
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas 2D context unavailable.');
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const qrMatches: string[] = [];
-    try {
-      const qr = jsQR(imgData.data, width, height, { inversionAttempts: 'dontInvert' });
-      if (qr?.data) qrMatches.push(qr.data);
-    } catch {
-      // Ignore QR decoder failures on noisy backgrounds
-    }
-    return {
-      gray: rgbaToGrayscale(imgData.data, width, height),
-      width,
-      height,
-      qrMatches,
-    };
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
 async function encodeGrayBrowser(
   gray: Uint8Array,
   width: number,
@@ -1236,11 +1374,17 @@ async function encodeGrayBrowser(
   };
 }
 
-/** Decodes PNG/JPEG/WEBP bytes to upright single-channel grayscale in Node (Sharp) or Browser (Canvas). */
-export async function decodeBytesToGrayscale(
+/** Decodes PNG/JPEG/WEBP bytes to RGBA + upright grayscale in Node (Sharp) or Browser (Canvas). */
+export async function decodeBytesToRgbaAndGray(
   bytes: Uint8Array,
   mimeType = 'image/png'
-): Promise<{ gray: Uint8Array; width: number; height: number; qrMatches: string[] }> {
+): Promise<{
+  rgba: Uint8ClampedArray;
+  gray: Uint8Array;
+  width: number;
+  height: number;
+  qrMatches: string[];
+}> {
   const sharpFn = await getNodeSharp();
   if (sharpFn) {
     const { data, info } = await sharpFn(bytes)
@@ -1259,6 +1403,7 @@ export async function decodeBytesToGrayscale(
       // Ignore QR error
     }
     return {
+      rgba: clamped,
       gray: rgbaToGrayscale(clamped, width, height),
       width,
       height,
@@ -1266,9 +1411,61 @@ export async function decodeBytesToGrayscale(
     };
   }
   if (typeof document !== 'undefined') {
-    return decodeBytesBrowser(bytes, mimeType);
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    const blob = new Blob([copy.buffer], { type: mimeType });
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Failed to decode uploaded image.'));
+        el.src = objectUrl;
+      });
+      const width = img.naturalWidth || img.width;
+      const height = img.naturalHeight || img.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 2D context unavailable.');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      const imgData = ctx.getImageData(0, 0, width, height);
+      const qrMatches: string[] = [];
+      try {
+        const qr = jsQR(imgData.data, width, height, { inversionAttempts: 'dontInvert' });
+        if (qr?.data) qrMatches.push(qr.data);
+      } catch {
+        // Ignore
+      }
+      return {
+        rgba: imgData.data,
+        gray: rgbaToGrayscale(imgData.data, width, height),
+        width,
+        height,
+        qrMatches,
+      };
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   }
   throw new Error('Neither sharp (Node) nor Canvas (browser) is available to decode images.');
+}
+
+/** Decodes PNG/JPEG/WEBP bytes to upright single-channel grayscale in Node (Sharp) or Browser (Canvas). */
+export async function decodeBytesToGrayscale(
+  bytes: Uint8Array,
+  mimeType = 'image/png'
+): Promise<{ gray: Uint8Array; width: number; height: number; qrMatches: string[] }> {
+  const decoded = await decodeBytesToRgbaAndGray(bytes, mimeType);
+  return {
+    gray: decoded.gray,
+    width: decoded.width,
+    height: decoded.height,
+    qrMatches: decoded.qrMatches,
+  };
 }
 
 /** Encodes a grayscale buffer into a lossless PNG data URL + bytes in Node or Browser. */
@@ -1319,38 +1516,20 @@ export async function preprocessImageForOcr(input: {
     throw new Error('No image bytes or data URL provided to image preprocessor.');
   }
 
-  const sharpFn = await getNodeSharp();
   let width = 0;
   let height = 0;
   let gray: Uint8Array;
+  let rawRgba: Uint8ClampedArray | undefined;
+  let rawGrayCopy: Uint8Array | undefined;
   let qrMatches: string[] = [];
 
-  if (sharpFn) {
-    // Auto-orient EXIF & decode to RGBA so QR scanning & alpha compositing work identically
-    const { data, info } = await sharpFn(sourceDecoded.bytes)
-      .rotate()
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    width = info.width;
-    height = info.height;
-    const clamped = new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength);
-    try {
-      const qr = jsQR(clamped, width, height, { inversionAttempts: 'dontInvert' });
-      if (qr?.data) qrMatches.push(qr.data);
-    } catch {
-      // Ignore QR error
-    }
-    gray = rgbaToGrayscale(clamped, width, height);
-  } else if (typeof document !== 'undefined') {
-    const decoded = await decodeBytesBrowser(sourceDecoded.bytes, sourceDecoded.mimeType);
-    width = decoded.width;
-    height = decoded.height;
-    gray = decoded.gray;
-    qrMatches = decoded.qrMatches;
-  } else {
-    throw new Error('Neither sharp (Node) nor Canvas (browser) is available to decode images.');
-  }
+  const decoded = await decodeBytesToRgbaAndGray(sourceDecoded.bytes, sourceDecoded.mimeType);
+  width = decoded.width;
+  height = decoded.height;
+  gray = decoded.gray;
+  rawRgba = decoded.rgba;
+  rawGrayCopy = decoded.gray.slice();
+  qrMatches = decoded.qrMatches;
 
   const originalWidth = width;
   const originalHeight = height;
@@ -1398,12 +1577,23 @@ export async function preprocessImageForOcr(input: {
   }
 
   const qualityMetrics = analyzeGrayscaleQuality(gray, width, height);
-  // Preserve border flag from uncropped inspection when crop/warp happened
+  // Preserve border/tear/stain inspection from pre-crop sheet analysis
   qualityMetrics.darkBorderFraction = preQuality.darkBorderFraction;
+  if (preQuality.isTornOrDamaged) qualityMetrics.isTornOrDamaged = true;
+  if (preQuality.isIncompleteCapture && !perspectiveCorrected) {
+    qualityMetrics.isIncompleteCapture = true;
+  }
 
   // 2. Estimate skew on native grid BEFORE resizing (supports up to ±14 degrees)
   const skewDeg = estimateSkewAngle(gray, width, height);
   qualityMetrics.skewAngleDeg = skewDeg;
+  if (Math.abs(skewDeg) >= 4.5) {
+    qualityMetrics.excessiveRotationDeg = skewDeg;
+    qualityMetrics.actionableWarnings.push(
+      `Excessive tilt/rotation (${skewDeg.toFixed(1)}°) detected; verify alignment after deskew.`
+    );
+  }
+  qualityMetrics.actionableWarnings = Array.from(new Set(qualityMetrics.actionableWarnings));
 
   // 3. Adaptive resolution scaling BEFORE sub-pixel rotation so tiny strokes are never blurred first
   const maxAllowedWidth = 2600;
@@ -1505,6 +1695,7 @@ export async function preprocessImageForOcr(input: {
   const previewTargetW = Math.min(1280, width);
   const previewTargetH = Math.max(1, Math.round((height * previewTargetW) / Math.max(1, width)));
 
+  const sharpFn = await getNodeSharp();
   if (sharpFn) {
     const pngBuf = await sharpFn(Buffer.from(ocrGray), {
       raw: { width, height, channels: 1 },
@@ -1545,6 +1736,8 @@ export async function preprocessImageForOcr(input: {
     previewDataUrl,
     ocrBytes,
     ocrGray,
+    rawRgba,
+    rawGray: rawGrayCopy,
     width,
     height,
     originalWidth,

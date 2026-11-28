@@ -2343,6 +2343,17 @@ class ArchiveRepository {
       parentZipName?: string;
       /** Replace an existing upload (School Admin "Update") instead of adding a new one. */
       replaceDocId?: string;
+      academicMetadata?: AcademicDocumentRecord['academicMetadata'];
+      classification?: AcademicDocumentRecord['classification'];
+      integrityReport?: AcademicDocumentRecord['integrityReport'];
+      languageAnalysis?: AcademicDocumentRecord['languageAnalysis'];
+      omrResults?: AcademicDocumentRecord['omrResults'];
+      formResults?: AcademicDocumentRecord['formResults'];
+      handwritingAnalysis?: AcademicDocumentRecord['handwritingAnalysis'];
+      signatures?: AcademicDocumentRecord['signatures'];
+      stamps?: AcademicDocumentRecord['stamps'];
+      moduleReports?: AcademicDocumentRecord['moduleReports'];
+      processingDurationMs?: number;
     }
   ): AcademicDocumentRecord {
     this.requirePermission(
@@ -2463,6 +2474,17 @@ class ArchiveRepository {
           : undefined,
       internalNotes: [],
       parentZipName: payload.parentZipName ? sanitizeSingleLine(payload.parentZipName, 140) : undefined,
+      academicMetadata: payload.academicMetadata,
+      classification: payload.classification,
+      integrityReport: payload.integrityReport,
+      languageAnalysis: payload.languageAnalysis,
+      omrResults: payload.omrResults,
+      formResults: payload.formResults,
+      handwritingAnalysis: payload.handwritingAnalysis,
+      signatures: payload.signatures,
+      stamps: payload.stamps,
+      moduleReports: payload.moduleReports,
+      processingDurationMs: payload.processingDurationMs,
       processingHistory: [
         {
           id: `ph-${Date.now()}-scan`,
@@ -2953,7 +2975,15 @@ class ArchiveRepository {
     patch: Partial<
       Pick<
         AcademicDocumentRecord,
-        'title' | 'courseCode' | 'courseTitle' | 'level' | 'session' | 'semester' | 'category' | 'extractedText'
+        | 'title'
+        | 'courseCode'
+        | 'courseTitle'
+        | 'level'
+        | 'session'
+        | 'semester'
+        | 'category'
+        | 'extractedText'
+        | 'classification'
       >
     >
   ): AcademicDocumentRecord {
@@ -2982,6 +3012,13 @@ class ArchiveRepository {
       session: sanitizeIdentifier(patch.session ?? existing.session, 20) || existing.session,
       semester: patch.semester ?? existing.semester,
       category: patch.category ?? existing.category,
+      classification:
+        patch.classification !== undefined
+          ? {
+              ...patch.classification,
+              overriddenByAdmin: isSuper ? true : patch.classification.overriddenByAdmin,
+            }
+          : existing.classification,
       extractedText:
         patch.extractedText !== undefined
           ? sanitizePlainText(patch.extractedText, 120_000)

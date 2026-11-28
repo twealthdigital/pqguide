@@ -18,6 +18,7 @@ import type {
   AcademicDocCategory,
   AcademicDocumentRecord,
   AuthenticatedUser,
+  DetailedAcademicCategory,
   DocumentPublishOptions,
   SemesterType,
   StudentLevel,
@@ -40,6 +41,7 @@ import {
   type ScanStageId,
 } from '../services/intelligence/documentScannerEngine';
 import { validateScannedDocument } from '../services/intelligence/validationEngine';
+import { mapDetailedToLegacyCategory } from '../services/intelligence/documentClassifier';
 import {
   AcademicBlocksRenderer,
   ExtractedDiagramsGallery,
@@ -47,6 +49,7 @@ import {
   ExtractedFormulasList,
   ExtractedTableCard,
   RichInlineText,
+  SuperAdminIntelligenceSuite,
 } from '../components/academic/AcademicContentRenderer';
 import {
   DetailDialog,
@@ -435,6 +438,17 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
         decisionReason: validation.decisionReason,
         parentZipName: artifact.parentZipName,
         replaceDocId,
+        academicMetadata: artifact.academicMetadata,
+        classification: artifact.classification,
+        integrityReport: artifact.integrityReport,
+        languageAnalysis: artifact.languageAnalysis,
+        omrResults: artifact.omrResults,
+        formResults: artifact.formResults,
+        handwritingAnalysis: artifact.handwritingAnalysis,
+        signatures: artifact.signatures,
+        stamps: artifact.stamps,
+        moduleReports: artifact.moduleReports,
+        processingDurationMs: artifact.processingDurationMs,
       });
 
       // Super Admin uploads go live straight away (when the checks pass), routed to the
@@ -1374,6 +1388,40 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                       text: c.detail,
                     }))}
                 />
+                )}
+
+                {isSuperAdmin && (
+                  <SuperAdminIntelligenceSuite
+                    doc={previewRecord}
+                    onOverrideCategory={(nextCat: DetailedAcademicCategory) => {
+                      try {
+                        const existingCls = previewRecord.classification;
+                        const updated = archiveRepository.updateAcademicDocumentDetails(
+                          currentUser,
+                          previewRecord.id,
+                          {
+                            category: mapDetailedToLegacyCategory(nextCat, previewRecord.diagrams.length > 0),
+                            classification: existingCls
+                              ? {
+                                  ...existingCls,
+                                  primaryCategory: nextCat,
+                                  primaryLabel: nextCat.replace(/_/g, ' '),
+                                  mappedLegacyCategory: mapDetailedToLegacyCategory(
+                                    nextCat,
+                                    previewRecord.diagrams.length > 0
+                                  ),
+                                  overriddenByAdmin: true,
+                                }
+                              : undefined,
+                          }
+                        );
+                        setPreviewRecord(updated);
+                        setNotice(`Updated classification for "${updated.title}" to ${nextCat.replace(/_/g, ' ')}.`);
+                      } catch (err) {
+                        setBannerError(err instanceof Error ? err.message : 'Unable to override classification.');
+                      }
+                    }}
+                  />
                 )}
 
                 {isSuperAdmin && previewRecord.aiFindings && (

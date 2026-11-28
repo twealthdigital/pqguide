@@ -23,10 +23,23 @@ export interface StructuredAiBlock {
   explanation?: string;
 }
 import type {
+  AcademicDocumentRecord,
+  DetailedAcademicCategory,
+  DocumentClassificationResult,
+  DocumentIntegrityReport,
+  ExtractedAcademicMetadata,
   ExtractedDiagramAsset,
   ExtractedFormula,
   ExtractedPageContent,
   ExtractedTable,
+  FormExtractionResult,
+  HandwritingAnalysisResult,
+  LanguageAnalysisResult,
+  OmrScanResult,
+  QrCodeMatch,
+  ScannerModuleRunReport,
+  SignatureDetection,
+  StampDetection,
 } from '../../core/types';
 
 export const KatexFormula: React.FC<{
@@ -331,41 +344,251 @@ const StructuredChartSvg: React.FC<{
   );
 };
 
-export const ExtractedTableCard: React.FC<{ table: Pick<ExtractedTable, 'caption' | 'headers' | 'rows'> }> = ({
-  table,
-}) => (
-  <div className="rounded-2xl border border-[#1A1B20]/10 bg-white overflow-hidden">
-    {table.caption && (
-      <div className="px-3.5 py-2 bg-[#F6F7F9] border-b border-[#1A1B20]/[0.07] text-xs font-bold text-[#1A1B20]">
-        {table.caption}
+type TableCardInput = Pick<ExtractedTable, 'caption' | 'headers' | 'rows'> &
+  Partial<
+    Pick<
+      ExtractedTable,
+      | 'borderStyle'
+      | 'hasMergedCells'
+      | 'continuedFromPage'
+      | 'continuesOnPage'
+      | 'uncertainStructure'
+      | 'uncertaintyReason'
+      | 'rowHeaders'
+      | 'markdown'
+      | 'jsonRows'
+    >
+  >;
+
+function buildFallbackMarkdown(table: TableCardInput): string {
+  if (table.markdown) return table.markdown;
+  const cols = Math.max(table.headers.length, ...table.rows.map((r) => r.length), 1);
+  const pad = (row: string[]) => Array.from({ length: cols }, (_, i) => (row[i] ?? '').replace(/\|/g, '\\|'));
+  const head = pad(table.headers.length > 0 ? table.headers : Array.from({ length: cols }, (_, i) => `Col ${i + 1}`));
+  const sep = Array.from({ length: cols }, () => '---');
+  const lines = [`| ${head.join(' | ')} |`, `| ${sep.join(' | ')} |`];
+  for (const r of table.rows) lines.push(`| ${pad(r).join(' | ')} |`);
+  return lines.join('\n');
+}
+
+function buildFallbackJson(table: TableCardInput): Array<Record<string, string>> {
+  if (table.jsonRows) return table.jsonRows;
+  return table.rows.map((row) => {
+    const rec: Record<string, string> = {};
+    const cols = Math.max(table.headers.length, row.length);
+    for (let i = 0; i < cols; i += 1) {
+      const key = table.headers[i]?.trim() || `col_${i + 1}`;
+      rec[key] = row[i] ?? '';
+    }
+    return rec;
+  });
+}
+
+export const ExtractedTableCard: React.FC<{ table: TableCardInput }> = ({ table }) => {
+  const [copiedMode, setCopiedMode] = useState<'md' | 'json' | null>(null);
+  const [exportPreview, setExportPreview] = useState<'none' | 'md' | 'json'>('none');
+
+  const handleCopy = async (mode: 'md' | 'json') => {
+    const content =
+      mode === 'md'
+        ? buildFallbackMarkdown(table)
+        : JSON.stringify(buildFallbackJson(table), null, 2);
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMode(mode);
+      window.setTimeout(() => setCopiedMode(null), 1600);
+    } catch {
+      setExportPreview((prev) => (prev === mode ? 'none' : mode));
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white overflow-hidden">
+      <div className="px-3.5 py-2 bg-[#F6F7F9] border-b border-[#1A1B20]/[0.07] flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="font-bold text-[#1A1B20]">
+            {table.caption || 'Extracted Table'}
+          </span>
+          {table.borderStyle && (
+            <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#505460]">
+              {table.borderStyle}
+            </span>
+          )}
+          {table.hasMergedCells && (
+            <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#505460]">
+              Merged cells
+            </span>
+          )}
+          {table.continuedFromPage && (
+            <span className="rounded bg-[#EFF6FF] text-[#1D4ED8] px-1.5 py-0.5 text-[10px] font-semibold">
+              Continued from p.{table.continuedFromPage}
+            </span>
+          )}
+          {table.continuesOnPage && (
+            <span className="rounded bg-[#EFF6FF] text-[#1D4ED8] px-1.5 py-0.5 text-[10px] font-semibold">
+              Continues on p.{table.continuesOnPage}
+            </span>
+          )}
+          {table.uncertainStructure && (
+            <span
+              title={table.uncertaintyReason}
+              className="rounded bg-[#FEF3C7] text-[#92400E] px-1.5 py-0.5 text-[10px] font-bold"
+            >
+              Uncertain structure
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold">
+          <button
+            type="button"
+            onClick={() => void handleCopy('md')}
+            className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+          >
+            {copiedMode === 'md' ? 'Copied MD' : 'Copy MD'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleCopy('json')}
+            className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+          >
+            {copiedMode === 'json' ? 'Copied JSON' : 'Copy JSON'}
+          </button>
+        </div>
       </div>
-    )}
-    <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse text-xs sm:text-sm">
-        <thead>
-          <tr className="bg-[#1D1E23] text-white">
-            {table.headers.map((h, i) => (
-              <th key={i} className="px-3 py-2 font-semibold whitespace-nowrap">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {table.rows.map((row, rIdx) => (
-            <tr key={rIdx} className="border-t border-[#1A1B20]/[0.06] odd:bg-white even:bg-[#F6F7F9]/60">
-              {row.map((cell, cIdx) => (
-                <td key={cIdx} className="px-3 py-2 text-[#3A3D47]">
-                  <RichInlineText text={cell} className="text-xs sm:text-sm" />
-                </td>
+      {table.uncertainStructure && table.uncertaintyReason && (
+        <div className="px-3.5 py-1.5 bg-[#FEF3C7]/45 border-b border-[#FDE68A] text-[11px] text-[#92400E]">
+          {table.uncertaintyReason}
+        </div>
+      )}
+      {exportPreview !== 'none' && (
+        <pre className="p-3 bg-[#1D1E23] text-[#F6F7F9] text-[11px] overflow-x-auto max-h-44">
+          {exportPreview === 'md'
+            ? buildFallbackMarkdown(table)
+            : JSON.stringify(buildFallbackJson(table), null, 2)}
+        </pre>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse text-xs sm:text-sm">
+          <thead>
+            <tr className="bg-[#1D1E23] text-white">
+              {table.headers.map((h, i) => (
+                <th key={i} className="px-3 py-2 font-semibold whitespace-nowrap">
+                  {h || <span className="opacity-50 italic">blank</span>}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {table.rows.map((row, rIdx) => (
+              <tr key={rIdx} className="border-t border-[#1A1B20]/[0.06] odd:bg-white even:bg-[#F6F7F9]/60">
+                {row.map((cell, cIdx) => {
+                  const isRowHeader = cIdx === 0 && Boolean(table.rowHeaders?.length);
+                  return (
+                    <td
+                      key={cIdx}
+                      className={`px-3 py-2 ${isRowHeader ? 'font-semibold text-[#1A1B20] bg-[#F6F7F9]/50' : 'text-[#3A3D47]'}`}
+                    >
+                      {cell ? (
+                        <RichInlineText text={cell} className="text-xs sm:text-sm" />
+                      ) : (
+                        <span className="text-[11px] text-[#8E93A2]">—</span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
-);
+  );
+};
+
+const DIAGRAM_TYPE_LABELS: Record<string, string> = {
+  flowchart: 'Flowchart',
+  uml_class: 'UML Class',
+  uml_sequence: 'UML Sequence',
+  uml_use_case: 'UML Use-Case',
+  erd: 'ERD',
+  circuit: 'Circuit',
+  network: 'Network',
+  math_graph: 'Math Graph',
+  geometric: 'Geometric',
+  scientific_illustration: 'Scientific',
+  engineering: 'Engineering',
+  general_diagram: 'Diagram',
+};
+
+const DiagramGalleryCard: React.FC<{ diag: ExtractedDiagramAsset }> = ({ diag }) => {
+  const [showOriginalCrop, setShowOriginalCrop] = useState(false);
+  const safeUrl = sanitizeSafeUrl(diag.dataUrl);
+  const safeOriginalCrop = sanitizeSafeUrl(diag.originalCropDataUrl);
+  const hasVector = Boolean(diag.vectorScene && diag.vectorScene.polylines.length > 0);
+  const hasOriginalRef = Boolean(safeOriginalCrop && (hasVector || safeOriginalCrop !== safeUrl));
+
+  return (
+    <figure className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {diag.diagramType && (
+            <span className="rounded bg-[#1D1E23] text-white px-2 py-0.5 text-[10px] font-bold">
+              {DIAGRAM_TYPE_LABELS[diag.diagramType] ?? diag.diagramType}
+            </span>
+          )}
+          {diag.extractedNodes && diag.extractedNodes.length > 0 && (
+            <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] text-[#505460] font-mono-tabular">
+              {diag.extractedNodes.length} nodes · {diag.extractedEdges?.length ?? 0} edges
+            </span>
+          )}
+        </div>
+        {hasOriginalRef && (
+          <button
+            type="button"
+            onClick={() => setShowOriginalCrop((prev) => !prev)}
+            className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[10px] font-semibold text-[#1A1B20] cursor-pointer"
+          >
+            {showOriginalCrop ? 'View Extracted' : 'Original Crop'}
+          </button>
+        )}
+      </div>
+
+      {showOriginalCrop && safeOriginalCrop ? (
+        <img
+          src={safeOriginalCrop}
+          alt={`Original unedited crop: ${diag.caption}`}
+          referrerPolicy="no-referrer"
+          className="w-full max-h-56 object-contain rounded-xl bg-white"
+        />
+      ) : hasVector && diag.vectorScene ? (
+        <VectorSceneSvg scene={diag.vectorScene} caption={diag.caption} />
+      ) : safeUrl ? (
+        <img
+          src={safeUrl}
+          alt={diag.caption}
+          referrerPolicy="no-referrer"
+          className="w-full max-h-56 object-contain rounded-xl bg-white"
+        />
+      ) : null}
+
+      <figcaption className="text-xs text-[#505460] font-medium">
+        Page {diag.pageNumber} · {diag.caption}
+      </figcaption>
+      {(diag.extractedMeasurements?.length || diag.extractedLabels?.length) ? (
+        <p className="text-[11px] text-[#686C78] break-words">
+          {diag.extractedMeasurements && diag.extractedMeasurements.length > 0
+            ? `Measurements: ${diag.extractedMeasurements.slice(0, 6).join(', ')}`
+            : ''}
+          {diag.extractedMeasurements?.length && diag.extractedLabels?.length ? ' · ' : ''}
+          {diag.extractedLabels && diag.extractedLabels.length > 0
+            ? `Labels: ${diag.extractedLabels.slice(0, 6).join(', ')}`
+            : ''}
+        </p>
+      ) : null}
+    </figure>
+  );
+};
 
 export const ExtractedDiagramsGallery: React.FC<{
   diagrams: ExtractedDiagramAsset[];
@@ -377,29 +600,9 @@ export const ExtractedDiagramsGallery: React.FC<{
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      {visible.map((diag) => {
-        const safeUrl = sanitizeSafeUrl(diag.dataUrl);
-        return (
-          <figure
-            key={diag.id}
-            className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2"
-          >
-            {diag.vectorScene && diag.vectorScene.polylines.length > 0 ? (
-              <VectorSceneSvg scene={diag.vectorScene} caption={diag.caption} />
-            ) : safeUrl ? (
-              <img
-                src={safeUrl}
-                alt={diag.caption}
-                referrerPolicy="no-referrer"
-                className="w-full max-h-56 object-contain rounded-xl bg-white"
-              />
-            ) : null}
-            <figcaption className="text-xs text-[#505460] font-medium">
-              Page {diag.pageNumber} · {diag.caption}
-            </figcaption>
-          </figure>
-        );
-      })}
+      {visible.map((diag) => (
+        <DiagramGalleryCard key={diag.id} diag={diag} />
+      ))}
     </div>
   );
 };
@@ -415,10 +618,21 @@ export const ExtractedFormulasList: React.FC<{
           key={f.id}
           className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] px-4 py-3 overflow-x-auto"
         >
-          <div className="flex items-center justify-between text-[11px] font-mono-tabular text-[#686C78] mb-1">
-            <span>Formula · Page {f.pageNumber}</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-tabular text-[#686C78] mb-1">
+            <span>
+              Formula · Page {f.pageNumber}
+              {f.kind ? ` · ${f.kind.replace(/_/g, ' ')}` : ''}
+            </span>
+            {f.uncertain && (
+              <span className="rounded bg-[#FEF3C7] text-[#92400E] px-2 py-0.5 font-sans font-bold text-[10px]">
+                Uncertain equation — review
+              </span>
+            )}
           </div>
           <KatexFormula latex={f.latex} displayMode />
+          {f.uncertain && f.uncertaintyReason && (
+            <p className="mt-1.5 text-[11px] text-[#92400E]">{f.uncertaintyReason}</p>
+          )}
         </div>
       ))}
     </div>
@@ -967,3 +1181,485 @@ export const ScannedPageSideBySide: React.FC<{
     </div>
   );
 };
+
+const METADATA_FIELD_LABELS: Array<[keyof ExtractedAcademicMetadata, string]> = [
+  ['institution', 'Institution'],
+  ['faculty', 'Faculty / School'],
+  ['department', 'Department'],
+  ['courseCode', 'Course Code'],
+  ['courseTitle', 'Course Title'],
+  ['courseUnit', 'Course Unit'],
+  ['academicSession', 'Academic Session'],
+  ['semester', 'Semester'],
+  ['examinationType', 'Examination Type'],
+  ['examinationDate', 'Examination Date'],
+  ['examinationDuration', 'Duration'],
+  ['totalMarks', 'Total Marks'],
+  ['examinerName', 'Examiner / Lecturer'],
+  ['instructions', 'Instructions'],
+];
+
+export const AcademicMetadataGrid: React.FC<{
+  metadata: ExtractedAcademicMetadata;
+}> = ({ metadata }) => (
+  <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-3">
+    <p className="font-display text-xs font-bold uppercase tracking-wider text-[#686C78]">
+      Extracted Academic Metadata (14 Fields)
+    </p>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+      {METADATA_FIELD_LABELS.map(([key, label]) => {
+        const field = metadata[key];
+        const statusCls =
+          field.status === 'extracted'
+            ? 'bg-[#DCFCE7] text-[#15803D]'
+            : field.status === 'uncertain'
+              ? 'bg-[#FEF3C7] text-[#92400E]'
+              : 'bg-[#F6F7F9] text-[#686C78]';
+        return (
+          <div
+            key={key}
+            className="rounded-xl border border-[#1A1B20]/[0.08] bg-[#F6F7F9]/60 p-2.5 space-y-1"
+          >
+            <div className="flex items-center justify-between gap-1.5">
+              <span className="font-semibold text-[#505460]">{label}</span>
+              <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${statusCls}`}>
+                {field.status === 'not_found'
+                  ? 'Not found'
+                  : field.status === 'uncertain'
+                    ? 'Uncertain'
+                    : field.sourcePage
+                      ? `p.${field.sourcePage}`
+                      : 'Extracted'}
+              </span>
+            </div>
+            <p className="font-medium text-[#1A1B20] break-words">
+              {field.value ?? <span className="text-[#8E93A2] italic">not_found</span>}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
+
+const DETAILED_CATEGORY_OPTIONS: Array<{ value: DetailedAcademicCategory; label: string }> = [
+  { value: 'past_question', label: 'Past Question' },
+  { value: 'examination_paper', label: 'Examination Paper' },
+  { value: 'answer_sheet', label: 'Answer Sheet / OMR' },
+  { value: 'lecture_note', label: 'Lecture Note' },
+  { value: 'course_material', label: 'Course Material' },
+  { value: 'handout', label: 'Handout' },
+  { value: 'assignment', label: 'Assignment / Problem Set' },
+  { value: 'study_guide', label: 'Study Guide' },
+  { value: 'academic_timetable', label: 'Academic Timetable' },
+  { value: 'other_academic_document', label: 'Other Academic Document' },
+];
+
+export const DocumentClassificationCard: React.FC<{
+  classification: DocumentClassificationResult;
+  onOverrideCategory?: (nextCategory: DetailedAcademicCategory) => void;
+}> = ({ classification, onOverrideCategory }) => (
+  <div className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-4 space-y-2.5 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <p className="font-display font-bold text-[#1A1B20]">
+          Document Classification: {classification.primaryLabel}
+        </p>
+        <p className="text-[#505460]">
+          Confidence {Math.round(classification.confidence * 100)}% · Legacy mapping:{' '}
+          <span className="font-mono-tabular">{classification.mappedLegacyCategory}</span>
+          {classification.overriddenByAdmin && ' · Overridden by Super Admin'}
+        </p>
+      </div>
+      {classification.uncertain && (
+        <span className="rounded bg-[#FEF3C7] text-[#92400E] px-2 py-0.5 font-bold text-[11px]">
+          Low confidence — confirm category
+        </span>
+      )}
+    </div>
+    <p className="text-[#3A3D47]">{classification.reason}</p>
+    {classification.candidates.length > 1 && (
+      <div className="flex flex-wrap gap-1.5">
+        {classification.candidates.slice(0, 4).map((c) => (
+          <span
+            key={c.category}
+            className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-1 text-[11px] text-[#505460]"
+          >
+            {c.label}: {Math.round(c.score * 100)}%
+          </span>
+        ))}
+      </div>
+    )}
+    {onOverrideCategory && (
+      <div className="pt-1 flex flex-wrap items-center gap-2">
+        <label htmlFor="cls-override-select" className="font-semibold text-[#1A1B20]">
+          Super Admin Override:
+        </label>
+        <select
+          id="cls-override-select"
+          value={classification.primaryCategory}
+          onChange={(e) => onOverrideCategory(e.target.value as DetailedAcademicCategory)}
+          className="rounded-xl border border-[#1A1B20]/15 bg-white px-2.5 py-1.5 text-xs text-[#1A1B20]"
+        >
+          {DETAILED_CATEGORY_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    )}
+  </div>
+);
+
+export const IntegrityQualityBanner: React.FC<{
+  integrityReport?: DocumentIntegrityReport;
+  pages?: ExtractedPageContent[];
+}> = ({ integrityReport, pages }) => {
+  const qualityWarnings = Array.from(
+    new Set((pages ?? []).flatMap((p) => p.qualityMetrics?.actionableWarnings ?? []))
+  );
+  const issues: string[] = [...(integrityReport?.warnings ?? []), ...qualityWarnings];
+  if (!integrityReport && issues.length === 0) return null;
+
+  const isHealthy = (integrityReport?.isComplete ?? true) && issues.length === 0;
+  return (
+    <div
+      className={`rounded-2xl border p-3.5 text-xs space-y-1.5 ${
+        isHealthy
+          ? 'bg-[#DCFCE7]/50 border-[#86EFAC] text-[#15803D]'
+          : 'bg-[#FEF3C7]/60 border-[#FDE68A] text-[#92400E]'
+      }`}
+    >
+      <p className="font-bold">
+        {isHealthy
+          ? 'Page Sequence & Scan Quality Audit: Complete'
+          : 'Page Sequence & Quality Inspection Notices'}
+      </p>
+      {integrityReport && (
+        <p className="text-[11px]">
+          {integrityReport.hasDuplicatePages ? 'Duplicate pages detected · ' : ''}
+          {integrityReport.missingPageNumbers.length > 0
+            ? `Missing printed pages: ${integrityReport.missingPageNumbers.join(', ')} · `
+            : ''}
+          {integrityReport.outOfOrderDetected ? 'Out-of-order numbering detected · ' : ''}
+          {integrityReport.blankPages.length > 0
+            ? `Blank pages: ${integrityReport.blankPages.join(', ')} · `
+            : ''}
+          {integrityReport.incompleteOrCroppedPages.length > 0
+            ? `Cropped/incomplete pages: ${integrityReport.incompleteOrCroppedPages.join(', ')} · `
+            : ''}
+          {integrityReport.damagedOrCorruptedPages.length > 0
+            ? `Damaged/faded pages: ${integrityReport.damagedOrCorruptedPages.join(', ')}`
+            : ''}
+        </p>
+      )}
+      {issues.length > 0 && (
+        <ul className="list-disc pl-4 space-y-0.5">
+          {issues.slice(0, 6).map((w, idx) => (
+            <li key={idx}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+export const HandwritingReviewCard: React.FC<{
+  handwriting: HandwritingAnalysisResult;
+}> = ({ handwriting }) => {
+  if (!handwriting.detected && !handwriting.missingModelNote) return null;
+  return (
+    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-display font-bold text-[#1A1B20]">
+          Handwriting Detection (HTR) · {handwriting.regions.length} region(s)
+        </p>
+        <span className="rounded bg-[#FEF3C7] text-[#92400E] px-2 py-0.5 text-[10px] font-bold">
+          {handwriting.unreadableCount} unreadable · {handwriting.uncertainCount} uncertain
+        </span>
+      </div>
+      {handwriting.missingModelNote && (
+        <p className="rounded-xl bg-[#FEF3C7]/50 border border-[#FDE68A] px-2.5 py-1.5 text-[11px] text-[#92400E]">
+          {handwriting.missingModelNote}
+        </p>
+      )}
+      {handwriting.regions.slice(0, 8).map((reg) => (
+        <div
+          key={reg.id}
+          className="rounded-xl bg-[#F6F7F9] px-3 py-2 border border-[#1A1B20]/[0.06] space-y-0.5"
+        >
+          <p className="font-semibold text-[#1A1B20]">
+            Page {reg.pageNumber} · {reg.classification}
+            {reg.confidence !== null ? ` (${reg.confidence}%)` : ''}
+          </p>
+          <p className="text-[#3A3D47] font-mono-tabular break-words">{reg.extractedText}</p>
+          {reg.note && <p className="text-[11px] text-[#686C78]">{reg.note}</p>}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export const OmrResultsCard: React.FC<{ omr: OmrScanResult }> = ({ omr }) => {
+  if (!omr.detected) return null;
+  return (
+    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-2.5 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-display font-bold text-[#1A1B20]">
+          OMR Bubble Recognition ({omr.templateUsed})
+        </p>
+        <span className="rounded bg-[#FEF3C7] text-[#92400E] px-2 py-0.5 text-[10px] font-bold">
+          Review required · No auto-grading
+        </span>
+      </div>
+      <p className="text-[#505460]">
+        Total {omr.summary.totalQuestions} · Answered {omr.summary.answered} · Blank{' '}
+        {omr.summary.unanswered} · Multi-shaded {omr.summary.multipleSelected} · Ambiguous{' '}
+        {omr.summary.ambiguous}
+        {omr.studentIdValue ? ` · Detected Student ID: ${omr.studentIdValue}` : ''}
+      </p>
+      {omr.questions.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
+          {omr.questions.slice(0, 30).map((q) => (
+            <div
+              key={`${q.pageNumber}-${q.questionNumber}`}
+              className={`rounded-lg border px-2 py-1 text-[11px] font-mono-tabular ${
+                q.status === 'answered'
+                  ? 'bg-[#F6F7F9] border-[#1A1B20]/10 text-[#1A1B20]'
+                  : q.status === 'unanswered'
+                    ? 'bg-white border-[#1A1B20]/10 text-[#686C78]'
+                    : 'bg-[#FEF3C7] border-[#FDE68A] text-[#92400E]'
+              }`}
+            >
+              Q{q.questionNumber}:{' '}
+              <strong>
+                {q.selectedOptions.length > 0 ? q.selectedOptions.join(',') : '—'}
+              </strong>{' '}
+              ({q.status === 'answered' ? `${q.confidence}%` : q.status})
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export const FormFieldsCard: React.FC<{ form: FormExtractionResult }> = ({ form }) => {
+  if (!form.detected) return null;
+  return (
+    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-display font-bold text-[#1A1B20]">
+          Form Fields &amp; Checkboxes ({form.totalFields})
+        </p>
+        {form.isIncompleteForm && (
+          <span className="rounded bg-[#FEF3C7] text-[#92400E] px-2 py-0.5 text-[10px] font-bold">
+            Incomplete / {form.unfilledCount} unfilled
+          </span>
+        )}
+      </div>
+      <div className="space-y-1">
+        {form.fields.slice(0, 20).map((f) => (
+          <div
+            key={f.id}
+            className="flex items-center justify-between gap-2 rounded-lg bg-[#F6F7F9] px-2.5 py-1.5"
+          >
+            <span className="font-medium text-[#1A1B20] truncate">
+              [{f.kind}] {f.label}
+            </span>
+            <span className="font-mono-tabular text-[#505460] shrink-0">
+              {f.kind === 'text_field'
+                ? f.value || 'unfilled'
+                : f.checked
+                  ? 'Checked'
+                  : f.status === 'ambiguous'
+                    ? 'Ambiguous'
+                    : 'Unchecked'}{' '}
+              ({f.confidence}%)
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export const SignaturesStampsCard: React.FC<{
+  signatures?: SignatureDetection[];
+  stamps?: StampDetection[];
+}> = ({ signatures, stamps }) => {
+  if ((!signatures || signatures.length === 0) && (!stamps || stamps.length === 0)) return null;
+  return (
+    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-2 text-xs">
+      <p className="font-display font-bold text-[#1A1B20]">
+        Signature Presence &amp; Official Stamp Detection
+      </p>
+      <p className="text-[11px] text-[#686C78]">
+        Presence &amp; visual outline detection only — does not verify biometric handwriting identity or legal authenticity.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {(signatures ?? []).map((sig) => (
+          <div key={sig.id} className="rounded-xl bg-[#F6F7F9] p-2.5">
+            <p className="font-semibold text-[#1A1B20]">
+              Signature · Page {sig.pageNumber} ({sig.status} · {sig.confidence}%)
+            </p>
+            <p className="text-[11px] text-[#505460]">{sig.note}</p>
+          </div>
+        ))}
+        {(stamps ?? []).map((st) => (
+          <div key={st.id} className="rounded-xl bg-[#F6F7F9] p-2.5">
+            <p className="font-semibold text-[#1A1B20]">
+              Stamp ({st.shape}, {st.colorTone}) · Page {st.pageNumber} ({st.confidence}%)
+            </p>
+            {st.extractedText && <p className="text-[#1A1B20]">Text: {st.extractedText}</p>}
+            <p className="text-[11px] text-[#505460]">{st.note}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export const BarcodesQrCard: React.FC<{ codes: QrCodeMatch[] }> = ({ codes }) => {
+  if (codes.length === 0) return null;
+  return (
+    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-2 text-xs">
+      <p className="font-display font-bold text-[#1A1B20]">
+        Detected Barcodes &amp; QR Codes ({codes.length})
+      </p>
+      <div className="space-y-1.5">
+        {codes.map((c, idx) => (
+          <div
+            key={idx}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#F6F7F9] px-3 py-2"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-[#1A1B20] break-all">
+                [{c.format ?? 'QR_CODE'}] {c.payload}
+              </p>
+              {c.warning && <p className="text-[11px] text-[#92400E]">{c.warning}</p>}
+            </div>
+            <span
+              className={`rounded px-2 py-0.5 text-[10px] font-bold shrink-0 ${
+                c.unreadableDetected
+                  ? 'bg-[#FEE2E2] text-[#B91C1C]'
+                  : c.isSafeUrl
+                    ? 'bg-[#DCFCE7] text-[#15803D]'
+                    : 'bg-[#FEF3C7] text-[#92400E]'
+              }`}
+            >
+              {c.unreadableDetected
+                ? 'Damaged / Unreadable'
+                : c.isSafeUrl
+                  ? 'Safe payload'
+                  : 'Blocked / Untrusted URL'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export const LanguageAnalysisCard: React.FC<{ language: LanguageAnalysisResult }> = ({
+  language,
+}) => (
+  <div className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3.5 text-xs space-y-1.5">
+    <p className="font-bold text-[#1A1B20]">
+      Detected Language(s): {language.detectedLanguages.map((l) => `${l.name} (${Math.round(l.confidence * 100)}%)`).join(', ')}
+    </p>
+    <p className="text-[#505460]">
+      Installed OCR models: {language.installedOcrModels.join(', ')}
+      {language.unsupportedLanguages.length > 0 &&
+        ` · Missing models: ${language.unsupportedLanguages.join(', ')}`}
+    </p>
+  </div>
+);
+
+export const ModuleExecutionSummaryCard: React.FC<{
+  reports: ScannerModuleRunReport[];
+  processingDurationMs?: number;
+}> = ({ reports, processingDurationMs }) => {
+  if (reports.length === 0) return null;
+  return (
+    <details className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3.5 text-xs">
+      <summary className="font-bold text-[#1A1B20] cursor-pointer select-none">
+        Scanner Pipeline Module Execution ({reports.length} modules
+        {typeof processingDurationMs === 'number' ? ` · ${processingDurationMs} ms` : ''})
+      </summary>
+      <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        {reports.map((rep, idx) => (
+          <div
+            key={`${rep.module}-${idx}`}
+            className="rounded-xl bg-white border border-[#1A1B20]/[0.06] px-2.5 py-1.5 flex items-center justify-between gap-2"
+          >
+            <div className="min-w-0">
+              <p className="font-semibold text-[#1A1B20] truncate">{rep.module}</p>
+              {rep.detail && <p className="text-[10px] text-[#686C78] truncate">{rep.detail}</p>}
+              {rep.missingRequirement && (
+                <p className="text-[10px] text-[#92400E]">{rep.missingRequirement}</p>
+              )}
+            </div>
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0 ${
+                rep.status === 'executed'
+                  ? 'bg-[#DCFCE7] text-[#15803D]'
+                  : rep.status === 'failed'
+                    ? 'bg-[#FEE2E2] text-[#B91C1C]'
+                    : rep.status === 'model_unavailable_partial'
+                      ? 'bg-[#FEF3C7] text-[#92400E]'
+                      : 'bg-[#F6F7F9] text-[#686C78]'
+              }`}
+            >
+              {rep.status}
+            </span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+};
+
+export const SuperAdminIntelligenceSuite: React.FC<{
+  doc: Pick<
+    AcademicDocumentRecord,
+    | 'academicMetadata'
+    | 'classification'
+    | 'integrityReport'
+    | 'pages'
+    | 'handwritingAnalysis'
+    | 'omrResults'
+    | 'formResults'
+    | 'signatures'
+    | 'stamps'
+    | 'qrCodesFound'
+    | 'languageAnalysis'
+    | 'moduleReports'
+    | 'processingDurationMs'
+  >;
+  onOverrideCategory?: (nextCategory: DetailedAcademicCategory) => void;
+}> = ({ doc, onOverrideCategory }) => (
+  <div className="space-y-3">
+    <IntegrityQualityBanner integrityReport={doc.integrityReport} pages={doc.pages} />
+    {doc.classification && (
+      <DocumentClassificationCard
+        classification={doc.classification}
+        onOverrideCategory={onOverrideCategory}
+      />
+    )}
+    {doc.academicMetadata && <AcademicMetadataGrid metadata={doc.academicMetadata} />}
+    {doc.omrResults?.detected && <OmrResultsCard omr={doc.omrResults} />}
+    {doc.formResults?.detected && <FormFieldsCard form={doc.formResults} />}
+    {doc.handwritingAnalysis && <HandwritingReviewCard handwriting={doc.handwritingAnalysis} />}
+    <SignaturesStampsCard signatures={doc.signatures} stamps={doc.stamps} />
+    {doc.qrCodesFound.length > 0 && <BarcodesQrCard codes={doc.qrCodesFound} />}
+    {doc.languageAnalysis && <LanguageAnalysisCard language={doc.languageAnalysis} />}
+    {doc.moduleReports && doc.moduleReports.length > 0 && (
+      <ModuleExecutionSummaryCard
+        reports={doc.moduleReports}
+        processingDurationMs={doc.processingDurationMs}
+      />
+    )}
+  </div>
+);

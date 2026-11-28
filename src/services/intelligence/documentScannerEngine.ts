@@ -1,16 +1,28 @@
 import JSZip from 'jszip';
-import jsQR from 'jsqr';
 import { sanitizePlainText, sanitizeSingleLine } from '../../core/security';
 import type {
   AcademicDocFormat,
   DeterministicCheckResult,
+  DocumentClassificationResult,
+  DocumentIntegrityReport,
+  ExtractedAcademicMetadata,
   ExtractedDiagramAsset,
   ExtractedFormula,
   ExtractedPageContent,
   ExtractedTable,
   ExtractionQualityStatus,
+  FormExtractionResult,
+  HandwritingAnalysisResult,
+  LanguageAnalysisResult,
+  MergedTableCellSpan,
+  OmrScanResult,
+  OmrTemplateConfig,
   PageExtractionMethod,
   QrCodeMatch,
+  ScannerModuleName,
+  ScannerModuleRunReport,
+  SignatureDetection,
+  StampDetection,
   UncertainSpan,
 } from '../../core/types';
 import {
@@ -23,7 +35,7 @@ import {
   validateMagicAndSecurity,
 } from './fileSecurity';
 import {
-  decodeBytesToGrayscale,
+  decodeBytesToRgbaAndGray,
   preprocessImageForOcr,
   uint8ToBase64DataUrl,
   type PreprocessedImageResult,
@@ -35,12 +47,12 @@ import {
 } from './diagramExtractor';
 import {
   recognizeWithTesseractPool,
+  type OcrWordBox,
   type VisionFallbackMode,
   type VisionOcrRunner,
 } from './ocrEngine';
 import {
   detectRepeatedHeadersFooters,
-  extractFormulasFromText,
   extractTablesFromText,
   formatMultiPageStructuredText,
   parseStructuredDocument,
@@ -50,6 +62,27 @@ import {
   getCachedExtractionByHash,
   setCachedExtractionByHash,
 } from './storageAdapter';
+import { scanBarcodesAndQrFromBuffer, isSafeBarcodePayload } from './barcodeQrEngine';
+import { scanOmrSheet } from './omrEngine';
+import { recognizeFormFields } from './formRecognizer';
+import {
+  analyzeHandwritingRegions,
+  type HandwritingEngineAdapter,
+} from './handwritingRecognizer';
+import { detectSignaturesAndStamps } from './signatureStampDetector';
+import { analyzeDocumentLanguages } from './languageDetector';
+import {
+  extractMathFormulasAdvanced,
+  type MathOcrAdapter,
+} from './mathFormulaEngine';
+import {
+  enrichExtractedTable,
+  extractBorderedTablesFromGrayscale,
+  linkMultiPageTables,
+} from './advancedTableExtractor';
+import { classifyAcademicDocument } from './documentClassifier';
+import { inspectDocumentIntegrity } from './documentIntegrityChecker';
+import { extractAcademicMetadata } from './academicMetadataExtractor';
 
 export type ScanStageId =
   | 'queued'
@@ -86,6 +119,7 @@ export interface OcrRunnerResult {
   visionFallbackUsed?: boolean;
   visionFallbackError?: string;
   uncertainSpans?: UncertainSpan[];
+  wordBoxes?: OcrWordBox[];
   perspectiveCorrected?: boolean;
 }
 
@@ -146,6 +180,16 @@ export interface ScannedArtifactOutput {
   earlyChecks: DeterministicCheckResult[];
   parentZipName?: string;
   processingDurationMs: number;
+  academicMetadata?: ExtractedAcademicMetadata;
+  classification?: DocumentClassificationResult;
+  integrityReport?: DocumentIntegrityReport;
+  languageAnalysis?: LanguageAnalysisResult;
+  omrResults?: OmrScanResult;
+  formResults?: FormExtractionResult;
+  handwritingAnalysis?: HandwritingAnalysisResult;
+  signatures?: SignatureDetection[];
+  stamps?: StampDetection[];
+  moduleReports?: ScannerModuleRunReport[];
 }
 
 export interface ScanInputFile {
@@ -239,28 +283,13 @@ export async function defaultBrowserOcrRunner(input: {
     visionFallbackUsed: res.visionFallbackUsed,
     visionFallbackError: res.visionFallbackError,
     uncertainSpans: res.uncertainSpans,
+    wordBoxes: res.wordBoxes,
     perspectiveCorrected: res.perspectiveCorrected,
   };
 }
 
 function isSafeQrUrl(payload: string): boolean {
-  const trimmed = payload.trim();
-  if (!/^https?:\/\//i.test(trimmed)) return true;
-  try {
-    const parsed = new URL(trimmed);
-    const h = parsed.hostname.toLowerCase();
-    if (
-      h === 'localhost' ||
-      h.startsWith('127.') ||
-      h.startsWith('10.') ||
-      h.startsWith('192.168.')
-    ) {
-      return false;
-    }
-    return parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return isSafeBarcodePayload(payload);
 }
 
 function decodeXmlEntities(raw: string): string {
@@ -329,30 +358,78 @@ async function parseDocxArchive(
     }
   }
 
-  // Parse tables (<w:tbl>...</w:tbl>)
+  // Parse tables (<w:tbl>...</w:tbl>) with <w:gridSpan> & <w:vMerge> support
   const tblRegex = /<w:tbl\b[^>]*>([\s\S]*?)<\/w:tbl>/g;
   let tblMatch: RegExpExecArray | null;
   while ((tblMatch = tblRegex.exec(xml)) !== null && tables.length < 12) {
     const rows: string[][] = [];
+    const mergedCells: MergedTableCellSpan[] = [];
     const trRegex = /<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g;
     let trMatch: RegExpExecArray | null;
+    let rIdx = 0;
+
     while ((trMatch = trRegex.exec(tblMatch[1])) !== null) {
       const rowCells: string[] = [];
       const tcRegex = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
       let tcMatch: RegExpExecArray | null;
+      let cIdx = 0;
+
       while ((tcMatch = tcRegex.exec(trMatch[1])) !== null) {
-        rowCells.push(sanitizeSingleLine(extractXmlTagsText(tcMatch[1]), 140));
+        const tcXml = tcMatch[1];
+        const cellVal = sanitizeSingleLine(extractXmlTagsText(tcXml), 140);
+        const spanMatch = tcXml.match(/<w:gridSpan\b[^>]*w:val="(\d+)"/i);
+        const colSpan = spanMatch ? Math.max(1, Number(spanMatch[1])) : 1;
+        const hasVMergeRestart = /<w:vMerge\b[^>]*w:val="restart"/i.test(tcXml);
+        const hasVMergeCont =
+          /<w:vMerge\b(?![^>]*w:val="restart")/i.test(tcXml) ||
+          /<w:vMerge\b[^>]*w:val="continue"/i.test(tcXml);
+
+        if (colSpan > 1 || hasVMergeRestart) {
+          mergedCells.push({
+            row: rIdx,
+            col: cIdx,
+            rowSpan: hasVMergeRestart ? 2 : 1,
+            colSpan,
+            value: cellVal,
+          });
+        }
+        if (hasVMergeCont) {
+          const prevRowSpan = mergedCells.find(
+            (m) => m.col === cIdx && m.row < rIdx && m.row + m.rowSpan >= rIdx
+          );
+          if (prevRowSpan) prevRowSpan.rowSpan += 1;
+        }
+
+        rowCells.push(cellVal);
+        for (let k = 1; k < colSpan; k += 1) {
+          rowCells.push('');
+        }
+        cIdx += colSpan;
       }
-      if (rowCells.length > 0) rows.push(rowCells);
+
+      if (rowCells.length > 0) {
+        rows.push(rowCells);
+        rIdx += 1;
+      }
     }
     if (rows.length >= 2 && rows[0].length >= 2) {
-      const colCount = rows[0].length;
-      tables.push({
-        id: `docx-tbl-${tables.length + 1}`,
-        pageNumber: 1,
-        headers: rows[0],
-        rows: rows.slice(1).map((r) => Array.from({ length: colCount }, (_, i) => r[i] ?? '')),
-      });
+      const colCount = Math.max(...rows.map((r) => r.length));
+      tables.push(
+        enrichExtractedTable(
+          {
+            id: `docx-tbl-${tables.length + 1}`,
+            pageNumber: 1,
+            headers: Array.from({ length: colCount }, (_, i) => rows[0][i] ?? ''),
+            rows: rows
+              .slice(1)
+              .map((r) => Array.from({ length: colCount }, (_, i) => r[i] ?? '')),
+          },
+          {
+            borderStyle: 'bordered',
+            mergedCells: mergedCells.length > 0 ? mergedCells : undefined,
+          }
+        )
+      );
     }
   }
 
@@ -893,6 +970,9 @@ async function processPdfBuffer(params: {
   visionFallback?: VisionFallbackMode;
   visionOcrRunner?: VisionOcrRunner;
   onProgress?: (update: ScanProgressUpdate) => void;
+  handwritingAdapter?: HandwritingEngineAdapter;
+  mathAdapter?: MathOcrAdapter;
+  omrTemplate?: OmrTemplateConfig;
 }): Promise<{
   pages: ExtractedPageContent[];
   diagrams: ExtractedDiagramAsset[];
@@ -904,6 +984,11 @@ async function processPdfBuffer(params: {
   processedPages: number[];
   unprocessedPages: number[];
   pdfWarnings: string[];
+  omrPages: OmrScanResult[];
+  formPages: FormExtractionResult[];
+  handwritingPages: HandwritingAnalysisResult[];
+  signatures: SignatureDetection[];
+  stamps: StampDetection[];
 }> {
   throwIfAborted(params.signal);
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -949,6 +1034,11 @@ async function processPdfBuffer(params: {
   const qrMatches: QrCodeMatch[] = [];
   const ocrScores: number[] = [];
   const pdfWarnings: string[] = [];
+  const omrPages: OmrScanResult[] = [];
+  const formPages: FormExtractionResult[] = [];
+  const handwritingPages: HandwritingAnalysisResult[] = [];
+  const signatures: SignatureDetection[] = [];
+  const stamps: StampDetection[] = [];
   let optimizedPreviewUrl: string | undefined;
 
   const imageOpIds = new Set<number>([
@@ -1029,7 +1119,6 @@ async function processPdfBuffer(params: {
       warnings.push(`Page ${pageNo} exceeded ${MAX_PAGE_TEXT_CHARS} characters and was capped.`);
     }
 
-    // Obtain high-resolution visual render for OCR, QR scanning, and embedded diagram inspection
     if (params.pdfPageRenderer) {
       try {
         const custom = await params.pdfPageRenderer({ pageNumber: pageNo, totalPages });
@@ -1051,7 +1140,6 @@ async function processPdfBuffer(params: {
       }
     } else if (typeof document !== 'undefined') {
       try {
-        // High-DPI scale (~250-300 DPI equivalent), safely capped at 2500px width
         const targetScale = Math.min(3.0, Math.max(2.4, 2100 / Math.max(300, baseViewport.width)));
         const ocrViewport = page.getViewport({ scale: targetScale });
         const canvas = document.createElement('canvas');
@@ -1065,7 +1153,6 @@ async function processPdfBuffer(params: {
           highResOcrDataUrl = canvas.toDataURL('image/png');
           highResMime = 'image/png';
 
-          // Compact JPEG preview (max 1280px wide) for storage/UI
           const prevW = Math.min(1280, canvas.width);
           const prevH = Math.max(1, Math.round((canvas.height * prevW) / canvas.width));
           const prevCanvas = document.createElement('canvas');
@@ -1079,16 +1166,27 @@ async function processPdfBuffer(params: {
             renderedPreviewUrl = prevCanvas.toDataURL('image/jpeg', 0.85);
             try {
               const imgData = prevCtx.getImageData(0, 0, prevW, prevH);
-              const qr = jsQR(imgData.data, prevW, prevH, { inversionAttempts: 'dontInvert' });
-              if (qr?.data) {
-                qrMatches.push({
-                  pageNumber: pageNo,
-                  payload: sanitizeSingleLine(qr.data, 240),
-                  isSafeUrl: isSafeQrUrl(qr.data),
-                });
+              const grayBuf = new Uint8Array(prevW * prevH);
+              for (let k = 0; k < grayBuf.length; k += 1) {
+                const off = k * 4;
+                grayBuf[k] = Math.round(
+                  0.299 * imgData.data[off] +
+                    0.587 * imgData.data[off + 1] +
+                    0.114 * imgData.data[off + 2]
+                );
+              }
+              const pageCodes = scanBarcodesAndQrFromBuffer({
+                rgba: imgData.data,
+                gray: grayBuf,
+                width: prevW,
+                height: prevH,
+                pageNumber: pageNo,
+              });
+              for (const code of pageCodes) {
+                if (!code.unreadableDetected) qrMatches.push(code);
               }
             } catch {
-              // Ignore QR scan issues
+              // Ignore QR/barcode scan issues
             }
           } else {
             renderedPreviewUrl = highResOcrDataUrl;
@@ -1143,6 +1241,8 @@ async function processPdfBuffer(params: {
     let visionFallbackError: string | undefined;
     let uncertainSpans: UncertainSpan[] = [];
     let perspectiveCorrected = false;
+    let pageWordBoxes: OcrWordBox[] | undefined;
+    let pagePrep: PreprocessedImageResult | undefined;
 
     const canRunOcr = Boolean(highResOcrBytes || highResOcrDataUrl);
     if ((needsFullOcr || isMixedPage) && canRunOcr) {
@@ -1163,7 +1263,7 @@ async function processPdfBuffer(params: {
           mimeType: highResMime || 'image/png',
           pageNumber: pageNo,
           signal: params.signal,
-          visionFallback: params.visionFallback,
+          visionFallback: params.visionFallback ?? 'off',
           visionOcrRunner: params.visionOcrRunner,
           onOcrProgress: (pct, statusText) => {
             params.onProgress?.({
@@ -1184,6 +1284,8 @@ async function processPdfBuffer(params: {
         visionFallbackUsed = Boolean(ocrRes.visionFallbackUsed);
         visionFallbackError = ocrRes.visionFallbackError;
         uncertainSpans = ocrRes.uncertainSpans ?? [];
+        pageWordBoxes = ocrRes.wordBoxes;
+        pagePrep = ocrRes.preprocessed;
         perspectiveCorrected = Boolean(ocrRes.perspectiveCorrected);
         if (ocrRes.preprocessed?.appliedSteps) {
           preprocessingApplied.push(...ocrRes.preprocessed.appliedSteps);
@@ -1204,7 +1306,6 @@ async function processPdfBuffer(params: {
             extractionMethod = 'hybrid_native_plus_ocr';
           }
         } else {
-          // Mixed digital + graphic page: merge only unique non-duplicate OCR lines
           const merged = mergeNativeAndOcrText(cleanedPageText, ocrRes.text);
           if (merged.addedLines > 0) {
             cleanedPageText = sanitizePlainText(merged.merged, MAX_PAGE_TEXT_CHARS);
@@ -1219,9 +1320,10 @@ async function processPdfBuffer(params: {
               width: ocrRes.preprocessed.width,
               height: ocrRes.preprocessed.height,
               pageNumber: pageNo,
+              wordBoxes: pageWordBoxes,
+              ocrText: cleanedPageText,
             });
             if (rasterFigs.length > 0) {
-              // Replace coarse full-page fallback snapshot with cleanly cropped & stroke-completed figures
               const nonFullPage = pageDiagrams.filter((d) => !d.id.startsWith('pdf-diag-'));
               pageDiagrams.length = 0;
               pageDiagrams.push(...nonFullPage, ...rasterFigs);
@@ -1242,14 +1344,36 @@ async function processPdfBuffer(params: {
       );
     }
 
-    if (pageDiagrams.length === 0 && !hasVectorDrawings && highResOcrBytes) {
+    // Visual raster modules on page pixels when available (barcodes, bordered tables, OMR, forms, handwriting, signatures/stamps)
+    let visualGray: Uint8Array | undefined = pagePrep?.ocrGray;
+    let visualRgba: Uint8ClampedArray | undefined = pagePrep?.rawRgba;
+    let visualW = pagePrep?.width ?? 0;
+    let visualH = pagePrep?.height ?? 0;
+
+    if (!visualGray && highResOcrBytes) {
       try {
-        const decoded = await decodeBytesToGrayscale(highResOcrBytes, highResMime || 'image/png');
+        const decoded = await decodeBytesToRgbaAndGray(
+          highResOcrBytes,
+          highResMime || 'image/png'
+        );
+        visualGray = decoded.gray;
+        visualRgba = decoded.rgba;
+        visualW = decoded.width;
+        visualH = decoded.height;
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    if (pageDiagrams.length === 0 && !hasVectorDrawings && visualGray && visualW > 0 && visualH > 0) {
+      try {
         const rasterFigs = await extractRasterDiagramsFromGrayscale({
-          gray: decoded.gray,
-          width: decoded.width,
-          height: decoded.height,
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
           pageNumber: pageNo,
+          wordBoxes: pageWordBoxes,
+          ocrText: cleanedPageText,
         });
         if (rasterFigs.length > 0) pageDiagrams.push(...rasterFigs);
       } catch {
@@ -1257,8 +1381,106 @@ async function processPdfBuffer(params: {
       }
     }
 
-    const pageTables = extractTablesFromText(cleanedPageText, pageNo);
-    const pageFormulas = extractFormulasFromText(cleanedPageText, pageNo);
+    const visualTables =
+      visualGray && visualW > 0 && visualH > 0
+        ? extractBorderedTablesFromGrayscale({
+            gray: visualGray,
+            width: visualW,
+            height: visualH,
+            pageNumber: pageNo,
+            wordBoxes: pageWordBoxes,
+          })
+        : [];
+    const textTables = extractTablesFromText(cleanedPageText, pageNo);
+    const pageTables =
+      visualTables.length > 0 && textTables.length === 0
+        ? visualTables
+        : visualTables.length > 0
+          ? [...visualTables, ...textTables.filter((tt) => tt.rows.length > 0)]
+          : textTables;
+
+    const pageFormulas = await extractMathFormulasAdvanced({
+      text: cleanedPageText,
+      pageNumber: pageNo,
+      wordBoxes: pageWordBoxes,
+      adapter: params.mathAdapter,
+    });
+
+    let pageHandwriting: HandwritingAnalysisResult | undefined;
+    let pageOmr: OmrScanResult | undefined;
+    let pageForms: FormExtractionResult | undefined;
+    let pageSignatures: SignatureDetection[] = [];
+    let pageStamps: StampDetection[] = [];
+
+    if (visualGray && visualW > 0 && visualH > 0) {
+      const codes = scanBarcodesAndQrFromBuffer({
+        rgba: visualRgba,
+        gray: visualGray,
+        width: visualW,
+        height: visualH,
+        pageNumber: pageNo,
+      });
+      for (const code of codes) {
+        if (!qrMatches.some((existing) => existing.pageNumber === pageNo && existing.payload === code.payload)) {
+          qrMatches.push(code);
+        }
+        if (code.warning) warnings.push(code.warning);
+      }
+
+      pageOmr = scanOmrSheet({
+        gray: visualGray,
+        width: visualW,
+        height: visualH,
+        pageNumber: pageNo,
+        ocrText: cleanedPageText,
+        template: params.omrTemplate,
+      });
+      if (pageOmr.detected) {
+        omrPages.push(pageOmr);
+        warnings.push(...pageOmr.warnings);
+      }
+
+      pageForms = recognizeFormFields({
+        gray: visualGray,
+        width: visualW,
+        height: visualH,
+        pageNumber: pageNo,
+        ocrText: cleanedPageText,
+        wordBoxes: pageWordBoxes,
+      });
+      if (pageForms.detected) {
+        formPages.push(pageForms);
+        warnings.push(...pageForms.warnings);
+      }
+
+      pageHandwriting = await analyzeHandwritingRegions({
+        gray: visualGray,
+        width: visualW,
+        height: visualH,
+        pageNumber: pageNo,
+        ocrText: cleanedPageText,
+        ocrConfidence,
+        wordBoxes: pageWordBoxes,
+        adapter: params.handwritingAdapter,
+        isScannedOrRaster: needsFullOcr || isMixedPage,
+      });
+      if (pageHandwriting.detected) handwritingPages.push(pageHandwriting);
+
+      const sigStamp = detectSignaturesAndStamps({
+        rgba: visualRgba,
+        gray: visualGray,
+        width: visualW,
+        height: visualH,
+        pageNumber: pageNo,
+        ocrText: cleanedPageText,
+        wordBoxes: pageWordBoxes,
+      });
+      pageSignatures = sigStamp.signatures;
+      pageStamps = sigStamp.stamps;
+      signatures.push(...pageSignatures);
+      stamps.push(...pageStamps);
+    }
+
     allDiagrams.push(...pageDiagrams);
     allTables.push(...pageTables);
     allFormulas.push(...pageFormulas);
@@ -1286,12 +1508,19 @@ async function processPdfBuffer(params: {
       visionFallbackError,
       uncertainSpans: uncertainSpans.length > 0 ? uncertainSpans : undefined,
       perspectiveCorrected,
+      qualityMetrics: pagePrep?.qualityMetrics,
       processingStatus: pageStatus.status,
       isIncomplete: pageStatus.isIncomplete,
       wasTruncated,
       preprocessingApplied: preprocessingApplied.length > 0 ? preprocessingApplied : undefined,
       errors: errors.length > 0 ? errors : undefined,
       renderedPreviewUrl,
+      handwritingRegions:
+        pageHandwriting?.detected ? pageHandwriting.regions : undefined,
+      omrResult: pageOmr?.detected ? pageOmr.questions : undefined,
+      formFields: pageForms?.detected ? pageForms.fields : undefined,
+      signatures: pageSignatures.length > 0 ? pageSignatures : undefined,
+      stamps: pageStamps.length > 0 ? pageStamps : undefined,
       diagrams: pageDiagrams,
       tables: pageTables,
       formulas: pageFormulas,
@@ -1314,7 +1543,7 @@ async function processPdfBuffer(params: {
   return {
     pages,
     diagrams: allDiagrams,
-    tables: allTables,
+    tables: linkMultiPageTables(allTables),
     formulas: allFormulas,
     qrMatches,
     averageOcrConfidence,
@@ -1322,6 +1551,11 @@ async function processPdfBuffer(params: {
     processedPages,
     unprocessedPages,
     pdfWarnings,
+    omrPages,
+    formPages,
+    handwritingPages,
+    signatures,
+    stamps,
   };
 }
 
@@ -1441,6 +1675,73 @@ function summarizeExtractionQuality(params: {
   return hasWarnings ? 'completed_with_warnings' : 'completed';
 }
 
+function aggregateOmrPages(omrPages: OmrScanResult[]): OmrScanResult | undefined {
+  if (omrPages.length === 0) return undefined;
+  const allQuestions = omrPages.flatMap((o) => o.questions);
+  const firstWithId = omrPages.find((o) => o.studentIdGridDetected);
+  const answered = allQuestions.filter((q) => q.status === 'answered').length;
+  const unanswered = allQuestions.filter((q) => q.status === 'unanswered').length;
+  const multipleSelected = allQuestions.filter((q) => q.status === 'multiple_selected').length;
+  const ambiguous = allQuestions.filter((q) => q.status === 'ambiguous').length;
+  return {
+    detected: true,
+    pageNumbers: Array.from(new Set(omrPages.flatMap((o) => o.pageNumbers))),
+    templateUsed: omrPages[0].templateUsed,
+    studentIdGridDetected: Boolean(firstWithId),
+    studentIdDigits: firstWithId?.studentIdDigits,
+    studentIdValue: firstWithId?.studentIdValue,
+    questions: allQuestions,
+    summary: {
+      totalQuestions: allQuestions.length,
+      answered,
+      unanswered,
+      multipleSelected,
+      ambiguous,
+    },
+    needsAdminReview: omrPages.some((o) => o.needsAdminReview) || ambiguous > 0 || multipleSelected > 0,
+    warnings: Array.from(new Set(omrPages.flatMap((o) => o.warnings))),
+  };
+}
+
+function aggregateFormPages(formPages: FormExtractionResult[]): FormExtractionResult | undefined {
+  if (formPages.length === 0) return undefined;
+  const fields = formPages.flatMap((f) => f.fields);
+  const filledCount = fields.filter((f) => f.status === 'filled').length;
+  const unfilledCount = fields.filter((f) => f.status === 'unfilled').length;
+  const ambiguousCount = fields.filter((f) => f.status === 'ambiguous').length;
+  return {
+    detected: fields.length > 0,
+    fields,
+    totalFields: fields.length,
+    filledCount,
+    unfilledCount,
+    ambiguousCount,
+    isIncompleteForm: unfilledCount > 0 || ambiguousCount > 0,
+    warnings: Array.from(new Set(formPages.flatMap((f) => f.warnings))),
+  };
+}
+
+function aggregateHandwritingPages(
+  hwPages: HandwritingAnalysisResult[]
+): HandwritingAnalysisResult | undefined {
+  if (hwPages.length === 0) return undefined;
+  const regions = hwPages.flatMap((h) => h.regions);
+  const withExternal = hwPages.find((h) => h.engineUsed === 'external_htr_adapter');
+  return {
+    detected: regions.length > 0,
+    engineUsed: withExternal
+      ? 'external_htr_adapter'
+      : hwPages[0].engineUsed,
+    engineStatus: hwPages.some((h) => h.engineStatus === 'executed')
+      ? 'executed'
+      : hwPages[0].engineStatus,
+    missingModelNote: hwPages.find((h) => h.missingModelNote)?.missingModelNote,
+    regions,
+    uncertainCount: hwPages.reduce((sum, h) => sum + h.uncertainCount, 0),
+    unreadableCount: hwPages.reduce((sum, h) => sum + h.unreadableCount, 0),
+  };
+}
+
 export async function scanSingleAcademicInput(
   input: ScanInputFile,
   options?: {
@@ -1452,11 +1753,16 @@ export async function scanSingleAcademicInput(
     bypassCache?: boolean;
     visionFallback?: VisionFallbackMode;
     visionOcrRunner?: VisionOcrRunner;
+    handwritingAdapter?: HandwritingEngineAdapter;
+    mathAdapter?: MathOcrAdapter;
+    omrTemplate?: OmrTemplateConfig;
   }
 ): Promise<ScannedArtifactOutput> {
   const startedAt = Date.now();
   const docId = options?.docId ?? `adoc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const ocrRunner = options?.ocrRunner ?? defaultBrowserOcrRunner;
+  const effectiveVisionFallback: VisionFallbackMode = options?.visionFallback ?? 'off';
+  const moduleReports: ScannerModuleRunReport[] = [];
 
   throwIfAborted(options?.signal);
   options?.onProgress?.({
@@ -1530,8 +1836,15 @@ export async function scanSingleAcademicInput(
   let unprocessedPages: number[] = [];
   const docWarnings: string[] = [];
 
+  let omrResults: OmrScanResult | undefined;
+  let formResults: FormExtractionResult | undefined;
+  let handwritingAnalysis: HandwritingAnalysisResult | undefined;
+  let signatures: SignatureDetection[] = [];
+  let stamps: StampDetection[] = [];
+
   if (magicCheck.format === 'image') {
     throwIfAborted(options?.signal);
+    const qualStart = Date.now();
     options?.onProgress?.({
       stage: 'optimizing',
       stageLabel: 'Analyzing scan quality & preprocessing image',
@@ -1551,7 +1864,8 @@ export async function scanSingleAcademicInput(
       qrCodesFound = prep.qrMatches.map((payload) => ({
         pageNumber: 1,
         payload: sanitizeSingleLine(payload, 240),
-        isSafeUrl: isSafeQrUrl(payload),
+        isSafeUrl: isSafeBarcodePayload(payload),
+        format: 'QR_CODE',
       }));
       await documentStorageAdapter.putBinary({
         folder: 'optimized',
@@ -1560,8 +1874,20 @@ export async function scanSingleAcademicInput(
         mimeType: 'image/jpeg',
         dataUrl: prep.previewDataUrl,
       });
-    } catch {
+      moduleReports.push({
+        module: 'quality_inspector',
+        status: 'executed',
+        durationMs: Date.now() - qualStart,
+        detail: `${prep.strategy}: ${prep.appliedSteps.join(', ') || 'clean'}`,
+      });
+    } catch (err) {
       optimizedPreviewUrl = uint8ToDataUrl(input.bytes, mimeType);
+      moduleReports.push({
+        module: 'quality_inspector',
+        status: 'failed',
+        durationMs: Date.now() - qualStart,
+        detail: err instanceof Error ? err.message : 'Image preprocessing failed.',
+      });
     }
 
     throwIfAborted(options?.signal);
@@ -1578,25 +1904,24 @@ export async function scanSingleAcademicInput(
     });
 
     let ocrText = '';
-    const pageWarnings: string[] = [];
+    const pageWarnings: string[] = [...(prep?.qualityMetrics.actionableWarnings ?? [])];
     const pageErrors: string[] = [];
     let finalPrep = prep;
     let ocrEngineUsed: ExtractedPageContent['ocrEngineUsed'] = 'tesseract';
     let visionFallbackUsed = false;
     let visionFallbackError: string | undefined;
     let uncertainSpans: UncertainSpan[] = [];
+    let pageWordBoxes: OcrWordBox[] | undefined;
     let perspectiveCorrected = Boolean(prep?.perspectiveCorrected);
 
     try {
-      // Pass preprocessed high-res image when default runner is used; also pass raw bytes
-      // so custom runners or orientation recovery can access full original pixels cleanly.
       const ocrRes = await ocrRunner({
         imageDataUrl: prep?.ocrDataUrl ?? optimizedPreviewUrl,
         bytes: input.bytes,
         mimeType,
         pageNumber: 1,
         signal: options?.signal,
-        visionFallback: options?.visionFallback,
+        visionFallback: effectiveVisionFallback,
         visionOcrRunner: options?.visionOcrRunner,
         onOcrProgress: (pct, statusText) => {
           options?.onProgress?.({
@@ -1605,7 +1930,7 @@ export async function scanSingleAcademicInput(
             currentPage: 1,
             totalPages: 1,
             ocrProgress: pct,
-            progressPercent: 35 + Math.round((pct / 100) * 50),
+            progressPercent: 35 + Math.round((pct / 100) * 40),
             detail: statusText,
           });
         },
@@ -1616,6 +1941,7 @@ export async function scanSingleAcademicInput(
       visionFallbackUsed = Boolean(ocrRes.visionFallbackUsed);
       visionFallbackError = ocrRes.visionFallbackError;
       uncertainSpans = ocrRes.uncertainSpans ?? [];
+      pageWordBoxes = ocrRes.wordBoxes;
       if (ocrRes.preprocessed) {
         finalPrep = ocrRes.preprocessed;
         optimizedPreviewUrl = ocrRes.preprocessed.previewDataUrl || optimizedPreviewUrl;
@@ -1638,17 +1964,138 @@ export async function scanSingleAcademicInput(
       pageWarnings.push(`OCR error: ${msg}`);
     }
 
-    tables = extractTablesFromText(ocrText, 1);
-    formulas = extractFormulasFromText(ocrText, 1);
-
-    const extractedShapeDiagrams: ExtractedDiagramAsset[] = [];
-    if (finalPrep?.ocrGray && finalPrep.width > 0 && finalPrep.height > 0) {
+    // Ensure grayscale & rgba pixel buffers exist even when custom ocrRunner skipped preprocessing
+    let visualGray: Uint8Array | undefined = finalPrep?.ocrGray;
+    let visualRgba: Uint8ClampedArray | undefined = finalPrep?.rawRgba;
+    let visualW = finalPrep?.width ?? 0;
+    let visualH = finalPrep?.height ?? 0;
+    if (!visualGray || visualW <= 0 || visualH <= 0) {
       try {
-        const isolated = await extractRasterDiagramsFromGrayscale({
-          gray: finalPrep.ocrGray,
-          width: finalPrep.width,
-          height: finalPrep.height,
+        const decoded = await decodeBytesToRgbaAndGray(input.bytes, mimeType);
+        visualGray = decoded.gray;
+        visualRgba = decoded.rgba;
+        visualW = decoded.width;
+        visualH = decoded.height;
+      } catch {
+        // Unreadable image pixels
+      }
+    }
+
+    throwIfAborted(options?.signal);
+    options?.onProgress?.({
+      stage: 'extracting',
+      stageLabel: 'Extracting tables, formulas, diagrams, OMR, forms & barcodes',
+      currentPage: 1,
+      totalPages: 1,
+      progressPercent: 78,
+    });
+
+    // 1. Barcode & QR multi-angle detection
+    const barcodeStart = Date.now();
+    try {
+      if (visualGray && visualW > 0 && visualH > 0) {
+        const codes = scanBarcodesAndQrFromBuffer({
+          rgba: visualRgba,
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
           pageNumber: 1,
+        });
+        for (const c of codes) {
+          if (!qrCodesFound.some((e) => e.payload === c.payload)) {
+            qrCodesFound.push(c);
+          }
+          if (c.warning) pageWarnings.push(c.warning);
+        }
+      }
+      moduleReports.push({
+        module: 'barcode_qr',
+        status: 'executed',
+        durationMs: Date.now() - barcodeStart,
+        detail: `${qrCodesFound.length} barcode/QR entry(ies) inspected.`,
+      });
+    } catch (err) {
+      moduleReports.push({
+        module: 'barcode_qr',
+        status: 'failed',
+        durationMs: Date.now() - barcodeStart,
+        detail: err instanceof Error ? err.message : 'Barcode/QR scan failed.',
+      });
+    }
+
+    // 2. Advanced Tables (visual bordered grid + text borderless + merged/header enrichment)
+    const tableStart = Date.now();
+    try {
+      const visualTables =
+        visualGray && visualW > 0 && visualH > 0
+          ? extractBorderedTablesFromGrayscale({
+              gray: visualGray,
+              width: visualW,
+              height: visualH,
+              pageNumber: 1,
+              wordBoxes: pageWordBoxes,
+            })
+          : [];
+      const textTables = extractTablesFromText(ocrText, 1);
+      const mergedTables =
+        visualTables.length > 0 && textTables.length === 0
+          ? visualTables
+          : visualTables.length > 0
+            ? [...visualTables, ...textTables.filter((tt) => tt.rows.length > 0)]
+            : textTables;
+      tables = linkMultiPageTables(mergedTables.map((t) => enrichExtractedTable(t)));
+      moduleReports.push({
+        module: 'advanced_tables',
+        status: 'executed',
+        durationMs: Date.now() - tableStart,
+        detail: `Extracted ${tables.length} structured table(s).`,
+      });
+    } catch (err) {
+      tables = extractTablesFromText(ocrText, 1);
+      moduleReports.push({
+        module: 'advanced_tables',
+        status: 'failed',
+        durationMs: Date.now() - tableStart,
+        detail: err instanceof Error ? err.message : 'Visual table reconstruction failed.',
+      });
+    }
+
+    // 3. Mathematical Formulas (2D spatial word-box + algebraic/calculus/matrix LaTeX)
+    const mathStart = Date.now();
+    try {
+      formulas = await extractMathFormulasAdvanced({
+        text: ocrText,
+        pageNumber: 1,
+        wordBoxes: pageWordBoxes,
+        adapter: options?.mathAdapter,
+      });
+      moduleReports.push({
+        module: 'math_formulas',
+        status: 'executed',
+        durationMs: Date.now() - mathStart,
+        detail: `Extracted ${formulas.length} mathematical formula(s).`,
+      });
+    } catch (err) {
+      moduleReports.push({
+        module: 'math_formulas',
+        status: 'failed',
+        durationMs: Date.now() - mathStart,
+        detail: err instanceof Error ? err.message : 'Math formula recognition failed.',
+      });
+    }
+
+    // 4. Diagram & Graph extraction (all 12 semantic classes + preserved crop reference)
+    const diagStart = Date.now();
+    const extractedShapeDiagrams: ExtractedDiagramAsset[] = [];
+    try {
+      if (visualGray && visualW > 0 && visualH > 0) {
+        const isolated = await extractRasterDiagramsFromGrayscale({
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
+          pageNumber: 1,
+          wordBoxes: pageWordBoxes,
+          ocrText,
         });
         for (const fig of isolated) {
           const ref = await documentStorageAdapter.putBinary({
@@ -1660,9 +2107,172 @@ export async function scanSingleAcademicInput(
           });
           extractedShapeDiagrams.push({ ...fig, storageRef: ref });
         }
-      } catch {
-        // Non-fatal; scan-sheet-1 remains available
       }
+      moduleReports.push({
+        module: 'diagram_recognition',
+        status: 'executed',
+        durationMs: Date.now() - diagStart,
+        detail: `Isolated ${extractedShapeDiagrams.length} figure/diagram region(s).`,
+      });
+    } catch (err) {
+      moduleReports.push({
+        module: 'diagram_recognition',
+        status: 'failed',
+        durationMs: Date.now() - diagStart,
+        detail: err instanceof Error ? err.message : 'Diagram extraction failed.',
+      });
+    }
+
+    // 5. OMR Recognition
+    const omrStart = Date.now();
+    try {
+      if (visualGray && visualW > 0 && visualH > 0) {
+        const omr = scanOmrSheet({
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
+          pageNumber: 1,
+          ocrText,
+          template: options?.omrTemplate,
+        });
+        if (omr.detected) {
+          omrResults = omr;
+          pageWarnings.push(...omr.warnings);
+        }
+      }
+      moduleReports.push({
+        module: 'omr_recognition',
+        status: omrResults ? 'executed' : 'skipped_not_applicable',
+        durationMs: Date.now() - omrStart,
+        detail: omrResults
+          ? `Detected ${omrResults.summary.totalQuestions} OMR bubble rows.`
+          : 'No OMR bubble grid detected on sheet.',
+      });
+    } catch (err) {
+      moduleReports.push({
+        module: 'omr_recognition',
+        status: 'failed',
+        durationMs: Date.now() - omrStart,
+        detail: err instanceof Error ? err.message : 'OMR scan failed.',
+      });
+    }
+
+    // 6. Checkbox & Form Recognition
+    const formStart = Date.now();
+    try {
+      if (visualGray && visualW > 0 && visualH > 0) {
+        const form = recognizeFormFields({
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
+          pageNumber: 1,
+          ocrText,
+          wordBoxes: pageWordBoxes,
+        });
+        if (form.detected) {
+          formResults = form;
+          pageWarnings.push(...form.warnings);
+        }
+      }
+      moduleReports.push({
+        module: 'form_checkbox',
+        status: formResults ? 'executed' : 'skipped_not_applicable',
+        durationMs: Date.now() - formStart,
+        detail: formResults
+          ? `Detected ${formResults.totalFields} form fields/checkboxes.`
+          : 'No checkboxes or form fields detected.',
+      });
+    } catch (err) {
+      moduleReports.push({
+        module: 'form_checkbox',
+        status: 'failed',
+        durationMs: Date.now() - formStart,
+        detail: err instanceof Error ? err.message : 'Form recognition failed.',
+      });
+    }
+
+    // 7. Handwriting Recognition (HTR)
+    const htrStart = Date.now();
+    try {
+      if (visualGray && visualW > 0 && visualH > 0) {
+        const htr = await analyzeHandwritingRegions({
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
+          pageNumber: 1,
+          ocrText,
+          ocrConfidence: averageOcrConfidence,
+          wordBoxes: pageWordBoxes,
+          adapter: options?.handwritingAdapter,
+          isScannedOrRaster: true,
+        });
+        handwritingAnalysis = htr;
+        moduleReports.push({
+          module: 'handwriting_htr',
+          status: htr.detected ? htr.engineStatus : 'skipped_not_applicable',
+          durationMs: Date.now() - htrStart,
+          detail: htr.detected
+            ? `Detected ${htr.regions.length} handwritten stroke region(s).`
+            : 'No distinct handwritten stroke clusters detected.',
+          missingRequirement: htr.missingModelNote,
+        });
+      } else {
+        moduleReports.push({
+          module: 'handwriting_htr',
+          status: 'skipped_not_applicable',
+          durationMs: Date.now() - htrStart,
+        });
+      }
+    } catch (err) {
+      moduleReports.push({
+        module: 'handwriting_htr',
+        status: 'failed',
+        durationMs: Date.now() - htrStart,
+        detail: err instanceof Error ? err.message : 'Handwriting analysis failed.',
+      });
+    }
+
+    // 8. Signature Presence & Stamp/Seal Detection
+    const sigStart = Date.now();
+    try {
+      if (visualGray && visualW > 0 && visualH > 0) {
+        const sigStamp = detectSignaturesAndStamps({
+          rgba: visualRgba,
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
+          pageNumber: 1,
+          ocrText,
+          wordBoxes: pageWordBoxes,
+        });
+        signatures = sigStamp.signatures;
+        stamps = sigStamp.stamps;
+      }
+      moduleReports.push({
+        module: 'signature_detection',
+        status: signatures.length > 0 ? 'executed' : 'skipped_not_applicable',
+        durationMs: Date.now() - sigStart,
+        detail: signatures.length > 0 ? `${signatures.length} signature region(s) flagged.` : 'No signature cues detected.',
+      });
+      moduleReports.push({
+        module: 'stamp_seal_detection',
+        status: stamps.length > 0 ? 'executed' : 'skipped_not_applicable',
+        durationMs: Date.now() - sigStart,
+        detail: stamps.length > 0 ? `${stamps.length} stamp/seal outline(s) flagged.` : 'No stamp/seal detected.',
+      });
+    } catch (err) {
+      moduleReports.push({
+        module: 'signature_detection',
+        status: 'failed',
+        durationMs: Date.now() - sigStart,
+        detail: err instanceof Error ? err.message : 'Signature detection failed.',
+      });
+      moduleReports.push({
+        module: 'stamp_seal_detection',
+        status: 'failed',
+        durationMs: Date.now() - sigStart,
+        detail: err instanceof Error ? err.message : 'Stamp detection failed.',
+      });
     }
 
     const imgDiagramRef = await documentStorageAdapter.putBinary({
@@ -1718,6 +2328,11 @@ export async function scanSingleAcademicInput(
         preprocessingApplied: finalPrep?.appliedSteps,
         errors: pageErrors.length > 0 ? pageErrors : undefined,
         renderedPreviewUrl: optimizedPreviewUrl,
+        handwritingRegions: handwritingAnalysis?.detected ? handwritingAnalysis.regions : undefined,
+        omrResult: omrResults?.detected ? omrResults.questions : undefined,
+        formFields: formResults?.detected ? formResults.fields : undefined,
+        signatures: signatures.length > 0 ? signatures : undefined,
+        stamps: stamps.length > 0 ? stamps : undefined,
         diagrams: pageDiagrams,
         tables,
         formulas,
@@ -1726,6 +2341,7 @@ export async function scanSingleAcademicInput(
     ];
   } else if (magicCheck.format === 'pdf') {
     throwIfAborted(options?.signal);
+    const pdfStart = Date.now();
     options?.onProgress?.({
       stage: 'extracting',
       stageLabel: 'Inspecting PDF pages & embedded graphics',
@@ -1737,9 +2353,12 @@ export async function scanSingleAcademicInput(
       signal: options?.signal,
       ocrRunner,
       pdfPageRenderer: options?.pdfPageRenderer,
-      visionFallback: options?.visionFallback,
+      visionFallback: effectiveVisionFallback,
       visionOcrRunner: options?.visionOcrRunner,
       onProgress: options?.onProgress,
+      handwritingAdapter: options?.handwritingAdapter,
+      mathAdapter: options?.mathAdapter,
+      omrTemplate: options?.omrTemplate,
     });
     pages = pdfOut.pages;
     diagrams = pdfOut.diagrams;
@@ -1751,8 +2370,33 @@ export async function scanSingleAcademicInput(
     processedPages = pdfOut.processedPages;
     unprocessedPages = pdfOut.unprocessedPages;
     docWarnings.push(...pdfOut.pdfWarnings);
+    omrResults = aggregateOmrPages(pdfOut.omrPages);
+    formResults = aggregateFormPages(pdfOut.formPages);
+    handwritingAnalysis = aggregateHandwritingPages(pdfOut.handwritingPages);
+    signatures = pdfOut.signatures;
+    stamps = pdfOut.stamps;
+
+    const elapsed = Date.now() - pdfStart;
+    moduleReports.push(
+      { module: 'quality_inspector', status: pages.some((p) => p.qualityMetrics) ? 'executed' : 'skipped_not_applicable', durationMs: Math.round(elapsed * 0.1) },
+      { module: 'advanced_tables', status: 'executed', durationMs: Math.round(elapsed * 0.1), detail: `${tables.length} table(s)` },
+      { module: 'math_formulas', status: 'executed', durationMs: Math.round(elapsed * 0.1), detail: `${formulas.length} formula(s)` },
+      { module: 'diagram_recognition', status: 'executed', durationMs: Math.round(elapsed * 0.1), detail: `${diagrams.length} diagram asset(s)` },
+      { module: 'omr_recognition', status: omrResults ? 'executed' : 'skipped_not_applicable', durationMs: 0 },
+      { module: 'form_checkbox', status: formResults ? 'executed' : 'skipped_not_applicable', durationMs: 0 },
+      {
+        module: 'handwriting_htr',
+        status: handwritingAnalysis?.detected ? handwritingAnalysis.engineStatus : 'skipped_not_applicable',
+        durationMs: 0,
+        missingRequirement: handwritingAnalysis?.missingModelNote,
+      },
+      { module: 'barcode_qr', status: 'executed', durationMs: 0, detail: `${qrCodesFound.length} barcode/QR entry(ies)` },
+      { module: 'signature_detection', status: signatures.length > 0 ? 'executed' : 'skipped_not_applicable', durationMs: 0 },
+      { module: 'stamp_seal_detection', status: stamps.length > 0 ? 'executed' : 'skipped_not_applicable', durationMs: 0 }
+    );
   } else if (magicCheck.format === 'docx') {
     throwIfAborted(options?.signal);
+    const docxStart = Date.now();
     options?.onProgress?.({
       stage: 'extracting',
       stageLabel: 'Unpacking DOCX paragraphs, tables, formulas & media',
@@ -1762,8 +2406,22 @@ export async function scanSingleAcademicInput(
     });
     const docxOut = await parseDocxArchive(input.bytes, docId, options?.signal);
     extraHeadings = docxOut.headings;
-    tables = docxOut.tables;
+    tables = linkMultiPageTables(docxOut.tables.map((t) => enrichExtractedTable(t)));
     formulas = docxOut.formulas;
+    if (docxOut.text) {
+      const textFormulas = await extractMathFormulasAdvanced({
+        text: docxOut.text,
+        pageNumber: 1,
+        adapter: options?.mathAdapter,
+      });
+      const seenLatex = new Set(formulas.map((f) => f.latex.trim().toLowerCase()));
+      for (const tf of textFormulas) {
+        if (!seenLatex.has(tf.latex.trim().toLowerCase())) {
+          formulas.push(tf);
+          seenLatex.add(tf.latex.trim().toLowerCase());
+        }
+      }
+    }
     diagrams = docxOut.diagrams;
     optimizedPreviewUrl = docxOut.diagrams[0]?.dataUrl;
     if (docxOut.hasMacros) {
@@ -1801,13 +2459,20 @@ export async function scanSingleAcademicInput(
         isIncomplete: pageStatus.isIncomplete,
         wasTruncated: docxOut.wasTruncated,
         diagrams: docxOut.diagrams,
-        tables: docxOut.tables,
-        formulas: docxOut.formulas,
+        tables,
+        formulas,
         warnings: pageWarnings,
       },
     ];
+    const docxMs = Date.now() - docxStart;
+    moduleReports.push(
+      { module: 'advanced_tables', status: 'executed', durationMs: docxMs, detail: `${tables.length} DOCX table(s)` },
+      { module: 'math_formulas', status: 'executed', durationMs: 0, detail: `${formulas.length} OMML/text formula(s)` },
+      { module: 'diagram_recognition', status: diagrams.length > 0 ? 'executed' : 'skipped_not_applicable', durationMs: 0 }
+    );
   } else {
     throwIfAborted(options?.signal);
+    const txtStart = Date.now();
     options?.onProgress?.({
       stage: 'extracting',
       stageLabel: 'Reading text & tabular structure',
@@ -1821,8 +2486,12 @@ export async function scanSingleAcademicInput(
     const pageWarnings = wasTruncated
       ? [`Text file exceeded ${MAX_PAGE_TEXT_CHARS} characters and was safely capped.`]
       : [];
-    tables = extractTablesFromText(decoded, 1);
-    formulas = extractFormulasFromText(decoded, 1);
+    tables = linkMultiPageTables(extractTablesFromText(decoded, 1).map((t) => enrichExtractedTable(t)));
+    formulas = await extractMathFormulasAdvanced({
+      text: decoded,
+      pageNumber: 1,
+      adapter: options?.mathAdapter,
+    });
     const pageStatus = classifyPageStatus({
       text: decoded,
       ocrApplied: false,
@@ -1848,9 +2517,14 @@ export async function scanSingleAcademicInput(
         warnings: pageWarnings,
       },
     ];
+    moduleReports.push(
+      { module: 'advanced_tables', status: 'executed', durationMs: Date.now() - txtStart },
+      { module: 'math_formulas', status: 'executed', durationMs: 0 }
+    );
   }
 
   // Strip/normalize repeated multi-page running headers/footers before final structure assembly
+  const layoutStart = Date.now();
   const headerClean = detectRepeatedHeadersFooters(pages.map((p) => p.text));
   if (headerClean.cleanedPages.length === pages.length && pages.length > 1) {
     pages = pages.map((pg, idx) => ({
@@ -1868,20 +2542,10 @@ export async function scanSingleAcademicInput(
   if (formattedText.length > MAX_DOC_TEXT_CHARS) {
     docWarnings.push(`Combined extracted text exceeded ${MAX_DOC_TEXT_CHARS} characters and was capped.`);
   }
-
-  for (const pg of pages) {
-    if (pg.warnings.length > 0) docWarnings.push(...pg.warnings);
-    if (pg.errors && pg.errors.length > 0) docWarnings.push(...pg.errors);
-  }
-  const uniqueDocWarnings = Array.from(new Set(docWarnings));
-  const totalAlnumChars = (combinedText.match(/[A-Za-z0-9]/g) ?? []).length;
-
-  const extractionQualityStatus = summarizeExtractionQuality({
-    pages,
-    unprocessedPages,
-    docWarnings: uniqueDocWarnings,
-    averageOcrConfidence,
-    totalAlnumChars,
+  moduleReports.push({
+    module: 'layout_reconstruction',
+    status: 'executed',
+    durationMs: Date.now() - layoutStart,
   });
 
   if (!cached && combinedText) {
@@ -1903,6 +2567,123 @@ export async function scanSingleAcademicInput(
     detectedHeadersFooters: headerClean.detected,
   });
 
+  // Document-wide Language Detection
+  const langStart = Date.now();
+  let languageAnalysis: LanguageAnalysisResult | undefined;
+  try {
+    languageAnalysis = analyzeDocumentLanguages(combinedText);
+    docWarnings.push(...languageAnalysis.warnings);
+    moduleReports.push({
+      module: 'language_detection',
+      status: languageAnalysis.unsupportedLanguages.length > 0 ? 'model_unavailable_partial' : 'executed',
+      durationMs: Date.now() - langStart,
+      detail: `Primary: ${languageAnalysis.primaryLanguage}`,
+      missingRequirement:
+        languageAnalysis.unsupportedLanguages.length > 0
+          ? `Missing traineddata models: ${languageAnalysis.unsupportedLanguages.join(', ')}`
+          : undefined,
+    });
+  } catch (err) {
+    moduleReports.push({
+      module: 'language_detection',
+      status: 'failed',
+      durationMs: Date.now() - langStart,
+      detail: err instanceof Error ? err.message : 'Language detection failed.',
+    });
+  }
+
+  // Page Sequence & Document Integrity Audit
+  const integStart = Date.now();
+  let integrityReport: DocumentIntegrityReport | undefined;
+  try {
+    integrityReport = inspectDocumentIntegrity({
+      pages,
+      detectedFormat: magicCheck.format,
+    });
+    docWarnings.push(...integrityReport.warnings);
+    moduleReports.push({
+      module: 'document_integrity',
+      status: 'executed',
+      durationMs: Date.now() - integStart,
+      detail: integrityReport.isComplete ? 'Page sequence intact' : integrityReport.warnings.join(' '),
+    });
+  } catch (err) {
+    moduleReports.push({
+      module: 'document_integrity',
+      status: 'failed',
+      durationMs: Date.now() - integStart,
+      detail: err instanceof Error ? err.message : 'Integrity audit failed.',
+    });
+  }
+
+  // 14-Field Academic Metadata Extraction
+  const metaStart = Date.now();
+  let academicMetadata: ExtractedAcademicMetadata | undefined;
+  try {
+    academicMetadata = extractAcademicMetadata({
+      fileName: magicCheck.safeFileName,
+      pages,
+      extractedText: combinedText,
+    });
+    moduleReports.push({
+      module: 'academic_metadata',
+      status: 'executed',
+      durationMs: Date.now() - metaStart,
+    });
+  } catch (err) {
+    moduleReports.push({
+      module: 'academic_metadata',
+      status: 'failed',
+      durationMs: Date.now() - metaStart,
+      detail: err instanceof Error ? err.message : 'Academic metadata extraction failed.',
+    });
+  }
+
+  // 10-Category Academic Document Classifier
+  const clsStart = Date.now();
+  let classification: DocumentClassificationResult | undefined;
+  try {
+    classification = classifyAcademicDocument({
+      fileName: magicCheck.safeFileName,
+      text: combinedText,
+      headings: structured.headings,
+      tables: structured.tables,
+      formulas: structured.formulas,
+      diagrams,
+      omrResults,
+      formResults,
+      metadata: academicMetadata,
+    });
+    moduleReports.push({
+      module: 'document_classifier',
+      status: 'executed',
+      durationMs: Date.now() - clsStart,
+      detail: `${classification.primaryLabel} (${Math.round(classification.confidence * 100)}%)`,
+    });
+  } catch (err) {
+    moduleReports.push({
+      module: 'document_classifier',
+      status: 'failed',
+      durationMs: Date.now() - clsStart,
+      detail: err instanceof Error ? err.message : 'Document classification failed.',
+    });
+  }
+
+  for (const pg of pages) {
+    if (pg.warnings.length > 0) docWarnings.push(...pg.warnings);
+    if (pg.errors && pg.errors.length > 0) docWarnings.push(...pg.errors);
+  }
+  const uniqueDocWarnings = Array.from(new Set(docWarnings));
+  const totalAlnumChars = (combinedText.match(/[A-Za-z0-9]/g) ?? []).length;
+
+  const extractionQualityStatus = summarizeExtractionQuality({
+    pages,
+    unprocessedPages,
+    docWarnings: uniqueDocWarnings,
+    averageOcrConfidence,
+    totalAlnumChars,
+  });
+
   return {
     fileName: magicCheck.safeFileName,
     mimeType,
@@ -1916,17 +2697,17 @@ export async function scanSingleAcademicInput(
     extractedText: combinedText,
     pages,
     diagrams,
-    tables: structured.tables,
+    tables: linkMultiPageTables(structured.tables),
     formulas: structured.formulas,
     headings: structured.headings,
     summary: structured.summary,
     suggestedTitle: structured.suggestedTitle,
-    courseCode: structured.courseCode,
-    courseTitle: structured.courseTitle,
+    courseCode: academicMetadata?.courseCode.value || structured.courseCode,
+    courseTitle: academicMetadata?.courseTitle.value || structured.courseTitle,
     level: structured.level,
-    session: structured.session,
+    session: academicMetadata?.academicSession.value || structured.session,
     semester: structured.semester,
-    category: structured.category,
+    category: classification?.mappedLegacyCategory ?? structured.category,
     qrCodesFound,
     averageOcrConfidence,
     extractionQualityStatus,
@@ -1937,5 +2718,15 @@ export async function scanSingleAcademicInput(
     earlyChecks,
     parentZipName: input.parentZipName,
     processingDurationMs: Date.now() - startedAt,
+    academicMetadata,
+    classification,
+    integrityReport,
+    languageAnalysis,
+    omrResults,
+    formResults,
+    handwritingAnalysis,
+    signatures: signatures.length > 0 ? signatures : undefined,
+    stamps: stamps.length > 0 ? stamps : undefined,
+    moduleReports,
   };
 }

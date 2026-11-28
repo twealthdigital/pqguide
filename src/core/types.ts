@@ -547,9 +547,75 @@ export interface StorageObjectRef {
   storedAt: string;
 }
 
+export type ScannerModuleName =
+  | 'quality_inspector'
+  | 'layout_reconstruction'
+  | 'handwriting_htr'
+  | 'advanced_tables'
+  | 'math_formulas'
+  | 'diagram_recognition'
+  | 'omr_recognition'
+  | 'form_checkbox'
+  | 'barcode_qr'
+  | 'signature_detection'
+  | 'stamp_seal_detection'
+  | 'language_detection'
+  | 'document_classifier'
+  | 'document_integrity'
+  | 'academic_metadata';
+
+export type ModuleExecutionStatus =
+  | 'executed'
+  | 'skipped_not_applicable'
+  | 'model_unavailable_partial'
+  | 'failed';
+
+export interface ScannerModuleRunReport {
+  module: ScannerModuleName;
+  status: ModuleExecutionStatus;
+  durationMs: number;
+  detail?: string;
+  missingRequirement?: string;
+}
+
+export type DiagramSemanticType =
+  | 'flowchart'
+  | 'uml_class'
+  | 'uml_sequence'
+  | 'uml_use_case'
+  | 'erd'
+  | 'circuit'
+  | 'network'
+  | 'math_graph'
+  | 'geometric'
+  | 'scientific_illustration'
+  | 'engineering'
+  | 'general_diagram';
+
+export interface DiagramNodeItem {
+  id: string;
+  shape: 'rectangle' | 'circle' | 'diamond' | 'triangle' | 'oval' | 'unknown';
+  label?: string;
+  bbox: { x: number; y: number; width: number; height: number };
+}
+
+export interface DiagramEdgeItem {
+  id: string;
+  fromNodeId?: string;
+  toNodeId?: string;
+  directed: boolean;
+  dashed?: boolean;
+  label?: string;
+  points: Array<[number, number]>;
+}
+
 export interface VectorDiagramScene {
   width: number;
   height: number;
+  diagramType?: DiagramSemanticType;
+  nodes?: DiagramNodeItem[];
+  edges?: DiagramEdgeItem[];
+  measurements?: string[];
   polylines: Array<{
     points: Array<[number, number]>;
     closed?: boolean;
@@ -569,13 +635,27 @@ export interface ExtractedDiagramAsset {
   pageNumber: number;
   caption: string;
   kind: 'diagram' | 'chart' | 'illustration' | 'table_snapshot' | 'image';
+  diagramType?: DiagramSemanticType;
   mimeType?: string;
   dataUrl?: string;
+  originalCropDataUrl?: string;
   storageRef?: StorageObjectRef;
   width?: number;
   height?: number;
   bbox?: { x: number; y: number; width: number; height: number };
   vectorScene?: VectorDiagramScene;
+  extractedNodes?: DiagramNodeItem[];
+  extractedEdges?: DiagramEdgeItem[];
+  extractedMeasurements?: string[];
+  extractedLabels?: string[];
+}
+
+export interface MergedTableCellSpan {
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
+  value: string;
 }
 
 export interface ExtractedTable {
@@ -584,7 +664,30 @@ export interface ExtractedTable {
   caption?: string;
   headers: string[];
   rows: string[][];
+  rowHeaders?: string[];
+  columnHeaderCount?: number;
+  borderStyle?: 'bordered' | 'borderless' | 'mixed';
+  hasMergedCells?: boolean;
+  mergedCells?: MergedTableCellSpan[];
+  continuedFromPage?: number;
+  continuesOnPage?: number;
+  uncertainStructure?: boolean;
+  uncertaintyReason?: string;
+  markdown?: string;
+  jsonRows?: Array<Record<string, string>>;
 }
+
+export type MathExpressionKind =
+  | 'fraction'
+  | 'power_superscript'
+  | 'subscript'
+  | 'radical'
+  | 'integral_summation'
+  | 'matrix'
+  | 'algebraic'
+  | 'greek_notation'
+  | 'scientific_notation'
+  | 'general_equation';
 
 export interface ExtractedFormula {
   id: string;
@@ -592,6 +695,208 @@ export interface ExtractedFormula {
   rawText: string;
   latex: string;
   displayMode: boolean;
+  kind?: MathExpressionKind;
+  uncertain?: boolean;
+  uncertaintyReason?: string;
+  sourceMethod?: 'text_regex' | '2d_layout_ocr' | 'omml_xml' | 'math_adapter';
+  confidence?: number;
+  bbox?: { x: number; y: number; width: number; height: number };
+}
+
+export interface HandwritingRegion {
+  id: string;
+  pageNumber: number;
+  bbox: { x: number; y: number; width: number; height: number };
+  classification: 'handwritten' | 'mixed' | 'uncertain_stroke';
+  extractedText: string;
+  confidence: number | null;
+  uncertainWords: string[];
+  unreadable: boolean;
+  note?: string;
+}
+
+export interface HandwritingAnalysisResult {
+  detected: boolean;
+  engineUsed: 'morphological_detector_plus_tesseract_assist' | 'external_htr_adapter' | 'none';
+  engineStatus: ModuleExecutionStatus;
+  missingModelNote?: string;
+  regions: HandwritingRegion[];
+  uncertainCount: number;
+  unreadableCount: number;
+}
+
+export interface OmrBubbleCell {
+  option: string;
+  fillRatio: number;
+  filled: boolean;
+  bbox: { x: number; y: number; width: number; height: number };
+}
+
+export interface OmrQuestionResult {
+  questionNumber: number;
+  pageNumber: number;
+  selectedOptions: string[];
+  status: 'answered' | 'unanswered' | 'multiple_selected' | 'ambiguous';
+  confidence: number;
+  bubbles: OmrBubbleCell[];
+}
+
+export interface OmrTemplateConfig {
+  templateId: string;
+  name: string;
+  options: string[]; // e.g. ['A','B','C','D','E']
+  questionsCount?: number;
+  studentIdDigits?: number;
+}
+
+export interface OmrScanResult {
+  detected: boolean;
+  pageNumbers: number[];
+  templateUsed: string;
+  studentIdGridDetected?: boolean;
+  studentIdDigits?: Array<{ column: number; digit: string | null; status: 'detected' | 'ambiguous' | 'blank'; confidence: number }>;
+  studentIdValue?: string;
+  questions: OmrQuestionResult[];
+  summary: {
+    totalQuestions: number;
+    answered: number;
+    unanswered: number;
+    multipleSelected: number;
+    ambiguous: number;
+  };
+  needsAdminReview: boolean;
+  warnings: string[];
+}
+
+export interface FormFieldItem {
+  id: string;
+  pageNumber: number;
+  kind: 'checkbox' | 'radio' | 'text_field';
+  label: string;
+  checked?: boolean;
+  value?: string;
+  status: 'filled' | 'unfilled' | 'ambiguous';
+  entrySource: 'printed' | 'handwritten' | 'mark' | 'unknown';
+  confidence: number;
+  uncertain: boolean;
+  bbox?: { x: number; y: number; width: number; height: number };
+}
+
+export interface FormExtractionResult {
+  detected: boolean;
+  fields: FormFieldItem[];
+  totalFields: number;
+  filledCount: number;
+  unfilledCount: number;
+  ambiguousCount: number;
+  isIncompleteForm: boolean;
+  warnings: string[];
+}
+
+export interface SignatureDetection {
+  id: string;
+  pageNumber: number;
+  status: 'present' | 'absent' | 'uncertain';
+  confidence: number;
+  bbox?: { x: number; y: number; width: number; height: number };
+  anchorLabel?: string;
+  note: string; // Presence detection only, never biometric verification
+}
+
+export interface StampDetection {
+  id: string;
+  pageNumber: number;
+  shape: 'circular' | 'rectangular' | 'irregular';
+  colorTone: 'colored' | 'monochrome';
+  extractedText?: string;
+  confidence: number;
+  uncertain: boolean;
+  bbox?: { x: number; y: number; width: number; height: number };
+  note: string;
+}
+
+export type DetailedAcademicCategory =
+  | 'past_question'
+  | 'lecture_note'
+  | 'course_material'
+  | 'handout'
+  | 'assignment'
+  | 'examination_paper'
+  | 'answer_sheet'
+  | 'study_guide'
+  | 'academic_timetable'
+  | 'other_academic_document';
+
+export interface ClassificationCandidate {
+  category: DetailedAcademicCategory;
+  label: string;
+  score: number; // 0..1
+  matchedSignals: string[];
+}
+
+export interface DocumentClassificationResult {
+  primaryCategory: DetailedAcademicCategory;
+  primaryLabel: string;
+  mappedLegacyCategory: AcademicDocCategory;
+  confidence: number; // 0..1
+  uncertain: boolean;
+  candidates: ClassificationCandidate[];
+  reason: string;
+  overriddenByAdmin?: boolean;
+}
+
+export interface DocumentIntegrityReport {
+  isComplete: boolean;
+  hasDuplicatePages: boolean;
+  duplicatePagePairs: Array<{ pageA: number; pageB: number; similarity: number }>;
+  missingPageNumbers: number[];
+  outOfOrderDetected: boolean;
+  inconsistentNumberingDetected: boolean;
+  printedPageNumbers: Array<{ pageIndex: number; printedNumber: number | null; rawMarker?: string }>;
+  blankPages: number[];
+  incompleteOrCroppedPages: number[];
+  damagedOrCorruptedPages: number[];
+  warnings: string[];
+}
+
+export interface LanguageAnalysisResult {
+  primaryLanguage: string;
+  detectedLanguages: Array<{
+    code: string;
+    name: string;
+    confidence: number;
+    script: string;
+    installedInOcrEngine: boolean;
+  }>;
+  installedOcrModels: string[];
+  unsupportedLanguages: string[];
+  preservesDiacritics: boolean;
+  warnings: string[];
+}
+
+export interface MetadataFieldResult {
+  value: string | null;
+  status: 'extracted' | 'uncertain' | 'not_found';
+  confidence: number;
+  sourcePage?: number;
+  sourceExcerpt?: string;
+}
+
+export interface ExtractedAcademicMetadata {
+  institution: MetadataFieldResult;
+  faculty: MetadataFieldResult;
+  department: MetadataFieldResult;
+  courseTitle: MetadataFieldResult;
+  courseCode: MetadataFieldResult;
+  courseUnit: MetadataFieldResult;
+  academicSession: MetadataFieldResult;
+  semester: MetadataFieldResult;
+  examinationType: MetadataFieldResult;
+  examinationDate: MetadataFieldResult;
+  examinationDuration: MetadataFieldResult;
+  instructions: MetadataFieldResult;
+  totalMarks: MetadataFieldResult;
+  examinerName: MetadataFieldResult;
 }
 
 export type PageExtractionMethod =
@@ -616,6 +921,19 @@ export interface PageImageQualityMetrics {
   shadowVariance?: number;
   skewAngleDeg?: number;
   blankRatio?: number;
+  isBlurry?: boolean;
+  isLowResolution?: boolean;
+  isUnevenLighting?: boolean;
+  isTornOrDamaged?: boolean;
+  isFadedPrinting?: boolean;
+  hasStrongShadows?: boolean;
+  hasStainsOrMarks?: boolean;
+  excessiveRotationDeg?: number;
+  hasCroppedEdgeText?: boolean;
+  hasFoldLinesOrCreases?: boolean;
+  isIncompleteCapture?: boolean;
+  unreadableRegionsCount?: number;
+  actionableWarnings?: string[];
 }
 
 export interface UncertainSpan {
@@ -645,6 +963,11 @@ export interface ExtractedPageContent {
   visionFallbackError?: string;
   uncertainSpans?: UncertainSpan[];
   perspectiveCorrected?: boolean;
+  handwritingRegions?: HandwritingRegion[];
+  omrResult?: OmrQuestionResult[];
+  formFields?: FormFieldItem[];
+  signatures?: SignatureDetection[];
+  stamps?: StampDetection[];
   diagrams: ExtractedDiagramAsset[];
   tables: ExtractedTable[];
   formulas: ExtractedFormula[];
@@ -655,12 +978,26 @@ export interface QrCodeMatch {
   pageNumber: number;
   payload: string;
   isSafeUrl: boolean;
+  format?: string;
+  bbox?: { x: number; y: number; width: number; height: number };
+  rotationDeg?: number;
+  unreadableDetected?: boolean;
+  warning?: string;
 }
 
 export interface DeterministicCheckResult {
   id: string;
   label: string;
-  category: 'integrity' | 'duplicate' | 'quality' | 'structure' | 'security' | 'qr_code';
+  category:
+    | 'integrity'
+    | 'duplicate'
+    | 'quality'
+    | 'structure'
+    | 'security'
+    | 'qr_code'
+    | 'omr'
+    | 'handwriting'
+    | 'language';
   passed: boolean;
   severity: 'info' | 'warning' | 'blocker';
   detail: string;
@@ -761,6 +1098,17 @@ export interface AcademicDocumentRecord {
   internalNotes: DocumentReviewNote[];
   processingHistory: ProcessingHistoryEntry[];
   parentZipName?: string;
+  academicMetadata?: ExtractedAcademicMetadata;
+  classification?: DocumentClassificationResult;
+  integrityReport?: DocumentIntegrityReport;
+  languageAnalysis?: LanguageAnalysisResult;
+  omrResults?: OmrScanResult;
+  formResults?: FormExtractionResult;
+  handwritingAnalysis?: HandwritingAnalysisResult;
+  signatures?: SignatureDetection[];
+  stamps?: StampDetection[];
+  moduleReports?: ScannerModuleRunReport[];
+  processingDurationMs?: number;
 }
 
 export interface AuditLogEntry {

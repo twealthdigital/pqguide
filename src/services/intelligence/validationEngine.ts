@@ -205,6 +205,89 @@ export function runDeterministicChecks(params: {
     });
   }
 
+  // 7. Page sequence & document integrity audit
+  if (
+    artifact.integrityReport &&
+    (artifact.integrityReport.hasDuplicatePages ||
+      artifact.integrityReport.missingPageNumbers.length > 0 ||
+      artifact.integrityReport.outOfOrderDetected ||
+      artifact.integrityReport.incompleteOrCroppedPages.length > 0 ||
+      artifact.integrityReport.damagedOrCorruptedPages.length > 0)
+  ) {
+    checks.push({
+      id: 'chk-page-sequence',
+      label: 'Page sequence & completeness audit',
+      category: 'integrity',
+      passed: false,
+      severity: 'warning',
+      detail:
+        artifact.integrityReport.warnings.join(' ') ||
+        'Document sequence or completeness anomalies detected.',
+    });
+  }
+
+  // 8. OMR answer-sheet human-review gate (never auto-grades or auto-publishes)
+  if (artifact.omrResults?.detected) {
+    checks.push({
+      id: 'chk-omr-review',
+      label: 'OMR answer sheet verification',
+      category: 'omr',
+      passed: false,
+      severity: 'warning',
+      detail: `OMR sheet detected (${artifact.omrResults.summary.totalQuestions} question(s), ${artifact.omrResults.summary.ambiguous} ambiguous, ${artifact.omrResults.summary.multipleSelected} multiple-selected). Routed for Super Admin verification.`,
+      pageNumbers: artifact.omrResults.pageNumbers,
+    });
+  }
+
+  // 9. Handwriting stroke recognition audit
+  if (
+    artifact.handwritingAnalysis?.detected &&
+    (artifact.handwritingAnalysis.uncertainCount > 0 ||
+      artifact.handwritingAnalysis.unreadableCount > 0 ||
+      artifact.handwritingAnalysis.engineStatus === 'model_unavailable_partial')
+  ) {
+    checks.push({
+      id: 'chk-handwriting',
+      label: 'Handwriting region verification',
+      category: 'handwriting',
+      passed: false,
+      severity: 'warning',
+      detail:
+        artifact.handwritingAnalysis.missingModelNote ||
+        `Detected ${artifact.handwritingAnalysis.regions.length} handwritten region(s) (${artifact.handwritingAnalysis.unreadableCount} unreadable). Manual check required.`,
+    });
+  }
+
+  // 10. Multilingual OCR traineddata check
+  if (
+    artifact.languageAnalysis &&
+    artifact.languageAnalysis.unsupportedLanguages.length > 0
+  ) {
+    checks.push({
+      id: 'chk-language',
+      label: 'Multilingual OCR language coverage',
+      category: 'language',
+      passed: false,
+      severity: 'warning',
+      detail: artifact.languageAnalysis.warnings.join(' '),
+    });
+  }
+
+  // 11. Modular scanner fault report
+  const failedModules = (artifact.moduleReports ?? []).filter((m) => m.status === 'failed');
+  if (failedModules.length > 0) {
+    checks.push({
+      id: 'chk-module-status',
+      label: 'Scanner module execution audit',
+      category: 'integrity',
+      passed: false,
+      severity: 'warning',
+      detail: `${failedModules.length} scanner module(s) encountered errors: ${failedModules
+        .map((m) => `${m.module}${m.detail ? ` (${m.detail})` : ''}`)
+        .join('; ')}.`,
+    });
+  }
+
   return checks;
 }
 

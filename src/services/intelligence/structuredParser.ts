@@ -6,6 +6,8 @@ import type {
   SemesterType,
   StudentLevel,
 } from '../../core/types';
+import { enrichExtractedTable } from './advancedTableExtractor';
+import { classifyMathKind, convertRawEquationToLatex } from './mathFormulaEngine';
 
 export interface StructuredDocumentParse {
   headings: string[];
@@ -42,6 +44,8 @@ export function extractFormulasFromText(
       rawText: sanitizeSingleLine(rawText, 320),
       latex: cleanLatex,
       displayMode,
+      kind: classifyMathKind(rawText, cleanLatex),
+      sourceMethod: 'text_regex',
     });
   };
 
@@ -79,7 +83,7 @@ export function extractFormulasFromText(
     const looksLikeMathSymbolExpr =
       hasUnicodeMath && /[=<>≤≥≠≈]/.test(line) && /[A-Za-z0-9]/.test(line);
     if (looksLikeAsciiEquation || looksLikeMathSymbolExpr) {
-      pushFormula(line, line, true);
+      pushFormula(line, convertRawEquationToLatex(line), true);
     }
   }
 
@@ -229,13 +233,20 @@ export function extractTablesFromText(
       const rows = block.slice(1).map((r) =>
         Array.from({ length: colCount }, (_, idx) => r[idx] ?? '')
       );
-      tables.push({
-        id: `tbl-${pageNumber}-${tables.length + 1}`,
-        pageNumber,
-        caption,
-        headers,
-        rows,
-      });
+      tables.push(
+        enrichExtractedTable(
+          {
+            id: `tbl-${pageNumber}-${tables.length + 1}`,
+            pageNumber,
+            caption,
+            headers,
+            rows,
+          },
+          {
+            borderStyle: isPipeRow ? 'bordered' : 'borderless',
+          }
+        )
+      );
     }
   }
 

@@ -64,6 +64,17 @@ export interface OcrExecutionInput {
   visionOcrRunner?: VisionOcrRunner;
 }
 
+export interface OcrWordBox {
+  text: string;
+  confidence: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  lineY0: number;
+  lineY1: number;
+}
+
 export interface OcrExecutionResult {
   text: string;
   confidence: number; // 0..100
@@ -76,6 +87,7 @@ export interface OcrExecutionResult {
   visionFallbackUsed: boolean;
   visionFallbackError?: string;
   uncertainSpans: UncertainSpan[];
+  wordBoxes?: OcrWordBox[];
   perspectiveCorrected?: boolean;
 }
 
@@ -319,13 +331,14 @@ function isPureBorderToken(tok: string): boolean {
 function analyzeBlocksAndOrder(
   blocks: TesseractBlockNode[] | null | undefined,
   fallbackText: string
-): { orderedText: string; uncertainSpans: UncertainSpan[] } {
+): { orderedText: string; uncertainSpans: UncertainSpan[]; wordBoxes: OcrWordBox[] } {
   if (!Array.isArray(blocks) || blocks.length === 0) {
-    return { orderedText: fallbackText, uncertainSpans: [] };
+    return { orderedText: fallbackText, uncertainSpans: [], wordBoxes: [] };
   }
 
   const lines: TesseractLineNode[] = [];
   const allWords: BboxWordNode[] = [];
+  const wordBoxes: OcrWordBox[] = [];
   let maxX = 0;
 
   for (const blk of blocks) {
@@ -336,12 +349,24 @@ function analyzeBlocksAndOrder(
           lines.push(ln);
           if (ln.bbox?.x1 && ln.bbox.x1 > maxX) maxX = ln.bbox.x1;
         }
+        const lineY0 = ln.bbox?.y0 ?? 0;
+        const lineY1 = ln.bbox?.y1 ?? 0;
         for (const w of ln.words ?? []) {
           const wt = (w.text ?? '').trim();
           if (!wt || !w.bbox) continue;
           const { x0, y0, x1, y1 } = w.bbox;
           if (x1 > x0 && y1 > y0) {
             allWords.push({ text: wt, x0, y0, x1, y1 });
+            wordBoxes.push({
+              text: wt,
+              confidence: Number.isFinite(w.confidence) ? Math.round(w.confidence!) : 85,
+              x0,
+              y0,
+              x1,
+              y1,
+              lineY0,
+              lineY1,
+            });
             if (x1 > maxX) maxX = x1;
           }
         }
@@ -625,7 +650,7 @@ function analyzeBlocksAndOrder(
     }
   }
 
-  return { orderedText, uncertainSpans };
+  return { orderedText, uncertainSpans, wordBoxes };
 }
 
 async function runPooledRecognition(params: {
@@ -634,7 +659,7 @@ async function runPooledRecognition(params: {
   signal?: AbortSignal;
   timeoutMs: number;
   onProgress?: (pct: number, statusText: string) => void;
-}): Promise<{ text: string; confidence: number; uncertainSpans: UncertainSpan[] }> {
+}): Promise<{ text: string; confidence: number; uncertainSpans: UncertainSpan[]; wordBoxes: OcrWordBox[] }> {
   throwIfAborted(params.signal);
   const slot = await acquireWorkerSlot();
   try {
@@ -684,14 +709,14 @@ async function runPooledRecognition(params: {
       const rawConf = Number.isFinite(res.data?.confidence)
         ? Math.max(0, Math.min(100, Math.round(res.data.confidence)))
         : 0;
-      const { orderedText, uncertainSpans } = analyzeBlocksAndOrder(
+      const { orderedText, uncertainSpans, wordBoxes } = analyzeBlocksAndOrder(
         res.data?.blocks as unknown as TesseractBlockNode[] | null | undefined,
         rawText
       );
       const cleaned = cleanOcrOutputText(orderedText);
       const metrics = scoreOcrCandidate(cleaned, rawConf);
       const effectiveConf = metrics.alnumChars < 6 ? 0 : rawConf;
-      return { text: cleaned, confidence: effectiveConf, uncertainSpans };
+      return { text: cleaned, confidence: effectiveConf, uncertainSpans, wordBoxes };
     } catch (err) {
       if ((err as { name?: string })?.name !== 'AbortError') {
         await terminateSlotWorker(slot);
@@ -1006,6 +1031,7 @@ export async function recognizeWithTesseractPool(
             text: cleanedVision,
             confidence: visionConf,
             uncertainSpans: vRes.uncertainSpans ?? [],
+            wordBoxes: best.wordBoxes,
           };
           bestScore = visionScore;
           uncertainSpans = vRes.uncertainSpans ?? [];
@@ -1064,6 +1090,7 @@ export async function recognizeWithTesseractPool(
     visionFallbackUsed,
     visionFallbackError,
     uncertainSpans,
+    wordBoxes: best.wordBoxes,
     perspectiveCorrected: basePrep?.perspectiveCorrected,
   };
 }

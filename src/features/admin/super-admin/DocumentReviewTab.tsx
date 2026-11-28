@@ -11,8 +11,13 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import type { AcademicDocumentRecord, AuthenticatedUser } from '../../../core/types';
+import type {
+  AcademicDocumentRecord,
+  AuthenticatedUser,
+  DetailedAcademicCategory,
+} from '../../../core/types';
 import { sanitizeSafeUrl } from '../../../core/security';
+import { mapDetailedToLegacyCategory } from '../../../services/intelligence/documentClassifier';
 import { archiveRepository, type AppStoreState } from '../../../services/archiveRepository';
 import {
   ExtractedDiagramsGallery,
@@ -20,6 +25,7 @@ import {
   ExtractedTableCard,
   RichInlineText,
   ScannedPageSideBySide,
+  SuperAdminIntelligenceSuite,
 } from '../../../components/academic/AcademicContentRenderer';
 import {
   DetailDialog,
@@ -409,6 +415,31 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
                 {selectedDoc.diagrams.length > 0 && (
                   <ExtractedDiagramsGallery diagrams={selectedDoc.diagrams} />
                 )}
+
+                <SuperAdminIntelligenceSuite
+                  doc={selectedDoc}
+                  onOverrideCategory={(nextCat: DetailedAcademicCategory) => {
+                    if (!selectedDoc.classification) return;
+                    try {
+                      archiveRepository.updateAcademicDocumentDetails(currentUser, selectedDoc.id, {
+                        category: mapDetailedToLegacyCategory(nextCat, selectedDoc.diagrams.length > 0),
+                        classification: {
+                          ...selectedDoc.classification,
+                          primaryCategory: nextCat,
+                          primaryLabel: nextCat.replace(/_/g, ' '),
+                          mappedLegacyCategory: mapDetailedToLegacyCategory(
+                            nextCat,
+                            selectedDoc.diagrams.length > 0
+                          ),
+                          overriddenByAdmin: true,
+                        },
+                      });
+                      onNotice(`Updated document classification to ${nextCat.replace(/_/g, ' ')}.`);
+                    } catch (err) {
+                      onError(err instanceof Error ? err.message : 'Unable to override classification.');
+                    }
+                  }}
+                />
 
                 {selectedDoc.unprocessedPages && selectedDoc.unprocessedPages.length > 0 && (
                   <div className="rounded-xl bg-[#FEF3C7] border border-[#FDE68A] px-3 py-2 text-xs font-semibold text-[#92400E]">
