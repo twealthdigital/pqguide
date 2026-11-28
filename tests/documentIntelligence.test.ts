@@ -1408,8 +1408,9 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     assert.equal(tables[0].rows.length, 2);
 
     const formulas = extractFormulasFromText(multiColTableText, 1);
-    assert.ok(formulas.some((f) => f.latex.includes('∑')));
-    assert.ok(formulas.some((f) => f.latex.includes('∫')));
+    // rawText keeps the OCR'd symbol; latex holds the KaTeX-renderable conversion
+    assert.ok(formulas.some((f) => f.rawText.includes('∑') && f.latex.includes('\\sum')));
+    assert.ok(formulas.some((f) => f.rawText.includes('∫') && f.latex.includes('\\int')));
 
     const repeated = detectRepeatedHeadersFooters([
       'UNIVERSITY OF EXAM ARCHIVE\nQuestion One content here\nDiscuss database normalization\nPage 1 of 3',

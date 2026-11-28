@@ -656,7 +656,7 @@ function extractMeasurementsFromStrings(strings: string[]): string[] {
   return Array.from(found).slice(0, 20);
 }
 
-function classifyDiagramTypeFromSignals(params: {
+export function classifyDiagramTypeFromSignals(params: {
   joinedLabels: string;
   rectCount: number;
   diamondCount: number;

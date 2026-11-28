@@ -1346,7 +1346,10 @@ async function processPdfBuffer(params: {
 
     // Visual raster modules on page pixels when available (barcodes, bordered tables, OMR, forms, handwriting, signatures/stamps)
     let visualGray: Uint8Array | undefined = pagePrep?.ocrGray;
-    let visualRgba: Uint8ClampedArray | undefined = pagePrep?.rawRgba;
+    let visualRgba: Uint8ClampedArray | undefined =
+      pagePrep && pagePrep.originalWidth === pagePrep.width && pagePrep.originalHeight === pagePrep.height
+        ? pagePrep.rawRgba // rawRgba is original-sized; only valid when no resize happened
+        : undefined;
     let visualW = pagePrep?.width ?? 0;
     let visualH = pagePrep?.height ?? 0;
 
@@ -1966,7 +1969,10 @@ export async function scanSingleAcademicInput(
 
     // Ensure grayscale & rgba pixel buffers exist even when custom ocrRunner skipped preprocessing
     let visualGray: Uint8Array | undefined = finalPrep?.ocrGray;
-    let visualRgba: Uint8ClampedArray | undefined = finalPrep?.rawRgba;
+    let visualRgba: Uint8ClampedArray | undefined =
+      finalPrep && finalPrep.originalWidth === finalPrep.width && finalPrep.originalHeight === finalPrep.height
+        ? finalPrep.rawRgba // rawRgba is original-sized; only valid when no resize happened
+        : undefined;
     let visualW = finalPrep?.width ?? 0;
     let visualH = finalPrep?.height ?? 0;
     if (!visualGray || visualW <= 0 || visualH <= 0) {

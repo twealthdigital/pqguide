@@ -1,5 +1,16 @@
 import jsQR from 'jsqr';
-import {
+import * as ZXingNamespace from '@zxing/library';
+import type { Result } from '@zxing/library';
+import type { QrCodeMatch } from '../../core/types';
+
+// @zxing/library ships CommonJS for Node (named exports are not visible to the ESM loader)
+// and ESM for bundlers. Resolve the real exports from whichever shape we received.
+type ZXingModule = typeof ZXingNamespace;
+const ZXing: ZXingModule =
+  'BarcodeFormat' in ZXingNamespace
+    ? ZXingNamespace
+    : ((ZXingNamespace as unknown as { default: ZXingModule }).default);
+const {
   BarcodeFormat,
   BinaryBitmap,
   DecodeHintType,
@@ -7,9 +18,10 @@ import {
   HybridBinarizer,
   MultiFormatReader,
   PlanarYUVLuminanceSource,
-  Result,
-} from '@zxing/library';
-import type { QrCodeMatch } from '../../core/types';
+} = ZXing;
+type BarcodeFormat = ZXingNamespace.BarcodeFormat;
+type DecodeHintType = ZXingNamespace.DecodeHintType;
+type MultiFormatReader = ZXingNamespace.MultiFormatReader;
 
 export interface BarcodeQrScanInput {
   rgba?: Uint8ClampedArray;
@@ -309,7 +321,8 @@ export function scanBarcodesAndQrFromBuffer(
 
   // Pass 1: jsQR on 0° native RGBA/gray (fast & tolerant to perspective skew)
   for (let pass = 0; pass < 3; pass += 1) {
-    const jsQrRgba = pass === 0 && rgba ? rgba : grayToRgba(workingGray);
+    const jsQrRgba =
+      pass === 0 && rgba && rgba.length === width * height * 4 ? rgba : grayToRgba(workingGray);
     const decoded = jsQR(jsQrRgba, width, height, {
       inversionAttempts: 'attemptBoth',
     });

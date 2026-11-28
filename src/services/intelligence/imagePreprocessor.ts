@@ -1614,6 +1614,7 @@ export async function preprocessImageForOcr(input: {
     appliedSteps.push('cap_large_resolution');
   }
 
+  const sharpFn = await getNodeSharp();
   if (targetWidth !== width || targetHeight !== height) {
     if (sharpFn) {
       const resized = await sharpFn(Buffer.from(gray), {
@@ -1695,7 +1696,6 @@ export async function preprocessImageForOcr(input: {
   const previewTargetW = Math.min(1280, width);
   const previewTargetH = Math.max(1, Math.round((height * previewTargetW) / Math.max(1, width)));
 
-  const sharpFn = await getNodeSharp();
   if (sharpFn) {
     const pngBuf = await sharpFn(Buffer.from(ocrGray), {
       raw: { width, height, channels: 1 },

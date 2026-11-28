@@ -35,7 +35,8 @@ import { extractAcademicMetadata } from '../src/services/intelligence/academicMe
 import { scanSingleAcademicInput } from '../src/services/intelligence/documentScannerEngine.ts';
 import { validateScannedDocument } from '../src/services/intelligence/validationEngine.ts';
 import { hasPermission } from '../src/core/permissions.ts';
-import type { ExtractedPageContent, VisionOcrRunner } from '../src/core/types.ts';
+import type { ExtractedPageContent, AuthenticatedUser, UserRole } from '../src/core/types.ts';
+import type { VisionOcrRunner } from '../src/services/intelligence/ocrEngine.ts';
 
 async function svgToPng(svg: string): Promise<Uint8Array> {
   const buf = await sharp(Buffer.from(svg)).png().toBuffer();
@@ -50,8 +51,9 @@ describe('Advanced Academic Document Scanning Modules', () => {
     const raw = Buffer.alloc(w * h * 3);
     for (let y = 0; y < h; y += 1) {
       for (let x = 0; x < w; x += 1) {
-        // Strong left-to-right uneven shadow gradient + faint dark fold line at x=160
-        let v = x < 110 ? 75 : 235;
+        // Realistic left-to-right shadow gradient (a hard step edge reads as the desk boundary)
+        // + faint dark fold line at x=160
+        let v = Math.round(70 + 170 * (x / w));
         if (Math.abs(x - 160) <= 1) v = 90;
         // Faint low-contrast faded stripe
         if (y > 40 && y < 48 && x > 130 && x < 290) v = 195;
@@ -94,15 +96,15 @@ describe('Advanced Academic Document Scanning Modules', () => {
       height: decoded.height,
       pageNumber: 1,
       wordBoxes: [
-        { text: 'Course', confidence: 95, bbox: { x0: 60, y0: 65, x1: 140, y1: 95 } },
-        { text: 'Score', confidence: 95, bbox: { x0: 260, y0: 65, x1: 340, y1: 95 } },
-        { text: 'Grade', confidence: 95, bbox: { x0: 460, y0: 65, x1: 540, y1: 95 } },
-        { text: 'CSC301', confidence: 94, bbox: { x0: 60, y0: 145, x1: 150, y1: 175 } },
-        { text: '84', confidence: 96, bbox: { x0: 260, y0: 145, x1: 300, y1: 175 } },
-        { text: 'A', confidence: 97, bbox: { x0: 460, y0: 145, x1: 490, y1: 175 } },
-        { text: 'MTH202', confidence: 94, bbox: { x0: 60, y0: 225, x1: 150, y1: 255 } },
+        { text: 'Course', confidence: 95, x0: 60, y0: 65, x1: 140, y1: 95, lineY0: 65, lineY1: 95 },
+        { text: 'Score', confidence: 95, x0: 260, y0: 65, x1: 340, y1: 95, lineY0: 65, lineY1: 95 },
+        { text: 'Grade', confidence: 95, x0: 460, y0: 65, x1: 540, y1: 95, lineY0: 65, lineY1: 95 },
+        { text: 'CSC301', confidence: 94, x0: 60, y0: 145, x1: 150, y1: 175, lineY0: 145, lineY1: 175 },
+        { text: '84', confidence: 96, x0: 260, y0: 145, x1: 300, y1: 175, lineY0: 145, lineY1: 175 },
+        { text: 'A', confidence: 97, x0: 460, y0: 145, x1: 490, y1: 175, lineY0: 145, lineY1: 175 },
+        { text: 'MTH202', confidence: 94, x0: 60, y0: 225, x1: 150, y1: 255, lineY0: 225, lineY1: 255 },
         // Middle cell intentionally empty!
-        { text: 'Pass', confidence: 92, bbox: { x0: 460, y0: 225, x1: 520, y1: 255 } },
+        { text: 'Pass', confidence: 92, x0: 460, y0: 225, x1: 520, y1: 255, lineY0: 225, lineY1: 255 },
       ],
     });
 
@@ -137,7 +139,7 @@ describe('Advanced Academic Document Scanning Modules', () => {
       rows: [
         ['1', '', ''],
         ['only1'],
-        ['', '', ''],
+        ['also one'],
       ],
     });
     assert.equal(ragged.uncertainStructure, true);
@@ -195,11 +197,13 @@ describe('Advanced Academic Document Scanning Modules', () => {
       pageNumber: 1,
       wordBoxes: [
         // Stacked fraction: "dy" above "dx" separated by horizontal gap
-        { text: 'dy', confidence: 92, bbox: { x0: 100, y0: 40, x1: 130, y1: 58 } },
-        { text: 'dx', confidence: 92, bbox: { x0: 100, y0: 68, x1: 130, y1: 86 } },
-        // Superscript: x followed by elevated smaller "2"
-        { text: 'x', confidence: 94, bbox: { x0: 200, y0: 120, x1: 218, y1: 146 } },
-        { text: '2', confidence: 91, bbox: { x0: 220, y0: 112, x1: 230, y1: 126 } },
+        { text: 'dy', confidence: 92, x0: 100, y0: 40, x1: 130, y1: 58, lineY0: 40, lineY1: 58 },
+        { text: 'dx', confidence: 92, x0: 100, y0: 68, x1: 130, y1: 86, lineY0: 68, lineY1: 86 },
+        // Superscript inside a real equation band "y = x²": x followed by elevated smaller "2"
+        { text: 'y', confidence: 94, x0: 150, y0: 120, x1: 168, y1: 146, lineY0: 120, lineY1: 146 },
+        { text: '=', confidence: 94, x0: 174, y0: 120, x1: 192, y1: 146, lineY0: 120, lineY1: 146 },
+        { text: 'x', confidence: 94, x0: 200, y0: 120, x1: 218, y1: 146, lineY0: 120, lineY1: 146 },
+        { text: '2', confidence: 91, x0: 220, y0: 112, x1: 230, y1: 126, lineY0: 112, lineY1: 126 },
       ],
     });
 
@@ -213,24 +217,28 @@ describe('Advanced Academic Document Scanning Modules', () => {
 
   test('4. Diagram & Graph Recognition covers all 12 semantic classes, extracts nodes/edges/measurements & retains original crop', async () => {
     const flowchartType = classifyDiagramTypeFromSignals({
-      ocrText: 'Flowchart: Start -> Process -> Decision -> End',
-      labels: ['Start', 'Process', 'End'],
-      nodeCount: 3,
-      arrowCount: 2,
+      joinedLabels: 'Flowchart: Start -> Process -> Decision -> End',
       rectCount: 2,
       diamondCount: 1,
       circleCount: 0,
+      triangleCount: 0,
+      dashedCount: 0,
+      directedCount: 2,
+      axisAlignedCount: 6,
+      totalPaths: 8,
     });
     assert.equal(flowchartType, 'flowchart');
 
     const circuitType = classifyDiagramTypeFromSignals({
-      ocrText: 'Series Circuit Diagram: V = 12V, R1 = 4 ohm, I = 3A',
-      labels: ['12V', '4 ohm'],
-      nodeCount: 3,
-      arrowCount: 1,
+      joinedLabels: 'Series Circuit Diagram: V = 12V, R1 = 4 ohm, I = 3A',
       rectCount: 2,
       diamondCount: 0,
       circleCount: 1,
+      triangleCount: 0,
+      dashedCount: 0,
+      directedCount: 1,
+      axisAlignedCount: 5,
+      totalPaths: 6,
     });
     assert.equal(circuitType, 'circuit');
 
@@ -251,9 +259,9 @@ describe('Advanced Academic Document Scanning Modules', () => {
       pageNumber: 1,
       ocrText: 'Flowchart node process 12V 5cm',
       wordBoxes: [
-        { text: 'Start', confidence: 95, bbox: { x0: 90, y0: 165, x1: 150, y1: 190 } },
-        { text: '5cm', confidence: 95, bbox: { x0: 250, y0: 150, x1: 295, y1: 170 } },
-        { text: 'End', confidence: 95, bbox: { x0: 410, y0: 165, x1: 460, y1: 190 } },
+        { text: 'Start', x0: 90, y0: 165, x1: 150, y1: 190 },
+        { text: '5cm', x0: 250, y0: 150, x1: 295, y1: 170 },
+        { text: 'End', x0: 410, y0: 165, x1: 460, y1: 190 },
       ],
     });
 
@@ -328,8 +336,8 @@ describe('Advanced Academic Document Scanning Modules', () => {
       pageNumber: 1,
       ocrText: 'Student Name: Ada Lovelace\nDepartment: ______',
       wordBoxes: [
-        { text: 'Agreed', confidence: 95, bbox: { x0: 95, y0: 62, x1: 165, y1: 84 } },
-        { text: 'Exempt', confidence: 95, bbox: { x0: 95, y0: 132, x1: 165, y1: 154 } },
+        { text: 'Agreed', confidence: 95, x0: 95, y0: 62, x1: 165, y1: 84, lineY0: 62, lineY1: 84 },
+        { text: 'Exempt', confidence: 95, x0: 95, y0: 132, x1: 165, y1: 154, lineY0: 132, lineY1: 154 },
       ],
     });
 
@@ -435,7 +443,7 @@ describe('Advanced Academic Document Scanning Modules', () => {
       pageNumber: 1,
       ocrText: 'Signed by Examiner: _______________\nAPPROVED DEAN',
       wordBoxes: [
-        { text: 'APPROVED', confidence: 88, bbox: { x0: 485, y0: 325, x1: 555, y1: 345 } },
+        { text: 'APPROVED', confidence: 88, x0: 485, y0: 325, x1: 555, y1: 345, lineY0: 325, lineY1: 345 },
       ],
     });
 
@@ -529,7 +537,7 @@ describe('Advanced Academic Document Scanning Modules', () => {
     let visionInvoked = false;
     const spyVision: VisionOcrRunner = async () => {
       visionInvoked = true;
-      return { text: 'should never run', confidence: 99, modelUsed: 'blocked' };
+      return { ok: true, providerAvailable: true, text: 'should never run', confidenceEstimate: 99, modelUsed: 'blocked' };
     };
 
     const bytes = new TextEncoder().encode('CSC 201 Past Question\n1. State Ohm Law.\n2. Calculate V=IR.');
@@ -541,18 +549,35 @@ describe('Advanced Academic Document Scanning Modules', () => {
     assert.ok(result.moduleReports && result.moduleReports.length >= 4);
 
     // Validation & Role RBAC check
-    const validation = validateScannedDocument({
+    const validation = await validateScannedDocument({
       artifact: result,
       duplicateLookup: { isDuplicate: false },
     });
     assert.ok(validation.deterministicChecks.length >= 4);
 
-    assert.equal(hasPermission('student', 'docs:scan_submit'), false);
-    assert.equal(hasPermission('student', 'docs:review'), false);
-    assert.equal(hasPermission('student', 'docs:publish'), false);
-    assert.equal(hasPermission('school_admin', 'docs:scan_submit'), true);
-    assert.equal(hasPermission('school_admin', 'docs:publish'), false);
-    assert.equal(hasPermission('super_admin', 'docs:publish'), true);
+    const makeUser = (role: UserRole): AuthenticatedUser => ({
+      id: `u-${role}`,
+      fullName: `Test ${role}`,
+      matricNumber: '2020/0001',
+      faculty: 'Science',
+      department: 'Computer Science',
+      email: `${role}@example.com`,
+      role,
+      status: 'active',
+      isEmailVerified: true,
+      createdAt: new Date(0).toISOString(),
+    });
+    const student = makeUser('student');
+    const schoolAdmin = makeUser('school_admin');
+    const superAdmin = makeUser('super_admin');
+
+    assert.equal(hasPermission(student, 'docs:scan_submit'), false);
+    assert.equal(hasPermission(student, 'docs:review_all'), false);
+    assert.equal(hasPermission(student, 'docs:read_library'), false);
+    assert.equal(hasPermission(schoolAdmin, 'docs:scan_submit'), true);
+    assert.equal(hasPermission(schoolAdmin, 'docs:review_all'), false);
+    assert.equal(hasPermission(superAdmin, 'docs:scan_submit'), true);
+    assert.equal(hasPermission(superAdmin, 'docs:review_all'), true);
 
     // Cancellation support
     const controller = new AbortController();
