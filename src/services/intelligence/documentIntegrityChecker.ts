@@ -40,12 +40,14 @@ function extractPrintedPageMarker(text: string): {
   const trimmed = text.trim();
   if (!trimmed) return { printedNumber: null, totalExpected: null };
 
-  // Inspect first 3 and last 4 lines for printed page numbers
+  // Inspect first 3 and last 4 lines for printed page numbers. Headers are read top-down and the
+  // footer bottom-up, so the line nearest the page edge wins over a stray "Page N" mention in
+  // repeated body or header text.
   const lines = trimmed
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
-  const edgeLines = [...lines.slice(0, 3), ...lines.slice(-4)];
+  const edgeLines = [...lines.slice(0, 3), ...lines.slice(-4).reverse()];
 
   for (const line of edgeLines) {
     const pageOfMatch = line.match(

@@ -84,7 +84,11 @@ function analyzeLineBands(
     rowCounts[y] = dark * 2;
   }
 
-  // Group active horizontal bands
+  // Group active horizontal bands. A handwritten line is tall relative to its own width, so on a
+  // tight crop of a single answer line the band can exceed 14% of the image height. Bound the band
+  // by the larger image dimension so such crops are still analysed, while full pages keep the
+  // same limit as before.
+  const maxBandHeight = Math.round(Math.max(height, width) * 0.14);
   const minActivePx = Math.max(8, Math.round(width * 0.015));
   const rawBands: Array<{ y0: number; y1: number }> = [];
   let inBand = false;
@@ -98,7 +102,7 @@ function analyzeLineBands(
       inBand = false;
       const bandEnd = y;
       const bandH = bandEnd - bandStart + 1;
-      if (bandH >= 10 && bandH <= Math.round(height * 0.14)) {
+      if (bandH >= 10 && bandH <= maxBandHeight) {
         rawBands.push({ y0: bandStart, y1: bandEnd });
       }
     }

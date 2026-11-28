@@ -113,12 +113,22 @@ export function extractAcademicMetadata(
   }
 
   // 6. Course Unit
-  const courseUnit = findLineMatch(
+  let courseUnit = findLineMatch(
     pages,
     /\b(?:Course\s*)?(?:Units?|Credits?)\s*[:\-]?\s*(\d{1,2}\s*(?:Units?|Credits?)?)/i,
     1,
     0.86
   );
+  if (courseUnit.status === 'not_found') {
+    // Papers usually print the load after the title, e.g. "CSC 301: Data Structures (3 Units)"
+    // or "3 Credit Units", rather than as a "Units: 3" label.
+    courseUnit = findLineMatch(
+      pages,
+      /\b(\d{1,2}\s*(?:Credit\s*)?(?:Units?|Credits?|Credit\s*Hours?))\b/i,
+      1,
+      0.84
+    );
+  }
 
   // 7. Academic Session (e.g., 2023/2024 or 2024-2025)
   const academicSession = findLineMatch(

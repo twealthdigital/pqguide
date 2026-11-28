@@ -67,11 +67,16 @@ function extractCandidateBubbles(
   const threshold = estimateLocalThreshold(gray);
   const visited = new Uint8Array(width * height);
   const minBubbleDim = Math.max(7, Math.round(width * 0.008));
-  const maxBubbleDim = Math.max(22, Math.round(width * 0.048));
+  const maxBubbleDim = Math.max(22, Math.round(width * 0.07));
 
   const candidates: CandidateBubble[] = [];
-  const queueX = new Int32Array(2048);
-  const queueY = new Int32Array(2048);
+  // The flood fill aborts once its bounding box exceeds maxBubbleDim * 1.4, so a connected
+  // component can never hold more pixels than that box. Size the queue from that bound so a
+  // large filled bubble on a high-resolution scan is never discarded by a fixed-size queue.
+  const maxComponentSpan = Math.ceil(maxBubbleDim * 1.4) + 4;
+  const queueCapacity = maxComponentSpan * maxComponentSpan + 64;
+  const queueX = new Int32Array(queueCapacity);
+  const queueY = new Int32Array(queueCapacity);
 
   for (let y = 4; y < height - 4; y += 2) {
     const rowOff = y * width;
@@ -194,7 +199,70 @@ function extractCandidateBubbles(
     }
   }
 
-  return candidates;
+  return suppressEnclosedGlyphs(candidates);
+}
+
+/**
+ * Printed option letters ("A", "B" ...) sit inside the bubble ring and are detected as their own
+ * small components at the same centre. A letter can look darker than an empty ring, so it must never
+ * compete with (or replace) the bubble that encloses it.
+ */
+function suppressEnclosedGlyphs(candidates: CandidateBubble[]): CandidateBubble[] {
+  return candidates.filter(
+    (inner, i) =>
+      !candidates.some(
+        (outer, j) =>
+          j !== i &&
+          outer.w >= inner.w * 1.3 &&
+          outer.h >= inner.h * 1.3 &&
+          inner.cx > outer.x &&
+          inner.cx < outer.x + outer.w &&
+          inner.cy > outer.y &&
+          inner.cy < outer.y + outer.h
+      )
+  );
+}
+
+/**
+ * Splits candidates into groups of similar size. Answer bubbles share one printed size, while
+ * question numbers, stray glyphs and noise do not, so grouping by size keeps a stray "12." beside a
+ * row from breaking that row. Each group is analysed independently, so a page full of body text can
+ * never outvote the bubble grid.
+ */
+function clusterBySize(candidates: CandidateBubble[]): CandidateBubble[][] {
+  const dimOf = (b: CandidateBubble) => (b.w + b.h) / 2;
+  const tolerance = 0.12;
+  let remaining = [...candidates].sort((a, b) => dimOf(a) - dimOf(b));
+  const clusters: CandidateBubble[][] = [];
+
+  // Peak picking: repeatedly take the densest tight size window. Bubbles printed at one size sit
+  // inside a narrow window, while glyphs of body text are spread over many sizes.
+  while (remaining.length >= 4 && clusters.length < 8) {
+    let bestStart = 0;
+    let bestEnd = 0;
+    let lo = 0;
+    for (let hi = 0; hi < remaining.length; hi += 1) {
+      const centre = dimOf(remaining[hi]);
+      while (dimOf(remaining[lo]) < centre * (1 - tolerance) - 1) lo += 1;
+      // Count members within +/- tolerance of this size (window may extend above centre)
+      let end = hi;
+      while (
+        end + 1 < remaining.length &&
+        dimOf(remaining[end + 1]) <= centre * (1 + tolerance) + 1
+      ) {
+        end += 1;
+      }
+      if (end - lo > bestEnd - bestStart) {
+        bestStart = lo;
+        bestEnd = end;
+      }
+    }
+    const members = remaining.slice(bestStart, bestEnd + 1);
+    if (members.length < 4) break;
+    clusters.push(members);
+    remaining = [...remaining.slice(0, bestStart), ...remaining.slice(bestEnd + 1)];
+  }
+  return clusters;
 }
 
 function groupIntoBubbleRows(
@@ -339,7 +407,8 @@ export function scanOmrSheet(input: OmrScanInput): OmrScanResult {
   const { gray, width, height, pageNumber, ocrText, template } = input;
   const activeTemplate = template ?? DEFAULT_OMR_TEMPLATES[0];
   const candidates = extractCandidateBubbles(gray, width, height);
-  const rows = groupIntoBubbleRows(candidates);
+  const sizeClusters = clusterBySize(candidates);
+  const rows = sizeClusters.flatMap((cluster) => groupIntoBubbleRows(cluster));
 
   // Order multi-column answer blocks left-to-right (column major by X cluster) then top-to-bottom
   const sortedRows = [...rows].sort((a, b) => {
@@ -361,12 +430,28 @@ export function scanOmrSheet(input: OmrScanInput): OmrScanResult {
 
     if (row.length !== optionLetters.length) continue;
 
-    const bubbles: OmrBubbleCell[] = row.map((b, idx) => ({
-      option: optionLetters[idx] || String(idx + 1),
-      fillRatio: b.fillRatio,
-      filled: b.fillRatio >= 0.44,
-      bbox: { x: b.x, y: b.y, width: b.w, height: b.h },
-    }));
+    // Printed option letters inside the bubbles add a constant amount of ink to every cell of a
+    // row. Measure shading as the ink above that row's printed baseline so an empty "B" bubble is
+    // not mistaken for a pencil mark. The baseline is capped so a row where every bubble is shaded
+    // is still reported as shaded.
+    const printedInkBaseline = Math.min(
+      0.35,
+      Math.min(...row.map((b) => b.fillRatio))
+    );
+    const shadingOf = (fillRatio: number) =>
+      Number(
+        Math.max(0, (fillRatio - printedInkBaseline) / (1 - printedInkBaseline)).toFixed(3)
+      );
+
+    const bubbles: OmrBubbleCell[] = row.map((b, idx) => {
+      const shading = shadingOf(b.fillRatio);
+      return {
+        option: optionLetters[idx] || String(idx + 1),
+        fillRatio: shading,
+        filled: shading >= 0.44,
+        bbox: { x: b.x, y: b.y, width: b.w, height: b.h },
+      };
+    });
 
     const filled = bubbles.filter((b) => b.filled);
     const partial = bubbles.filter((b) => !b.filled && b.fillRatio >= 0.25);
@@ -399,10 +484,18 @@ export function scanOmrSheet(input: OmrScanInput): OmrScanResult {
     });
   }
 
-  const studentIdDigits = detectStudentIdGrid(
-    candidates,
-    activeTemplate.studentIdDigits
-  );
+  // Bubbles already read as answer rows must not be re-read as digit columns: a block of ten
+  // questions has ten bubbles in every option column, which would otherwise be reported as a
+  // student ID.
+  const answerRowBubbles = new Set(rows.flat());
+  let studentIdDigits: OmrScanResult['studentIdDigits'];
+  for (const cluster of sizeClusters) {
+    studentIdDigits = detectStudentIdGrid(
+      cluster.filter((b) => !answerRowBubbles.has(b)),
+      activeTemplate.studentIdDigits
+    );
+    if (studentIdDigits) break;
+  }
   const studentIdDetected = Boolean(studentIdDigits && studentIdDigits.length >= 4);
   const studentIdValue = studentIdDetected
     ? studentIdDigits!.map((d) => d.digit ?? '?').join('')

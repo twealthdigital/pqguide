@@ -211,6 +211,45 @@ function extract2DMathFromWordBoxes(
     else bands.push([w]);
   }
 
+  // A raised exponent or lowered subscript sorts before the rest of its line (smaller y0) and can
+  // sit outside that line's vertical tolerance, so it ends up as a band of its own and is never
+  // seen as a script. Re-attach small single-token bands to the line they overlap and touch.
+  for (let bi = bands.length - 1; bi >= 0; bi -= 1) {
+    if (bands[bi].length !== 1) continue;
+    const token = bands[bi][0];
+    const tokenH = token.y1 - token.y0;
+    let bestIndex = -1;
+    let bestGap = Infinity;
+
+    for (let oi = 0; oi < bands.length; oi += 1) {
+      const other = bands[oi];
+      if (oi === bi || other.length < 2) continue;
+      const heights = other.map((o) => o.y1 - o.y0).sort((a, b) => a - b);
+      const lineH = heights[Math.floor(heights.length / 2)] || 16;
+      if (tokenH > lineH * 0.82) continue;
+
+      const lineTop = Math.min(...other.map((o) => o.y0));
+      const lineBottom = Math.max(...other.map((o) => o.y1));
+      const verticalOverlap = Math.min(lineBottom, token.y1) - Math.max(lineTop, token.y0);
+      if (verticalOverlap < tokenH * 0.2) continue;
+
+      const horizontalGap = Math.min(
+        ...other.map((o) => Math.max(o.x0 - token.x1, token.x0 - o.x1, 0))
+      );
+      if (horizontalGap > lineH * 0.8) continue;
+
+      if (horizontalGap < bestGap) {
+        bestGap = horizontalGap;
+        bestIndex = oi;
+      }
+    }
+
+    if (bestIndex >= 0) {
+      bands[bestIndex].push(token);
+      bands.splice(bi, 1);
+    }
+  }
+
   const formulas: ExtractedFormula[] = [];
   let seq = 1;
 
