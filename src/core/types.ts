@@ -484,6 +484,7 @@ export type AuditActionType =
   | 'doc_review_rejected'
   | 'doc_resubmission_requested'
   | 'doc_deleted'
+  | 'doc_upload_failed'
   | 'dev_data_reset';
 
 export type AcademicDocFormat = 'pdf' | 'image' | 'docx' | 'text' | 'zip';

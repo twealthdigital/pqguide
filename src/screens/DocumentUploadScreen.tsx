@@ -83,11 +83,29 @@ function formatBytes(bytes: number): string {
  * What the person who uploaded sees. The scanning, typed conversion and AI
  * cross-check all run in the background, so only the outcome is shown.
  */
-function uploadStatus(record: AcademicDocumentRecord): {
+function uploadStatus(
+  record: AcademicDocumentRecord,
+  isSuperAdmin = true
+): {
   label: string;
   note: string;
   toneClass: string;
 } {
+  // School admins never see automated verification problems. Anything the checks
+  // flagged or blocked simply stays Pending for them while the Super Admin decides.
+  const automatedProblem =
+    (record.publicationStatus === 'flagged' ||
+      record.publicationStatus === 'rejected' ||
+      record.decision !== 'auto_approved') &&
+    record.publicationStatus !== 'published' &&
+    !record.reviewerId;
+  if (!isSuperAdmin && automatedProblem) {
+    return {
+      label: 'Pending',
+      note: 'Being processed.',
+      toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
+    };
+  }
   if (record.publicationStatus === 'published') {
     return {
       label: 'Published',
@@ -112,7 +130,7 @@ function uploadStatus(record: AcademicDocumentRecord): {
   if (record.publicationStatus === 'flagged' || record.decision !== 'auto_approved') {
     return {
       label: 'Needs attention',
-      note: 'The automatic cross-check found an issue. The Super Admin has been notified.',
+      note: 'The automatic checks found an issue with this document.',
       toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
     };
   }
@@ -148,6 +166,15 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const restricted = isRestrictedAccount(currentUser);
+
+  // Failed uploads are reported to the Super Admin only (never to the uploader).
+  const reportFailure = (fileName: string, reason: string) => {
+    try {
+      archiveRepository.reportUploadFailure(currentUser, { fileName, reason });
+    } catch {
+      /* reporting must never break the upload screen */
+    }
+  };
 
   const patchQueueItem = (id: string, patch: Partial<QueueItem>) => {
     setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
@@ -333,11 +360,13 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
         return;
       }
 
+      const reason = err instanceof Error ? err.message : 'Unable to process this file.';
+      reportFailure(inputFile.name, reason);
       patchQueueItem(id, {
         status: 'failed',
         stage: 'failed',
         stageLabel: 'Processing failed',
-        error: err instanceof Error ? err.message : 'Unable to scan this file.',
+        error: reason,
         abortController: undefined,
       });
     }
@@ -365,6 +394,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
 
     for (const file of files) {
       if (file.size === 0) {
+        reportFailure(file.name, 'File has 0 bytes.');
         setQueue((prev) => [
           {
             id: `fail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -382,6 +412,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
       }
 
       if (file.size > MAX_SCANNER_FILE_BYTES) {
+        reportFailure(file.name, 'File is over the size limit.');
         setQueue((prev) => [
           {
             id: `fail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -406,6 +437,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
       });
 
       if (!quickCheck.valid) {
+        reportFailure(input.name, quickCheck.error ?? 'Unsupported or unsafe file.');
         setQueue((prev) => [
           {
             id: `fail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -445,6 +477,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
             workQueue.push({ id, input: entry });
           }
         } catch (err) {
+          reportFailure(input.name, err instanceof Error ? err.message : 'ZIP archive rejected.');
           setQueue((prev) => [
             {
               id: `zipfail-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -655,7 +688,10 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
 
           <div className="space-y-3">
             {visibleQueue.map((item) => {
-              const isPending = item.status === 'processing' || item.status === 'queued';
+              const isPending =
+                item.status === 'processing' ||
+                item.status === 'queued' ||
+                (!isSuperAdmin && (item.status === 'failed' || item.status === 'cancelled'));
               return (
                 <div
                   key={item.id}
@@ -684,7 +720,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                           </span>
                         )}
                       </div>
-                      {item.error && (
+                      {isSuperAdmin && item.error && (
                         <p className="mt-1 text-xs font-medium text-[#B91C1C]">{item.error}</p>
                       )}
                     </div>
@@ -725,7 +761,8 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
             })}
 
             {uploads.map((doc) => {
-              const status = uploadStatus(doc);
+              const status = uploadStatus(doc, isSuperAdmin);
+              const canView = isSuperAdmin || status.label !== 'Pending';
               const isPublished = doc.publicationStatus === 'published';
               return (
                 <div
@@ -750,17 +787,19 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                       >
                         {status.label}
                       </span>
-                      <TactileButton
-                        variant="light"
-                        size="sm"
-                        icon={<Eye className="w-3.5 h-3.5" />}
-                        onClick={() => {
-                          setPreviewMode('extracted');
-                          setPreviewRecord(doc);
-                        }}
-                      >
-                        View
-                      </TactileButton>
+                      {canView && (
+                        <TactileButton
+                          variant="light"
+                          size="sm"
+                          icon={<Eye className="w-3.5 h-3.5" />}
+                          onClick={() => {
+                            setPreviewMode('extracted');
+                            setPreviewRecord(doc);
+                          }}
+                        >
+                          View
+                        </TactileButton>
+                      )}
                     </div>
                   </div>
 
@@ -859,7 +898,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-[#F6F7F9] p-3 border border-[#1A1B20]/10">
               <div className="space-y-0.5 text-xs">
-                <p className="font-bold text-[#1A1B20]">{uploadStatus(previewRecord).label}</p>
+                <p className="font-bold text-[#1A1B20]">{uploadStatus(previewRecord, isSuperAdmin).label}</p>
                 <p className="text-[#505460]">
                   SHA-256: <span className="font-mono-tabular">{previewRecord.sha256.slice(0, 16)}...</span>
                 </p>
@@ -939,6 +978,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                   </div>
                 )}
 
+                {isSuperAdmin && (
                 <AcademicBlocksRenderer
                   blocks={previewRecord.deterministicChecks
                     .filter((c) => !c.passed)
@@ -948,8 +988,9 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
                       text: c.detail,
                     }))}
                 />
+                )}
 
-                {previewRecord.aiFindings && (
+                {isSuperAdmin && previewRecord.aiFindings && (
                   <div className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3.5 text-xs space-y-1">
                     <div className="flex items-center gap-1.5 font-bold text-[#1A1B20]">
                       <AlertTriangle className="w-3.5 h-3.5" />

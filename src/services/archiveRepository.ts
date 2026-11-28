@@ -2369,20 +2369,12 @@ class ArchiveRepository {
     );
 
     this.update((prev) => {
+      // Only a successful upload notifies the uploader. Flagged, blocked or failed
+      // uploads are reported to the Super Admin alone (through the audit entries below).
       const submitterNotification = {
         id: `notif-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        title:
-          publicationStatus === 'rejected'
-            ? `Scan Blocked: ${record.courseCode}`
-            : aiOk
-              ? `Scan Received: ${record.courseCode}`
-              : `Scan Flagged: ${record.courseCode}`,
-        message:
-          publicationStatus === 'rejected'
-            ? `"${record.title}" failed automated safety/integrity checks and was not published. The Super Admin has been alerted.`
-            : aiOk
-              ? `"${record.title}" passed the automated checks and is waiting for Super Admin verification before students can see it.`
-              : `"${record.title}" was flagged by the AI cross-check. The Super Admin has been alerted and will verify it before it appears in the Document Library.`,
+        title: `Upload Successful: ${record.courseCode}`,
+        message: `"${record.title}" was converted to a typed document and passed the automatic checks. The Super Admin will publish it.`,
         category: 'upload' as const,
         audience: 'admins' as BroadcastAudience,
         targetUserId: actor.id,
@@ -2431,12 +2423,42 @@ class ArchiveRepository {
       return {
         ...prev,
         academicDocuments: [record, ...prev.academicDocuments].slice(0, 120),
-        notifications: [submitterNotification, ...prev.notifications],
+        notifications: aiOk ? [submitterNotification, ...prev.notifications] : prev.notifications,
         auditLogs: [...auditEntries.reverse(), ...prev.auditLogs].slice(0, 300),
       };
     });
 
     return record;
+  }
+
+  /** Records a failed upload for the Super Admin only. The uploader is not notified. */
+  reportUploadFailure(
+    actor: AuthenticatedUser | null | undefined,
+    payload: { fileName: string; reason: string }
+  ): void {
+    this.requirePermission(
+      actor,
+      'docs:scan_submit',
+      'Only active School Admin or Super Admin accounts can upload documents.'
+    );
+    const fileName = sanitizeSingleLine(payload.fileName, 120) || 'a file';
+    const reason = sanitizeSingleLine(payload.reason, 240) || 'Unknown error';
+    const schoolId =
+      actor.role === 'school_admin' ? actor.assignedSchoolId : this.state.selectedSchoolId;
+    this.update((prev) => ({
+      ...prev,
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'doc_upload_failed',
+          'academic_document',
+          `failed-${Date.now()}`,
+          `Upload of "${fileName}" failed: ${reason}`,
+          schoolId
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
   }
 
   reviewSubmittedDocument(

@@ -763,6 +763,88 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
       false
     );
   });
+
+  test('13. Failed or flagged uploads alert only the Super Admin; successful uploads still notify the uploader', () => {
+    const schoolAdmin = makeSchoolAdmin();
+    const superAdmin = makeSuperAdmin();
+
+    const payload = {
+      schoolId: 'sch-aaua',
+      title: 'PHY 101 Paper',
+      courseCode: 'PHY 101',
+      courseTitle: 'Mechanics',
+      level: '100L' as const,
+      session: '2023/2024',
+      semester: 'First Semester' as const,
+      category: 'past_question' as const,
+      originalFileName: 'phy101.pdf',
+      mimeType: 'application/pdf',
+      detectedFormat: 'pdf' as const,
+      fileSizeBytes: 1024,
+      sha256: 'c'.repeat(64),
+      pageCount: 1,
+      extractedText: '1. State Newton second law.',
+      summary: 's',
+      headings: [],
+      pages: [],
+      diagrams: [],
+      tables: [],
+      formulas: [],
+      qrCodesFound: [],
+      averageOcrConfidence: 30,
+      deterministicChecks: [],
+      decision: 'flagged' as const,
+      riskLevel: 'high' as const,
+      decisionReason: 'Possible alteration',
+    };
+
+    const uploaderFeed = () =>
+      archiveRepository.getNotificationsForWorkspace('school_admin', schoolAdmin.id);
+    const studentFeed = () => archiveRepository.getNotificationsForWorkspace('student', 'stu-1');
+    const superFeed = () => archiveRepository.getSuperAdminGovernanceNotifications();
+
+    const baseUploader = uploaderFeed().length;
+    const baseStudent = studentFeed().length;
+
+    // Flagged upload: no notification for the uploader or students, alert for Super Admin.
+    archiveRepository.submitScannedDocument(schoolAdmin, payload);
+    assert.equal(uploaderFeed().length, baseUploader);
+    assert.equal(studentFeed().length, baseStudent);
+    assert.ok(superFeed().some((n) => /AI Cross-Check Alert/i.test(n.categoryLabel)));
+
+    // Failed upload: recorded for Super Admin only.
+    archiveRepository.reportUploadFailure(schoolAdmin, {
+      fileName: 'broken.pdf',
+      reason: 'Archive safety check failed',
+    });
+    assert.equal(uploaderFeed().length, baseUploader);
+    assert.equal(studentFeed().length, baseStudent);
+    assert.ok(superFeed().some((n) => /broken\.pdf/.test(n.message)));
+    assert.throws(() =>
+      archiveRepository.reportUploadFailure(null, { fileName: 'x.pdf', reason: 'nope' })
+    );
+
+    // Successful upload still notifies the uploader, but never students.
+    archiveRepository.submitScannedDocument(schoolAdmin, {
+      ...payload,
+      sha256: 'd'.repeat(64),
+      decision: 'auto_approved',
+      riskLevel: 'low',
+    });
+    assert.equal(uploaderFeed().length, baseUploader + 1);
+    assert.match(uploaderFeed()[0].title, /Upload Successful/i);
+    assert.equal(studentFeed().length, baseStudent);
+
+    // A Super Admin decision with a reason is still sent to the uploader.
+    const flaggedId = archiveRepository
+      .getDocumentsForReview(superAdmin, 'pending_flagged')
+      .find((d) => d.sha256 === 'c'.repeat(64))!.id;
+    archiveRepository.reviewSubmittedDocument(superAdmin, flaggedId, 'reject', {
+      rejectionReason: 'Photo is altered',
+    });
+    assert.equal(uploaderFeed().length, baseUploader + 2);
+    assert.equal(studentFeed().length, baseStudent);
+  });
 });
 
 after(() => {

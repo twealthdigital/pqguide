@@ -232,6 +232,11 @@ export const AUDIT_ACTION_META: Record<AuditActionType, AuditActionMeta> = {
     whatItDoes: 'Requested clearer upload or corrections from the submitter with review guidance.',
     verb: 'requested document resubmission',
   },
+  doc_upload_failed: {
+    label: 'Upload Failed',
+    whatItDoes: 'An uploaded file could not be processed. Only the Super Admin is told about failed uploads.',
+    verb: 'had an upload fail',
+  },
   doc_deleted: {
     label: 'Document Deleted',
     whatItDoes: 'Permanently removed an uploaded document, including any typed copy published to the past questions catalog.',
