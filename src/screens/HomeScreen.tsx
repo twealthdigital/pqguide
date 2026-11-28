@@ -189,18 +189,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               </ol>
             </div>
 
-            {onNavigate && (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => onNavigate('document_library')}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/10 px-2.5 py-2 text-xs font-semibold text-[#1A1B20] cursor-pointer transition-colors"
-                >
-                  <FolderOpen className="w-3.5 h-3.5 shrink-0" />
-                  <span>Doc Library</span>
-                </button>
-              </div>
-            )}
           </SurfaceCard>
         </div>
       </section>

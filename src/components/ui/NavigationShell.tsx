@@ -487,7 +487,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
             { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
             { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
-            { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-5 h-5" /> },
             { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
             { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
           ]
@@ -496,7 +495,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
           { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
           { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
-          { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-5 h-5" /> },
           { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
           { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
         ];
@@ -513,6 +511,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: 'students', label: 'Students', icon: <Users className="w-[18px] h-[18px]" /> },
     { id: 'upload', label: 'Upload Documents', icon: <UploadCloud className="w-[18px] h-[18px]" /> },
     { id: 'scan', label: 'Scan Documents', icon: <ScanLine className="w-[18px] h-[18px]" /> },
+    { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-[18px] h-[18px]" /> },
     { id: 'catalog', label: 'Past Questions', icon: <FileText className="w-[18px] h-[18px]" /> },
     { id: 'notices', label: 'Student Notices', icon: <Bell className="w-[18px] h-[18px]" /> },
   ];
@@ -546,6 +545,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
       icon: <FileCheck2 className="w-[18px] h-[18px]" />,
       badge: pendingDocumentReviewCount,
     },
+    { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-[18px] h-[18px]" /> },
     { id: 'payments', label: 'Payments', icon: <CreditCard className="w-[18px] h-[18px]" /> },
   ];
 

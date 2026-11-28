@@ -41,6 +41,7 @@ import {
 } from '../components/ui';
 
 import { DocumentScannerScreen } from './DocumentScannerScreen';
+import { DocumentLibraryScreen } from './DocumentLibraryScreen';
 
 interface SchoolAdminScreenProps {
   currentUser: AuthenticatedUser;
@@ -55,6 +56,7 @@ const SECTION_LABELS: Record<SchoolAdminSectionId, string> = {
   students: 'Students',
   upload: 'Upload Documents',
   scan: 'Scan Documents',
+  document_library: 'Document Library',
   catalog: 'Past Questions',
   notices: 'Student Notices',
 };
@@ -465,7 +467,9 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                       ? adminCms.uploadPanelHint ||
                         `Upload scanned or typed past question documents for ${assignedSchool.code}.`
                       : activeSection === 'scan'
-                        ? `Scan past questions and notes for ${assignedSchool.code}. A Super Admin verifies every scan before students see it.`
+                        ? `Scan past questions and notes for ${assignedSchool.code}. A Super Admin verifies every scan before it is published.`
+                        : activeSection === 'document_library'
+                        ? 'Browse verified and published scanned documents, with extracted text, tables, formulas and diagrams.'
                         : activeSection === 'catalog'
                         ? `Search, preview, edit, publish, or remove ${assignedSchool.code} past question papers.`
                         : `Submit and monitor ${assignedSchool.code} student announcements pending Super Admin verification.`}
@@ -718,6 +722,10 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
         )}
 
         {activeSection === 'scan' && <DocumentScannerScreen currentUser={currentUser} />}
+
+        {activeSection === 'document_library' && (
+          <DocumentLibraryScreen currentUser={currentUser} />
+        )}
 
         {activeSection === 'upload' && (
           <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">

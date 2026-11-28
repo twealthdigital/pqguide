@@ -124,7 +124,7 @@ export function canManageSchoolDocument(
 
 /**
  * Checks whether a user can open a screen:
- * - Students: normal student website + published document library + info/support screens ONLY (never admin screens or scanning).
+ * - Students: normal student website + info/support screens ONLY (never admin screens, scanning or the document library).
  * - School Admins: ONLY School Admin Desk + Notifications + About/Services/Help/Customer Support
  *   (cannot switch to or open normal student website screens or Super Admin).
  * - Super Admins: full access across Super Admin console, School Admin view, and Student website view.

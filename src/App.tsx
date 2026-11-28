@@ -119,12 +119,6 @@ const SubscriptionScreen = lazy(() =>
   }))
 );
 
-const DocumentLibraryScreen = lazy(() =>
-  import('./screens/DocumentLibraryScreen').then((m) => ({
-    default: m.DocumentLibraryScreen,
-  }))
-);
-
 /** One step in the in-app "Back" trail. */
 interface NavEntry {
   screen: AppScreen;
@@ -188,7 +182,6 @@ function AppContent() {
   const [perf, setPerf] = useState<PerfNavState>(INITIAL_PERF);
   const [paywallContext, setPaywallContext] = useState<PaywallContext | null>(null);
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
-  const [docLibraryFocusId, setDocLibraryFocusId] = useState<string | null>(null);
   const [activeDropIn, setActiveDropIn] = useState<DropInNotificationItem | null>(null);
   const [authNotice, setAuthNotice] = useState<AuthNotice | null>(() => {
     if (authService.consumeExpiredSessionNotice()) {
@@ -1145,18 +1138,6 @@ function AppContent() {
     [navigateDirect]
   );
 
-  const handleFeatureNavigate = useCallback(
-    (screen: AppScreen, opts?: { docLibraryId?: string }) => {
-      if (opts?.docLibraryId !== undefined) {
-        setDocLibraryFocusId(opts.docLibraryId ?? null);
-      } else if (screen !== 'document_library') {
-        setDocLibraryFocusId(null);
-      }
-      handleNavigate(screen);
-    },
-    [handleNavigate]
-  );
-
   // Back goes to exactly where the person came from (home if there is no trail).
   const handleBack = useCallback(() => {
     const pushed = pushedLayerIdsRef.current;
@@ -1781,14 +1762,6 @@ function AppContent() {
             onOpenOverall={handlePerfOpenOverall}
             onBackView={handlePerfBackView}
             onViewList={handlePerfViewList}
-          />
-        )}
-
-        {activeScreen === 'document_library' && (
-          <DocumentLibraryScreen
-            currentUser={authenticatedStudent}
-            initialDocId={docLibraryFocusId}
-            onNavigate={handleFeatureNavigate}
           />
         )}
 

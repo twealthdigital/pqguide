@@ -34,6 +34,7 @@ export type SuperAdminSectionId =
   | 'study_materials'
   | 'document_scanner'
   | 'document_review'
+  | 'document_library'
   | 'payments'
   | 'settings';
 
@@ -42,6 +43,7 @@ export type SchoolAdminSectionId =
   | 'students'
   | 'upload'
   | 'scan'
+  | 'document_library'
   | 'catalog'
   | 'notices';
 
@@ -58,7 +60,6 @@ export type AppScreen =
   | 'material_reader'
   | 'mock_exam'
   | 'performance'
-  | 'document_library'
   | 'school_admin'
   | 'super_admin'
   | 'subscription';

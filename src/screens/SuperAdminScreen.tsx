@@ -19,6 +19,7 @@ import { SupportInboxTab } from '../features/admin/super-admin/SupportInboxTab';
 import { PastQuestionsManagerTab } from '../features/admin/super-admin/PastQuestionsManagerTab';
 import { StudyMaterialsManagerTab } from '../features/admin/super-admin/StudyMaterialsManagerTab';
 import { DocumentScannerScreen } from './DocumentScannerScreen';
+import { DocumentLibraryScreen } from './DocumentLibraryScreen';
 import { DocumentReviewTab } from '../features/admin/super-admin/DocumentReviewTab';
 import { PaymentsTab } from '../features/admin/super-admin/PaymentsTab';
 import { AdminSettingsTab } from '../features/admin/super-admin/AdminSettingsTab';
@@ -83,6 +84,10 @@ const SECTION_META: Record<
   document_review: {
     title: 'Document Review',
     subtitle: 'Verify every scanned document, SHA-256 duplicates, OCR scores, and AI cross-checks.',
+  },
+  document_library: {
+    title: 'Document Library',
+    subtitle: 'Browse every verified and published scanned document, with extracted text, tables, formulas and diagrams.',
   },
   payments: {
     title: 'Payment Verifications',
@@ -261,6 +266,10 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
           onNotice={handleNotice}
           onError={handleError}
         />
+      )}
+
+      {activeSection === 'document_library' && (
+        <DocumentLibraryScreen currentUser={currentUser} />
       )}
 
       {activeSection === 'payments' && <PaymentsTab store={store} />}

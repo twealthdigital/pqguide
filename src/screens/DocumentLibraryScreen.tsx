@@ -39,7 +39,7 @@ import {
 interface DocumentLibraryScreenProps {
   currentUser: AuthenticatedUser;
   initialDocId?: string | null;
-  onNavigate: (screen: AppScreen, opts?: { docLibraryId?: string }) => void;
+  onNavigate?: (screen: AppScreen, opts?: { docLibraryId?: string }) => void;
 }
 
 const CATEGORY_LABELS: Record<AcademicDocCategory, string> = {
@@ -69,7 +69,6 @@ function statusChip(doc: AcademicDocumentRecord): { label: string; cls: string }
 export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
   currentUser,
   initialDocId,
-  onNavigate,
 }) => {
   const store = useArchiveStore();
   const [query, setQuery] = useState('');
