@@ -44,7 +44,6 @@ import {
   AcademicBlocksRenderer,
   ExtractedDiagramsGallery,
   ScannedPageSideBySide,
-  pageImageUrl,
   ExtractedFormulasList,
   ExtractedTableCard,
   RichInlineText,
@@ -1185,10 +1184,6 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                         key={pg.pageNumber}
                         page={pg}
                         totalPages={previewRecord.pages.length}
-                        imageUrl={pageImageUrl(
-                          pg,
-                          pg.pageNumber === 1 ? previewRecord.optimizedPreviewUrl : undefined
-                        )}
                       />
                     ))}
                   </div>
@@ -1199,7 +1194,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                         Extracted text
                       </p>
                       <RichInlineText
-                        text={previewRecord.extractedText.slice(0, 3500)}
+                        text={previewRecord.extractedText}
                         className="text-xs sm:text-sm text-[#3A3D47]"
                       />
                     </div>

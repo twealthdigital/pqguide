@@ -516,7 +516,7 @@ export const ScannedPageSideBySide: React.FC<{
           Extracted text · Page {page.pageNumber}
         </p>
         {text ? (
-          <div className="max-h-[560px] overflow-y-auto whitespace-pre-wrap break-words">
+          <div className="whitespace-pre-wrap break-words">
             <RichInlineText text={text} className="text-xs sm:text-sm leading-relaxed text-[#3A3D47]" />
           </div>
         ) : (

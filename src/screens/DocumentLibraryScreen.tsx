@@ -27,7 +27,6 @@ import {
   ExtractedTableCard,
   RichInlineText,
   ScannedPageSideBySide,
-  pageImageUrl,
 } from '../components/academic/AcademicContentRenderer';
 import {
   CustomSelect,
@@ -425,10 +424,6 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
                     <ScannedPageSideBySide
                       page={activePage}
                       totalPages={selectedDoc.pages.length}
-                      imageUrl={pageImageUrl(
-                        activePage,
-                        activePage.pageNumber === 1 ? selectedDoc.optimizedPreviewUrl : undefined
-                      )}
                     />
                   </div>
                 )}
