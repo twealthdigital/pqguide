@@ -283,10 +283,38 @@ interface TesseractBlockNode {
   }>;
 }
 
+interface BboxWordNode {
+  text: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface TableCellSpan {
+  text: string;
+  x0: number;
+  x1: number;
+}
+
+function cleanBorderArtifact(text: string): string {
+  return text
+    .replace(/^[\s|│┃┌┐└┘├┤┬┴┼_—\-]+(?=[A-Za-z0-9(∑∫√])/, '')
+    .replace(/(?<=[A-Za-z0-9).%°])[\s|│┃┌┐└┘├┤┬┴┼_—\-]+$/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function isPureBorderToken(tok: string): boolean {
+  return /^[|│┃┌┐└┘├┤┬┴┼+\-_=~]{1,8}$/.test(tok.trim());
+}
+
 /**
  * Inspects Tesseract hierarchical blocks/lines/words to:
- * 1) Reorder genuine 2-column image layouts left-column-first without scrambling wide headers/tables.
- * 2) Collect low-confidence uncertain word/line spans with coordinates for Super Admin review.
+ * 1) Reconstruct Y-aligned 2+ column tables (including simple/borderless or cross-block tables)
+ *    as clean Markdown pipe tables right at their original vertical reading position.
+ * 2) Reorder genuine 2-column image layouts left-column-first without scrambling wide headers/tables.
+ * 3) Collect low-confidence uncertain word/line spans with coordinates for Super Admin review.
  */
 function analyzeBlocksAndOrder(
   blocks: TesseractBlockNode[] | null | undefined,
@@ -297,6 +325,7 @@ function analyzeBlocksAndOrder(
   }
 
   const lines: TesseractLineNode[] = [];
+  const allWords: BboxWordNode[] = [];
   let maxX = 0;
 
   for (const blk of blocks) {
@@ -306,6 +335,15 @@ function analyzeBlocksAndOrder(
         if ((ln.text ?? '').trim()) {
           lines.push(ln);
           if (ln.bbox?.x1 && ln.bbox.x1 > maxX) maxX = ln.bbox.x1;
+        }
+        for (const w of ln.words ?? []) {
+          const wt = (w.text ?? '').trim();
+          if (!wt || !w.bbox) continue;
+          const { x0, y0, x1, y1 } = w.bbox;
+          if (x1 > x0 && y1 > y0) {
+            allWords.push({ text: wt, x0, y0, x1, y1 });
+            if (x1 > maxX) maxX = x1;
+          }
         }
       }
     }
@@ -352,8 +390,10 @@ function analyzeBlocksAndOrder(
     }
   }
 
-  // Reorder 2-column dense scanned layouts cleanly when strong central vertical split exists
+  // Reorder 2-column dense scanned prose layouts when a clean central vertical split exists
   let orderedText = fallbackText;
+  let detectedTwoColumnProse = false;
+
   if (lines.length >= 8 && maxX > 300) {
     const midX = maxX * 0.5;
     const gutter = Math.max(14, maxX * 0.03);
@@ -373,7 +413,17 @@ function analyzeBlocksAndOrder(
       }
     }
 
+    const avgWordsLeft =
+      leftLines.reduce((s, l) => s + (l.text ?? '').trim().split(/\s+/).length, 0) /
+      Math.max(1, leftLines.length);
+    const avgWordsRight =
+      rightLines.reduce((s, l) => s + (l.text ?? '').trim().split(/\s+/).length, 0) /
+      Math.max(1, rightLines.length);
+    // Only treat as 2-column prose layout if columns contain multi-word prose lines (not short table cells)
+    const looksLikeProseColumns = avgWordsLeft >= 3.8 || avgWordsRight >= 3.8;
+
     if (
+      looksLikeProseColumns &&
       leftLines.length >= 4 &&
       rightLines.length >= 4 &&
       fullLines.length <= Math.min(leftLines.length, rightLines.length) * 0.5
@@ -391,7 +441,187 @@ function analyzeBlocksAndOrder(
         .join('\n\n');
       if (rebuilt.trim().length > fallbackText.trim().length * 0.8) {
         orderedText = rebuilt;
+        detectedTwoColumnProse = true;
       }
+    }
+  }
+
+  // Coordinate-based table reconstruction across all word bboxes (handles 2+ column & simple tables)
+  if (!detectedTwoColumnProse && allWords.length >= 4) {
+    const heights = allWords.map((w) => w.y1 - w.y0).sort((a, b) => a - b);
+    const medianH = Math.max(10, heights[Math.floor(heights.length * 0.5)] || 18);
+    const rowTol = Math.max(7, medianH * 0.55);
+
+    const wordsByY = allWords
+      .slice()
+      .sort((a, b) => (a.y0 + a.y1) * 0.5 - (b.y0 + b.y1) * 0.5 || a.x0 - b.x0);
+
+    interface RowGroup {
+      midY: number;
+      words: BboxWordNode[];
+      cells: TableCellSpan[];
+      rawLine: string;
+    }
+
+    const rowGroups: RowGroup[] = [];
+    for (const w of wordsByY) {
+      const wy = (w.y0 + w.y1) * 0.5;
+      const cur = rowGroups[rowGroups.length - 1];
+      if (!cur || Math.abs(wy - cur.midY) > rowTol) {
+        rowGroups.push({ midY: wy, words: [w], cells: [], rawLine: '' });
+      } else {
+        cur.words.push(w);
+        cur.midY = cur.words.reduce((s, item) => s + (item.y0 + item.y1) * 0.5, 0) / cur.words.length;
+      }
+    }
+
+    const cellGapMin = Math.max(18, medianH * 1.15);
+    for (const rg of rowGroups) {
+      rg.words.sort((a, b) => a.x0 - b.x0);
+      const cells: TableCellSpan[] = [];
+      let curText: string[] = [];
+      let curX0 = 0;
+      let curX1 = 0;
+      let prevEnd = -Infinity;
+
+      for (const w of rg.words) {
+        if (isPureBorderToken(w.text)) {
+          if (curText.length > 0) {
+            const cleaned = cleanBorderArtifact(curText.join(' '));
+            if (cleaned) cells.push({ text: cleaned, x0: curX0, x1: curX1 });
+            curText = [];
+          }
+          prevEnd = -Infinity;
+          continue;
+        }
+        const cleanedWord = cleanBorderArtifact(w.text);
+        if (!cleanedWord) continue;
+
+        if (curText.length === 0) {
+          curText = [cleanedWord];
+          curX0 = w.x0;
+          curX1 = w.x1;
+        } else if (w.x0 - prevEnd > cellGapMin) {
+          const cleaned = cleanBorderArtifact(curText.join(' '));
+          if (cleaned) cells.push({ text: cleaned, x0: curX0, x1: curX1 });
+          curText = [cleanedWord];
+          curX0 = w.x0;
+          curX1 = w.x1;
+        } else {
+          curText.push(cleanedWord);
+          curX1 = Math.max(curX1, w.x1);
+        }
+        prevEnd = w.x1;
+      }
+      if (curText.length > 0) {
+        const cleaned = cleanBorderArtifact(curText.join(' '));
+        if (cleaned) cells.push({ text: cleaned, x0: curX0, x1: curX1 });
+      }
+      rg.cells = cells;
+      rg.rawLine = cells.map((c) => c.text).join(' ');
+    }
+
+    const isEligibleTableRow = (rg: RowGroup): boolean => {
+      if (rg.cells.length < 2 || rg.cells.length > 8) return false;
+      const avgWords =
+        rg.cells.reduce((s, c) => s + c.text.split(/\s+/).filter(Boolean).length, 0) /
+        rg.cells.length;
+      if (avgWords > 6.5) return false;
+      if (rg.rawLine.length > 165) return false;
+      // Avoid merging numbered MCQ option rows like "A. Alpha   B. Beta" unless >2 aligned rows exist
+      const looksLikeMcqPair =
+        rg.cells.length === 2 &&
+        /^[A-D][.)]\s/.test(rg.cells[0].text) &&
+        /^[A-D][.)]\s/.test(rg.cells[1].text);
+      if (looksLikeMcqPair) return false;
+      return true;
+    };
+
+    const outputSegments: string[] = [];
+    let r = 0;
+    let rebuiltTableCount = 0;
+
+    while (r < rowGroups.length) {
+      if (!isEligibleTableRow(rowGroups[r])) {
+        if (rowGroups[r].rawLine) outputSegments.push(rowGroups[r].rawLine);
+        r += 1;
+        continue;
+      }
+
+      // Collect contiguous candidate table rows whose vertical spacing stays regular
+      let end = r + 1;
+      while (end < rowGroups.length && isEligibleTableRow(rowGroups[end])) {
+        const vGap = rowGroups[end].midY - rowGroups[end - 1].midY;
+        if (vGap > medianH * 4.5) break;
+        end += 1;
+      }
+
+      const run = rowGroups.slice(r, end);
+      if (run.length >= 2) {
+        // Build shared column X-bands across the contiguous rows
+        const bands: Array<{ minX: number; maxX: number; center: number }> = [];
+        const allRunCells = run.flatMap((rg) => rg.cells).sort((a, b) => a.x0 - b.x0);
+        for (const cell of allRunCells) {
+          const matched = bands.find(
+            (b) => cell.x0 <= b.maxX + medianH * 0.7 && cell.x1 >= b.minX - medianH * 0.7
+          );
+          if (matched) {
+            matched.minX = Math.min(matched.minX, cell.x0);
+            matched.maxX = Math.max(matched.maxX, cell.x1);
+            matched.center = (matched.minX + matched.maxX) * 0.5;
+          } else {
+            bands.push({ minX: cell.x0, maxX: cell.x1, center: (cell.x0 + cell.x1) * 0.5 });
+          }
+        }
+        bands.sort((a, b) => a.center - b.center);
+
+        const avgCellWordsAll =
+          allRunCells.reduce((s, c) => s + c.text.split(/\s+/).filter(Boolean).length, 0) /
+          Math.max(1, allRunCells.length);
+
+        const validTable =
+          bands.length >= 2 &&
+          bands.length <= 8 &&
+          (bands.length >= 3 || avgCellWordsAll <= 4.2);
+
+        if (validTable) {
+          const gridRows: string[][] = run.map((rg) => {
+            const slots = Array.from({ length: bands.length }, () => '');
+            for (const cell of rg.cells) {
+              let bestBand = 0;
+              let bestDist = Infinity;
+              const cellCenter = (cell.x0 + cell.x1) * 0.5;
+              for (let bi = 0; bi < bands.length; bi += 1) {
+                const overlap = Math.min(cell.x1, bands[bi].maxX) - Math.max(cell.x0, bands[bi].minX);
+                const dist = overlap > 0 ? -overlap : Math.abs(cellCenter - bands[bi].center);
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  bestBand = bi;
+                }
+              }
+              slots[bestBand] = slots[bestBand] ? `${slots[bestBand]} ${cell.text}` : cell.text;
+            }
+            return slots;
+          });
+
+          const headerLine = `| ${gridRows[0].map((c) => c || ' ').join(' | ')} |`;
+          const sepLine = `| ${bands.map(() => '---').join(' | ')} |`;
+          const bodyLines = gridRows.slice(1).map((row) => `| ${row.map((c) => c || ' ').join(' | ')} |`);
+          outputSegments.push([headerLine, sepLine, ...bodyLines].join('\n'));
+          rebuiltTableCount += 1;
+          r = end;
+          continue;
+        }
+      }
+
+      for (let k = r; k < end; k += 1) {
+        if (rowGroups[k].rawLine) outputSegments.push(rowGroups[k].rawLine);
+      }
+      r = end;
+    }
+
+    if (rebuiltTableCount > 0 && outputSegments.length > 0) {
+      orderedText = outputSegments.join('\n');
     }
   }
 

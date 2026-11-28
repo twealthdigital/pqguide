@@ -450,6 +450,92 @@ describe('PQGuide OCR benchmark (generated pages with known text + optional real
       assert.ok(m.cer < 0.08, `${v.name}: expected CER < 8%, got ${m.cer}`);
     }
   });
+
+  test('10. Raster PNG extracts simple 2-column table and isolated broken-stroke drawn geometric figure', async () => {
+    const svg = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1050">
+        <rect width="1400" height="1050" fill="#ffffff"/>
+        <text x="80" y="90" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="bold" fill="#111">PHY 101 MECHANICS TEST</text>
+
+        <text x="80" y="160" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="#111">Quantity</text>
+        <text x="520" y="160" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="#111">Unit</text>
+        <text x="80" y="220" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">Velocity</text>
+        <text x="520" y="220" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">m/s</text>
+        <text x="80" y="280" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">Force</text>
+        <text x="520" y="280" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">Newton</text>
+
+        <text x="80" y="380" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">1. Find the resultant angle in the triangle below:</text>
+        <line x1="220" y1="800" x2="660" y2="800" stroke="#111" stroke-width="5" stroke-dasharray="18 2"/>
+        <line x1="660" y1="800" x2="430" y2="480" stroke="#111" stroke-width="5" stroke-dasharray="16 2"/>
+        <line x1="430" y1="480" x2="220" y2="800" stroke="#111" stroke-width="5" stroke-dasharray="18 2"/>
+        <text x="195" y="832" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="#111">A</text>
+        <text x="670" y="832" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="#111">B</text>
+        <text x="422" y="460" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="bold" fill="#111">C</text>
+      </svg>`
+    );
+
+    const pngBytes = new Uint8Array(await sharp(svg).png().toBuffer());
+    const res = await scanSingleAcademicInput(
+      { name: 'PHY101_table_and_shape.png', type: 'image/png', size: pngBytes.byteLength, bytes: pngBytes },
+      { bypassCache: true, visionFallback: 'off' }
+    );
+
+    assert.ok(res.tables.length >= 1, `Expected at least 1 extracted 2-column table, got 0. Text:\n${res.extractedText}`);
+    const tbl = res.tables[0];
+    assert.equal(tbl.headers.length, 2, `Expected 2 columns, got ${tbl.headers.join(' | ')}`);
+    assert.match(tbl.headers.join(' '), /Quantity/i);
+    assert.match(tbl.rows.flat().join(' '), /Velocity/i);
+    assert.match(tbl.rows.flat().join(' '), /Newton/i);
+
+    const extractedFigures = res.diagrams.filter((d) => d.id.startsWith('fig-'));
+    assert.ok(extractedFigures.length >= 1, 'Expected isolated drawn triangle crop (fig-1-...)');
+    assert.equal(extractedFigures[0].kind, 'diagram');
+    assert.ok(extractedFigures[0].dataUrl?.startsWith('data:image/png;base64,'));
+  });
+
+  test('11. Digital PDF extracts simple 2-column table and vector diagram polylines + vertex labels', async () => {
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+    pdf.setFontSize(13);
+    pdf.text('MTH 204 GEOMETRY AND VECTORS', 48, 60);
+
+    // Simple borderless 2-column table
+    pdf.text('Parameter', 60, 110);
+    pdf.text('Value', 260, 110);
+    pdf.text('Mass', 60, 134);
+    pdf.text('14 kg', 260, 134);
+    pdf.text('Length', 60, 158);
+    pdf.text('8 m', 260, 158);
+
+    pdf.text('1. Calculate the area of triangle PQR drawn below.', 48, 210);
+
+    // Vector triangle + inner altitude line + vertex labels
+    pdf.setLineWidth(1.5);
+    pdf.triangle(120, 420, 320, 420, 210, 270, 'S');
+    pdf.line(210, 270, 210, 420);
+    pdf.text('P', 108, 434);
+    pdf.text('Q', 326, 434);
+    pdf.text('R', 206, 260);
+
+    const pdfBytes = new Uint8Array(pdf.output('arraybuffer'));
+    const res = await scanSingleAcademicInput(
+      { name: 'MTH204_vector_and_table.pdf', type: 'application/pdf', size: pdfBytes.byteLength, bytes: pdfBytes },
+      { bypassCache: true, visionFallback: 'off' }
+    );
+
+    assert.ok(res.tables.length >= 1, `Expected extracted 2-col PDF table. Text:\n${res.extractedText}`);
+    assert.match(res.tables[0].headers.join(' '), /Parameter/i);
+    assert.match(res.tables[0].rows.flat().join(' '), /14 kg/i);
+
+    const vecFigs = res.diagrams.filter((d) => d.id.startsWith('vec-fig-'));
+    assert.ok(vecFigs.length >= 1, 'Expected VectorDiagramScene extracted from PDF vector operators');
+    const scene = vecFigs[0].vectorScene;
+    assert.ok(scene && scene.polylines.length >= 2, 'Expected triangle + altitude polylines in vectorScene');
+    const labelTexts = (scene?.labels ?? []).map((l) => l.text);
+    assert.ok(
+      labelTexts.some((t) => /^[PQR]$/.test(t)),
+      `Expected vertex labels attached to vectorScene, got: ${JSON.stringify(labelTexts)}`
+    );
+  });
 });
 
 after(async () => {

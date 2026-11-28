@@ -38,6 +38,7 @@ export interface PreprocessedImageResult {
   ocrDataUrl: string;
   previewDataUrl: string;
   ocrBytes?: Uint8Array;
+  ocrGray?: Uint8Array;
   width: number;
   height: number;
   originalWidth: number;
@@ -1235,6 +1236,67 @@ async function encodeGrayBrowser(
   };
 }
 
+/** Decodes PNG/JPEG/WEBP bytes to upright single-channel grayscale in Node (Sharp) or Browser (Canvas). */
+export async function decodeBytesToGrayscale(
+  bytes: Uint8Array,
+  mimeType = 'image/png'
+): Promise<{ gray: Uint8Array; width: number; height: number; qrMatches: string[] }> {
+  const sharpFn = await getNodeSharp();
+  if (sharpFn) {
+    const { data, info } = await sharpFn(bytes)
+      .rotate()
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const width = info.width;
+    const height = info.height;
+    const clamped = new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength);
+    const qrMatches: string[] = [];
+    try {
+      const qr = jsQR(clamped, width, height, { inversionAttempts: 'dontInvert' });
+      if (qr?.data) qrMatches.push(qr.data);
+    } catch {
+      // Ignore QR error
+    }
+    return {
+      gray: rgbaToGrayscale(clamped, width, height),
+      width,
+      height,
+      qrMatches,
+    };
+  }
+  if (typeof document !== 'undefined') {
+    return decodeBytesBrowser(bytes, mimeType);
+  }
+  throw new Error('Neither sharp (Node) nor Canvas (browser) is available to decode images.');
+}
+
+/** Encodes a grayscale buffer into a lossless PNG data URL + bytes in Node or Browser. */
+export async function encodeGrayToPngDataUrl(
+  gray: Uint8Array,
+  width: number,
+  height: number
+): Promise<{ dataUrl: string; bytes: Uint8Array }> {
+  const sharpFn = await getNodeSharp();
+  if (sharpFn) {
+    const pngBuf = await sharpFn(Buffer.from(gray), {
+      raw: { width, height, channels: 1 },
+    })
+      .toColorspace('b-w')
+      .png({ compressionLevel: 6 })
+      .toBuffer();
+    const bytes = new Uint8Array(pngBuf);
+    return {
+      dataUrl: uint8ToBase64DataUrl(bytes, 'image/png'),
+      bytes,
+    };
+  }
+  if (typeof document !== 'undefined') {
+    return encodeGrayBrowser(gray, width, height, 'image/png');
+  }
+  throw new Error('Neither sharp (Node) nor Canvas (browser) is available to encode PNG images.');
+}
+
 /**
  * Full adaptive preprocessing pipeline working seamlessly in Browser and Node.js.
  * Selects crop, orientation/deskew, resolution normalization, sharpening, and soft
@@ -1482,6 +1544,7 @@ export async function preprocessImageForOcr(input: {
     ocrDataUrl,
     previewDataUrl,
     ocrBytes,
+    ocrGray,
     width,
     height,
     originalWidth,

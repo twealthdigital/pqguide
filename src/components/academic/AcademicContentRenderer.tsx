@@ -102,6 +102,79 @@ export const RichInlineText: React.FC<{ text: string; className?: string }> = ({
   );
 };
 
+export const VectorSceneSvg: React.FC<{
+  scene: NonNullable<ExtractedDiagramAsset['vectorScene']>;
+  caption?: string;
+}> = ({ scene, caption }) => {
+  const width = Number.isFinite(scene.width) && scene.width > 0 ? scene.width : 300;
+  const height = Number.isFinite(scene.height) && scene.height > 0 ? scene.height : 200;
+  const strokeW = Math.max(1.2, Math.min(3.2, width / 150));
+
+  return (
+    <div className="w-full rounded-xl bg-white border border-[#1A1B20]/[0.06] p-3 flex items-center justify-center">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full max-h-56 h-auto"
+        role="img"
+        aria-label={caption || 'Extracted drawn vector figure'}
+      >
+        {scene.polylines.map((pl, idx) => {
+          const cleanPts = pl.points
+            .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+            .map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`)
+            .join(' ');
+          if (!cleanPts) return null;
+          const dash = pl.dashed ? `${(strokeW * 3).toFixed(1)} ${(strokeW * 2).toFixed(1)}` : undefined;
+          const fill = pl.fill ? 'rgba(29, 30, 35, 0.08)' : 'none';
+          return pl.closed ? (
+            <polygon
+              key={idx}
+              points={cleanPts}
+              fill={fill}
+              stroke="#1D1E23"
+              strokeWidth={strokeW}
+              strokeDasharray={dash}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          ) : (
+            <polyline
+              key={idx}
+              points={cleanPts}
+              fill="none"
+              stroke="#1D1E23"
+              strokeWidth={strokeW}
+              strokeDasharray={dash}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          );
+        })}
+        {(scene.labels ?? []).map((lbl, idx) => {
+          if (!Number.isFinite(lbl.x) || !Number.isFinite(lbl.y) || !lbl.text) return null;
+          const fontSize =
+            lbl.fontSize && Number.isFinite(lbl.fontSize)
+              ? Math.max(8, Math.min(20, lbl.fontSize))
+              : Math.max(10, Math.min(14, width / 24));
+          return (
+            <text
+              key={idx}
+              x={lbl.x}
+              y={lbl.y}
+              fill="#1A1B20"
+              fontSize={fontSize}
+              fontWeight="700"
+              fontFamily="system-ui, -apple-system, sans-serif"
+            >
+              {lbl.text}
+            </text>
+          );
+        })}
+      </svg>
+    </div>
+  );
+};
+
 export const SchematicDiagramSvg: React.FC<{
   preset: NonNullable<StructuredAiBlock['diagramPreset']>;
   caption?: string;
@@ -297,27 +370,36 @@ export const ExtractedTableCard: React.FC<{ table: Pick<ExtractedTable, 'caption
 export const ExtractedDiagramsGallery: React.FC<{
   diagrams: ExtractedDiagramAsset[];
 }> = ({ diagrams }) => {
-  const visible = diagrams.filter((d) => sanitizeSafeUrl(d.dataUrl));
+  const visible = diagrams.filter(
+    (d) => Boolean(d.vectorScene && d.vectorScene.polylines.length > 0) || Boolean(sanitizeSafeUrl(d.dataUrl))
+  );
   if (visible.length === 0) return null;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      {visible.map((diag) => (
-        <figure
-          key={diag.id}
-          className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2"
-        >
-          <img
-            src={sanitizeSafeUrl(diag.dataUrl)}
-            alt={diag.caption}
-            referrerPolicy="no-referrer"
-            className="w-full max-h-56 object-contain rounded-xl bg-white"
-          />
-          <figcaption className="text-xs text-[#505460] font-medium">
-            Page {diag.pageNumber} · {diag.caption}
-          </figcaption>
-        </figure>
-      ))}
+      {visible.map((diag) => {
+        const safeUrl = sanitizeSafeUrl(diag.dataUrl);
+        return (
+          <figure
+            key={diag.id}
+            className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2"
+          >
+            {diag.vectorScene && diag.vectorScene.polylines.length > 0 ? (
+              <VectorSceneSvg scene={diag.vectorScene} caption={diag.caption} />
+            ) : safeUrl ? (
+              <img
+                src={safeUrl}
+                alt={diag.caption}
+                referrerPolicy="no-referrer"
+                className="w-full max-h-56 object-contain rounded-xl bg-white"
+              />
+            ) : null}
+            <figcaption className="text-xs text-[#505460] font-medium">
+              Page {diag.pageNumber} · {diag.caption}
+            </figcaption>
+          </figure>
+        );
+      })}
     </div>
   );
 };
@@ -477,6 +559,252 @@ export const AcademicBlocksRenderer: React.FC<{
   );
 };
 
+function parseOrganizedTableRow(rawLine: string): { kind: 'pipe' | 'tab' | null; cells: string[] } {
+  const trimmed = rawLine.trim();
+  if (!trimmed) return { kind: null, cells: [] };
+  if (/^[+|┌┐└┘├┤┬┴┼─═\-_=.\s]+$/.test(trimmed) && /[-─═_|+]/.test(trimmed)) {
+    return { kind: null, cells: [] };
+  }
+  const normalizedPipes = trimmed.replace(/[│┃]/g, '|');
+  if (normalizedPipes.includes('|')) {
+    const rawCells = normalizedPipes
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => c.trim());
+    const looksPipeRow =
+      (normalizedPipes.startsWith('|') && normalizedPipes.includes('|', 1) && rawCells.length >= 2) ||
+      rawCells.length >= 3;
+    if (looksPipeRow) {
+      return { kind: 'pipe', cells: rawCells };
+    }
+  }
+  if (trimmed.includes('\t')) {
+    const tabCells = trimmed.split('\t').map((c) => c.trim());
+    if (tabCells.length >= 2) {
+      return { kind: 'tab', cells: tabCells };
+    }
+  }
+  return { kind: null, cells: [] };
+}
+
+function isMarkdownDividerCells(cells: string[]): boolean {
+  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c.trim()));
+}
+
+function isHeadingLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.length > 95) return false;
+  if (/^#{1,3}\s+/.test(trimmed)) return true;
+  if (/^(?:SECTION|PART|QUESTION)\s+[A-Z0-9IVX]+\b/i.test(trimmed)) return true;
+  if (/^(?:FIRST|SECOND|THIRD)\s+SEMESTER\b/i.test(trimmed)) return true;
+  if (/^(?:UNIVERSITY|COLLEGE|FACULTY|DEPARTMENT)\s+OF\b/i.test(trimmed)) return true;
+  if (/^COURSE\s+CODE\s*:/i.test(trimmed)) return true;
+  if (
+    trimmed.length >= 5 &&
+    trimmed.length <= 72 &&
+    trimmed === trimmed.toUpperCase() &&
+    /[A-Z]{3,}/.test(trimmed) &&
+    !/[=.]$/.test(trimmed)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+type OrganizedBlock =
+  | { type: 'heading'; text: string }
+  | { type: 'table'; caption?: string; headers: string[]; rows: string[][] }
+  | { type: 'question'; label: string; body: string }
+  | { type: 'option'; label: string; body: string }
+  | { type: 'paragraph'; text: string };
+
+export const OrganizedPageText: React.FC<{ text: string }> = ({ text }) => {
+  const lines = text.split(/\r?\n/);
+  const blocks: OrganizedBlock[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
+
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    // 1. Box rule lines used purely as visual borders around tables
+    if (/^[+|┌┐└┘├┤┬┴┼─═\-_=.\s]+$/.test(trimmed) && /[-─═_|+]/.test(trimmed)) {
+      i += 1;
+      continue;
+    }
+
+    // 2. Inline pipe or tab-aligned tables
+    const parsedRow = parseOrganizedTableRow(trimmed);
+    if (parsedRow.kind) {
+      const collectedRows: string[][] = [];
+      let look = i;
+      while (look < lines.length) {
+        const lt = lines[look].trim();
+        if (!lt) break;
+        if (/^[+|┌┐└┘├┤┬┴┼─═\-_=.\s]+$/.test(lt) && /[-─═_|+]/.test(lt)) {
+          look += 1;
+          continue;
+        }
+        const nextRow = parseOrganizedTableRow(lt);
+        if (nextRow.kind !== parsedRow.kind) break;
+        if (isMarkdownDividerCells(nextRow.cells)) {
+          look += 1;
+          continue;
+        }
+        collectedRows.push(nextRow.cells);
+        look += 1;
+      }
+
+      if (collectedRows.length >= 2) {
+        const colCount = Math.max(...collectedRows.map((r) => r.length));
+        const normalized = collectedRows.map((r) => {
+          const copy = [...r];
+          while (copy.length < colCount) copy.push('');
+          return copy.slice(0, colCount);
+        });
+
+        let caption: string | undefined;
+        const prevBlock = blocks[blocks.length - 1];
+        if (
+          prevBlock &&
+          (prevBlock.type === 'paragraph' || prevBlock.type === 'heading') &&
+          /^(?:table|tab\.?)\s*\d*[:.\-–\s]/i.test(prevBlock.text)
+        ) {
+          caption = prevBlock.text;
+          blocks.pop();
+        }
+
+        blocks.push({
+          type: 'table',
+          caption,
+          headers: normalized[0],
+          rows: normalized.slice(1),
+        });
+        i = look;
+        continue;
+      }
+    }
+
+    // 3. Headings
+    if (isHeadingLine(trimmed)) {
+      blocks.push({
+        type: 'heading',
+        text: trimmed.replace(/^#{1,3}\s+/, ''),
+      });
+      i += 1;
+      continue;
+    }
+
+    // 4. Numbered questions (e.g., "1. ...", "Q2. ...", "1) ...")
+    const qMatch = trimmed.match(/^((?:Q(?:uestion)?\s*)?\d+[.)])\s+(.+)$/i);
+    if (qMatch) {
+      blocks.push({
+        type: 'question',
+        label: qMatch[1],
+        body: qMatch[2],
+      });
+      i += 1;
+      continue;
+    }
+
+    // 5. Sub-questions & options (e.g., "(a) ...", "a) ...", "A. ...", "(ii) ...")
+    const optMatch = trimmed.match(/^(\([a-z0-9]{1,4}\)|[A-Ea-e][.)])\s+(.+)$/);
+    if (optMatch) {
+      blocks.push({
+        type: 'option',
+        label: optMatch[1],
+        body: optMatch[2],
+      });
+      i += 1;
+      continue;
+    }
+
+    // 6. Regular paragraph lines grouped until blank line or structural break
+    const paraLines: string[] = [trimmed];
+    let pLook = i + 1;
+    while (pLook < lines.length) {
+      const nextTrim = lines[pLook].trim();
+      if (!nextTrim) break;
+      if (parseOrganizedTableRow(nextTrim).kind) break;
+      if (isHeadingLine(nextTrim)) break;
+      if (/^((?:Q(?:uestion)?\s*)?\d+[.)])\s+/i.test(nextTrim)) break;
+      if (/^(\([a-z0-9]{1,4}\)|[A-Ea-e][.)])\s+/.test(nextTrim)) break;
+      paraLines.push(nextTrim);
+      pLook += 1;
+    }
+    blocks.push({
+      type: 'paragraph',
+      text: paraLines.join('\n'),
+    });
+    i = pLook;
+  }
+
+  return (
+    <div className="space-y-2.5 text-xs sm:text-sm leading-relaxed text-[#3A3D47]">
+      {blocks.map((blk, idx) => {
+        if (blk.type === 'heading') {
+          return (
+            <h4
+              key={idx}
+              className="font-display text-xs sm:text-sm font-bold text-[#1A1B20] pt-1 border-b border-[#1A1B20]/[0.06] pb-1"
+            >
+              {blk.text}
+            </h4>
+          );
+        }
+        if (blk.type === 'table') {
+          return (
+            <div key={idx} className="my-1">
+              <ExtractedTableCard
+                table={{ caption: blk.caption, headers: blk.headers, rows: blk.rows }}
+              />
+            </div>
+          );
+        }
+        if (blk.type === 'question') {
+          return (
+            <div
+              key={idx}
+              className="flex items-start gap-2 pt-1 text-[#1A1B20]"
+            >
+              <span className="font-mono-tabular font-bold text-[#1D1E23] shrink-0">
+                {blk.label}
+              </span>
+              <RichInlineText text={blk.body} className="flex-1 text-xs sm:text-sm font-medium text-[#1A1B20] leading-relaxed" />
+            </div>
+          );
+        }
+        if (blk.type === 'option') {
+          return (
+            <div
+              key={idx}
+              className="flex items-start gap-2 pl-4 sm:pl-5 text-[#3A3D47]"
+            >
+              <span className="font-mono-tabular font-semibold text-[#505460] shrink-0">
+                {blk.label}
+              </span>
+              <RichInlineText text={blk.body} className="flex-1 text-xs sm:text-sm text-[#3A3D47] leading-relaxed" />
+            </div>
+          );
+        }
+        return (
+          <RichInlineText
+            key={idx}
+            text={blk.text}
+            className="text-xs sm:text-sm leading-relaxed text-[#3A3D47]"
+          />
+        );
+      })}
+    </div>
+  );
+};
+
 /** The scanned page image for a page, if there is one. */
 export function pageImageUrl(page: ExtractedPageContent, fallback?: string): string | undefined {
   const fromDiagram = page.diagrams.find((d) => d.id.startsWith('scan-sheet'))?.dataUrl;
@@ -498,6 +826,11 @@ export const ScannedPageSideBySide: React.FC<{
   const resolvedImageUrl = imageUrl;
   const text = page.text.trim();
   const charCount = page.charCount ?? text.replace(/\s+/g, '').length;
+  const pageExtractedDiagrams = page.diagrams.filter(
+    (d) =>
+      !d.id.startsWith('scan-sheet') &&
+      (Boolean(d.vectorScene && d.vectorScene.polylines.length > 0) || Boolean(sanitizeSafeUrl(d.dataUrl)))
+  );
   const methodLabel =
     page.extractionMethod === 'hybrid_native_plus_ocr'
       ? 'Native + OCR'
@@ -553,10 +886,10 @@ export const ScannedPageSideBySide: React.FC<{
           </figcaption>
         </figure>
       )}
-      <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-2 min-w-0">
+      <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-3 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
-            Extracted text · Page {page.pageNumber}
+            Extracted content · Page {page.pageNumber}
           </p>
           {showTechnical && (
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
@@ -614,13 +947,21 @@ export const ScannedPageSideBySide: React.FC<{
           </div>
         )}
         {text ? (
-          <div className="whitespace-pre-wrap break-words">
-            <RichInlineText text={text} className="text-xs sm:text-sm leading-relaxed text-[#3A3D47]" />
+          <div className="break-words">
+            <OrganizedPageText text={text} />
           </div>
         ) : (
           <p className="text-xs sm:text-sm text-[#686C78]">
             No text could be read from this page.
           </p>
+        )}
+        {pageExtractedDiagrams.length > 0 && (
+          <div className="pt-2 border-t border-[#1A1B20]/[0.07] space-y-2">
+            <p className="font-bold text-[11px] uppercase tracking-wider text-[#686C78]">
+              Drawn Figures &amp; Diagrams · Page {page.pageNumber}
+            </p>
+            <ExtractedDiagramsGallery diagrams={pageExtractedDiagrams} />
+          </div>
         )}
       </div>
     </div>

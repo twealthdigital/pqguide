@@ -86,12 +86,28 @@ export function extractFormulasFromText(
   return formulas;
 }
 
-function splitWhitespaceAlignedColumns(line: string): string[] {
+function splitWhitespaceAlignedColumns(line: string, allowTwoSpaces = false): string[] {
+  const regex = allowTwoSpaces ? /\s{2,}|\t+/ : /\s{3,}|\t+/;
   return line
     .trim()
-    .split(/\s{3,}|\t+/)
+    .split(regex)
     .map((c) => sanitizeSingleLine(c, 120))
     .filter(Boolean);
+}
+
+function isBoxRuleLine(line: string): boolean {
+  return /^[+|┌┐└┘├┤┬┴┼─═\-_=.\s]+$/.test(line) && /[-─═_|+]/.test(line);
+}
+
+function looksLikeExamHeaderOrMcqLine(cols: string[]): boolean {
+  if (cols.length !== 2) return false;
+  const a = cols[0];
+  const b = cols[1];
+  if (/^[A-D][.)]\s+/i.test(a) && /^[A-D][.)]\s+/i.test(b)) return true;
+  if (/^(course\s*(code|title)|time\s*allowed|date|session|semester|instructions?)\s*:/i.test(a)) {
+    return true;
+  }
+  return false;
 }
 
 export function extractTablesFromText(
@@ -104,49 +120,90 @@ export function extractTablesFromText(
 
   while (i < lines.length && tables.length < 12) {
     const rawLine = lines[i].trim();
-    const isPipeRow = rawLine.startsWith('|') && rawLine.endsWith('|') && rawLine.includes('|');
-    const isTabRow = rawLine.split('\t').length >= 3;
-    const spacedCols = splitWhitespaceAlignedColumns(rawLine);
-    // Avoid false table matches on 2-column exam metadata header rows like "COURSE CODE: SEN 202   UNIT: 3"
+    if (!rawLine || isBoxRuleLine(rawLine)) {
+      i += 1;
+      continue;
+    }
+
+    const normalizedPipes = rawLine.replace(/[│┃]/g, '|');
+    const pipeSegments = normalizedPipes
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => sanitizeSingleLine(c, 120));
+
+    const isPipeRow =
+      (normalizedPipes.startsWith('|') && normalizedPipes.includes('|', 1) && pipeSegments.length >= 2) ||
+      (normalizedPipes.includes('|') && pipeSegments.length >= 3);
+
+    const isTabRow = rawLine.split('\t').length >= 2;
+    const spacedCols3 = splitWhitespaceAlignedColumns(rawLine, false);
+    const spacedCols2 = splitWhitespaceAlignedColumns(rawLine, true);
+    const activeSpacedCols = spacedCols3.length >= 2 ? spacedCols3 : spacedCols2;
+
     const isSpacedTableRow =
       !isPipeRow &&
       !isTabRow &&
-      spacedCols.length >= 3 &&
-      rawLine.length <= 150 &&
-      !/^[-=_.\s]+$/.test(rawLine);
+      activeSpacedCols.length >= 2 &&
+      rawLine.length <= 155 &&
+      !looksLikeExamHeaderOrMcqLine(activeSpacedCols) &&
+      activeSpacedCols.every((c) => c.split(/\s+/).length <= 7);
 
     if (!isPipeRow && !isTabRow && !isSpacedTableRow) {
       i += 1;
       continue;
     }
 
+    // Check preceding line for an explicit Table caption ("Table 1: ..." or "TABLE 2 - ...")
+    let caption: string | undefined;
+    if (i > 0) {
+      const prev = lines[i - 1].trim();
+      if (/^(table|tab\.?)\s*\d*\s*[:.\-\s]/i.test(prev) && prev.length <= 120) {
+        caption = sanitizeSingleLine(prev, 120);
+      }
+    }
+
     const block: string[][] = [];
-    const expectedCols = isSpacedTableRow ? spacedCols.length : 0;
+    const expectedCols = isSpacedTableRow ? activeSpacedCols.length : 0;
 
     while (i < lines.length) {
       const cur = lines[i].trim();
-      if (isPipeRow && cur.startsWith('|') && cur.includes('|')) {
-        if (/^\|[\s:-]+\|/.test(cur) && !/[a-zA-Z0-9]/.test(cur)) {
+      if (!cur) break;
+      const curPipe = cur.replace(/[│┃]/g, '|');
+
+      if (isPipeRow && curPipe.includes('|')) {
+        if (/^\|?[\s:+\-=_|]+\|?$/.test(curPipe) && !/[a-zA-Z0-9]/.test(curPipe)) {
           i += 1;
           continue;
         }
-        const cells = cur
+        const cells = curPipe
           .replace(/^\|/, '')
           .replace(/\|$/, '')
           .split('|')
           .map((c) => sanitizeSingleLine(c, 120));
-        if (cells.length >= 2) block.push(cells);
-        i += 1;
+        if (cells.length >= 2) {
+          block.push(cells);
+          i += 1;
+        } else {
+          break;
+        }
       } else if (isTabRow && cur.split('\t').length >= 2) {
         block.push(cur.split('\t').map((c) => sanitizeSingleLine(c, 120)));
         i += 1;
       } else if (isSpacedTableRow) {
-        if (/^[-=_+\s]{3,}$/.test(cur)) {
+        if (isBoxRuleLine(cur)) {
           i += 1;
           continue;
         }
-        const cols = splitWhitespaceAlignedColumns(cur);
-        if (cols.length >= 3 && Math.abs(cols.length - expectedCols) <= 1) {
+        const c3 = splitWhitespaceAlignedColumns(cur, false);
+        const c2 = splitWhitespaceAlignedColumns(cur, true);
+        const cols = c3.length >= 2 ? c3 : c2;
+        if (
+          cols.length >= 2 &&
+          Math.abs(cols.length - expectedCols) <= 1 &&
+          !looksLikeExamHeaderOrMcqLine(cols) &&
+          cols.every((c) => c.split(/\s+/).length <= 7)
+        ) {
           block.push(cols);
           i += 1;
         } else {
@@ -157,9 +214,17 @@ export function extractTablesFromText(
       }
     }
 
-    const minRows = isSpacedTableRow ? 3 : 2;
-    if (block.length >= minRows) {
-      const colCount = Math.max(...block.map((r) => r.length));
+    const colCount = block.length > 0 ? Math.max(...block.map((r) => r.length)) : 0;
+    const minRows = isSpacedTableRow && colCount <= 2 ? 3 : 2;
+    // Allow 2-row 2-column tables only when compact or numeric/header-like
+    const allowTwoRowTwoCol =
+      isSpacedTableRow &&
+      colCount === 2 &&
+      block.length === 2 &&
+      block.flat().some((cell) => /\d/.test(cell)) &&
+      block.flat().every((cell) => cell.split(/\s+/).length <= 4);
+
+    if (block.length >= minRows || allowTwoRowTwoCol) {
       const headers = Array.from({ length: colCount }, (_, idx) => block[0][idx] ?? '');
       const rows = block.slice(1).map((r) =>
         Array.from({ length: colCount }, (_, idx) => r[idx] ?? '')
@@ -167,6 +232,7 @@ export function extractTablesFromText(
       tables.push({
         id: `tbl-${pageNumber}-${tables.length + 1}`,
         pageNumber,
+        caption,
         headers,
         rows,
       });
@@ -340,8 +406,31 @@ export function parseStructuredDocument(params: {
     ])
   ).slice(0, 24);
 
-  const tables = [...(params.extraTables ?? []), ...extractTablesFromText(cleanBody, 1)];
-  const formulas = [...(params.extraFormulas ?? []), ...extractFormulasFromText(cleanBody, 1)];
+  const rawTables = [
+    ...(params.extraTables ?? []),
+    ...extractTablesFromText(cleanBody, 1),
+  ];
+  const seenTableKeys = new Set<string>();
+  const tables: ExtractedTable[] = [];
+  for (const t of rawTables) {
+    const sig = `${t.headers.join('|')}::${t.rows.map((r) => r.join('|')).join(';')}`.toLowerCase();
+    if (seenTableKeys.has(sig)) continue;
+    seenTableKeys.add(sig);
+    tables.push(t);
+  }
+
+  const rawFormulas = [
+    ...(params.extraFormulas ?? []),
+    ...extractFormulasFromText(cleanBody, 1),
+  ];
+  const seenFormulaKeys = new Set<string>();
+  const formulas: ExtractedFormula[] = [];
+  for (const f of rawFormulas) {
+    const sig = f.latex.trim().toLowerCase();
+    if (seenFormulaKeys.has(sig)) continue;
+    seenFormulaKeys.add(sig);
+    formulas.push(f);
+  }
 
   const lines = cleanBody
     .split(/\r?\n/)

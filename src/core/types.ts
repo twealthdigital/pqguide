@@ -547,6 +547,23 @@ export interface StorageObjectRef {
   storedAt: string;
 }
 
+export interface VectorDiagramScene {
+  width: number;
+  height: number;
+  polylines: Array<{
+    points: Array<[number, number]>;
+    closed?: boolean;
+    dashed?: boolean;
+    fill?: boolean;
+  }>;
+  labels?: Array<{
+    x: number;
+    y: number;
+    text: string;
+    fontSize?: number;
+  }>;
+}
+
 export interface ExtractedDiagramAsset {
   id: string;
   pageNumber: number;
@@ -557,6 +574,8 @@ export interface ExtractedDiagramAsset {
   storageRef?: StorageObjectRef;
   width?: number;
   height?: number;
+  bbox?: { x: number; y: number; width: number; height: number };
+  vectorScene?: VectorDiagramScene;
 }
 
 export interface ExtractedTable {

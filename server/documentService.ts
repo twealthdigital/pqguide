@@ -498,9 +498,10 @@ export function createDocumentEngine(deps?: DocumentServiceDeps) {
       '1. Transcribe every visible word, character, small font, number, punctuation mark, question number, option label, and mathematical expression VERBATIM in exact reading order.',
       '2. Preserve paragraphs, headings, indented sub-questions, and two-column reading order (read left column top-to-bottom before right column top-to-bottom).',
       '3. Represent mathematical formulas clearly using LaTeX ($...$ or $$...$$) or exact Unicode symbols (∑, ∫, √, ≤, ≥, ≠, ±, θ, π).',
-      '4. Preserve tabular data as clean Markdown tables (| Col 1 | Col 2 |).',
-      '5. NEVER summarize, paraphrase, rewrite, silently fix student/exam grammar, or invent/hallucinate unreadable words.',
-      '6. If any word, glyph, or equation region is smudged, occluded, or uncertain, mark it explicitly as [uncertain: <text_or_illegible>] and list it in uncertainSpans.',
+      '4. Preserve all tabular data (including simple two-column, borderless, or bordered grid tables) as clean Markdown tables (| Col 1 | Col 2 |) with empty cells preserved as | |.',
+      '5. For drawn geometric figures, graphs, circuits, or diagrams on the page, transcribe every printed or handwritten label, measurement, and vertex letter verbatim in reading order without inventing missing labels.',
+      '6. NEVER summarize, paraphrase, rewrite, silently fix student/exam grammar, or invent/hallucinate unreadable words.',
+      '7. If any word, glyph, or equation region is smudged, occluded, or uncertain, mark it explicitly as [uncertain: <text_or_illegible>] and list it in uncertainSpans.',
       reason ? `Context: Local OCR triggered fallback (${reason}).` : '',
       regionHint ? `Region note: ${regionHint}` : '',
     ]
