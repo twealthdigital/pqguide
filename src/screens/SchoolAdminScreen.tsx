@@ -631,10 +631,10 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
         )}
 
         {activeSection === 'document_library' && (
-          <DocumentLibraryScreen currentUser={currentUser} />
+          <DocumentLibraryScreen currentUser={currentUser} asSchoolAdmin />
         )}
 
-        {activeSection === 'upload' && <DocumentUploadScreen currentUser={currentUser} />}
+        {activeSection === 'upload' && <DocumentUploadScreen currentUser={currentUser} asSchoolAdmin />}
 
         {activeSection === 'catalog' && (
           <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">

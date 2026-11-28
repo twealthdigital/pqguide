@@ -38,6 +38,8 @@ import {
 
 interface DocumentLibraryScreenProps {
   currentUser: AuthenticatedUser;
+  /** A Super Admin previewing the School Admin workspace sees what a School Admin sees. */
+  asSchoolAdmin?: boolean;
   initialDocId?: string | null;
   onNavigate?: (screen: AppScreen, opts?: { docLibraryId?: string }) => void;
 }
@@ -68,9 +70,12 @@ function statusChip(doc: AcademicDocumentRecord): { label: string; cls: string }
 
 export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
   currentUser,
+  asSchoolAdmin = false,
   initialDocId,
 }) => {
   const store = useArchiveStore();
+  // Checks, OCR scores, hashes and risk notes are for the Super Admin only.
+  const showTechnical = currentUser.role === 'super_admin' && !asSchoolAdmin;
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | AcademicDocCategory>('all');
   const [formatFilter, setFormatFilter] = useState<'all' | AcademicDocFormat>('all');
@@ -315,7 +320,11 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
           <div className="space-y-4">
             <SectionHeadingBar
               title={`${selectedDoc.courseCode} · ${selectedDoc.detectedFormat.toUpperCase()}`}
-              subtitle={`SHA-256 ${selectedDoc.sha256.slice(0, 14)}... · ${selectedDoc.pageCount} page(s)`}
+              subtitle={
+                showTechnical
+                  ? `SHA-256 ${selectedDoc.sha256.slice(0, 14)}... · ${selectedDoc.pageCount} page(s)`
+                  : `${selectedDoc.pageCount} page(s)`
+              }
               right={
                 sanitizeSafeUrl(selectedDoc.optimizedPreviewUrl) ? (
                   <div className="flex items-center gap-1">
@@ -374,7 +383,8 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-xs font-bold text-[#1A1B20]">
                         Page {activePage.pageNumber} of {selectedDoc.pages.length}
-                        {activePage.ocrApplied &&
+                        {showTechnical &&
+                          activePage.ocrApplied &&
                           activePage.ocrConfidence !== null &&
                           ` · OCR ${activePage.ocrConfidence}% confidence`}
                       </div>
@@ -447,6 +457,7 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
                   </div>
                 )}
 
+                {showTechnical && (
                 <div className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3.5 space-y-2">
                   <p className="text-xs font-bold text-[#1A1B20]">
                     Verification &amp; Integrity Log
@@ -470,6 +481,7 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
                     ))}
                   </div>
                 </div>
+                )}
               </div>
             )}
           </div>

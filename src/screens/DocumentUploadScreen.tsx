@@ -56,6 +56,8 @@ import {
 
 interface DocumentUploadScreenProps {
   currentUser: AuthenticatedUser;
+  /** A Super Admin previewing the School Admin workspace sees what a School Admin sees. */
+  asSchoolAdmin?: boolean;
 }
 
 interface QueueItem {
@@ -170,12 +172,15 @@ function uploadStatus(
   };
 }
 
-export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ currentUser }) => {
+export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
+  currentUser,
+  asSchoolAdmin = false,
+}) => {
   const store = useArchiveStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  const isSuperAdmin = currentUser.role === 'super_admin';
+  const isSuperAdmin = currentUser.role === 'super_admin' && !asSchoolAdmin;
   const schoolId =
     currentUser.assignedSchoolId || store.selectedSchoolId || store.schools[0]?.id || 'sch-aaua';
   // Everything below is detected automatically from the document itself.
@@ -1106,9 +1111,11 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ curr
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-[#F6F7F9] p-3 border border-[#1A1B20]/10">
               <div className="space-y-0.5 text-xs">
                 <p className="font-bold text-[#1A1B20]">{uploadStatus(previewRecord, isSuperAdmin).label}</p>
-                <p className="text-[#505460]">
-                  SHA-256: <span className="font-mono-tabular">{previewRecord.sha256.slice(0, 16)}...</span>
-                </p>
+                {isSuperAdmin && (
+                  <p className="text-[#505460]">
+                    SHA-256: <span className="font-mono-tabular">{previewRecord.sha256.slice(0, 16)}...</span>
+                  </p>
+                )}
               </div>
               {sanitizeSafeUrl(previewRecord.optimizedPreviewUrl) && (
                 <div className="flex items-center gap-1.5">
