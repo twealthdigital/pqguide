@@ -12,6 +12,7 @@ import {
 import type {
   AiCrossCheckFindings,
   DocumentRiskLevel,
+  UncertainSpan,
 } from '../src/core/types.ts';
 
 export interface DocumentServiceDeps {
@@ -47,6 +48,20 @@ export interface ServerCrossCheckResult {
     ok: boolean;
     error?: string;
     findings?: AiCrossCheckFindings;
+  };
+}
+
+export interface ServerVisionOcrResult {
+  status: number;
+  body: {
+    ok: boolean;
+    providerAvailable: boolean;
+    provider?: 'gemini' | 'openai_compatible';
+    modelUsed?: string;
+    text?: string;
+    confidenceEstimate?: number;
+    uncertainSpans?: UncertainSpan[];
+    error?: string;
   };
 }
 
@@ -395,9 +410,307 @@ export function createDocumentEngine(deps?: DocumentServiceDeps) {
     }
   }
 
+  async function performVisionOcr(params: {
+    body: unknown;
+  }): Promise<ServerVisionOcrResult> {
+    if (!params.body || typeof params.body !== 'object') {
+      return {
+        status: 400,
+        body: { ok: false, providerAvailable: false, error: 'Vision OCR request payload is required.' },
+      };
+    }
+
+    const rec = params.body as Record<string, unknown>;
+    const rawBase64 = typeof rec.imageBase64 === 'string' ? rec.imageBase64.trim() : '';
+    const mimeMatch = rawBase64.match(/^data:([^;]+);base64,(.+)$/);
+    const mimeType =
+      (typeof rec.mimeType === 'string' && rec.mimeType.trim()) ||
+      mimeMatch?.[1] ||
+      'image/png';
+    const cleanB64 = mimeMatch ? mimeMatch[2] : rawBase64;
+    const pageNumber = typeof rec.pageNumber === 'number' ? rec.pageNumber : 1;
+    const reason = typeof rec.reason === 'string' ? rec.reason.slice(0, 200) : 'low_local_confidence';
+    const regionHint = typeof rec.regionHint === 'string' ? rec.regionHint.slice(0, 200) : '';
+
+    if (!cleanB64) {
+      return {
+        status: 400,
+        body: { ok: false, providerAvailable: false, error: 'imageBase64 is required.' },
+      };
+    }
+
+    const allowedImageMimes = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
+    const normalizedMime = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType.toLowerCase();
+    if (!allowedImageMimes.has(normalizedMime)) {
+      return {
+        status: 400,
+        body: { ok: false, providerAvailable: false, error: 'Unsupported image mime type for Vision OCR.' },
+      };
+    }
+
+    const buf = Buffer.from(cleanB64, 'base64');
+    if (buf.byteLength === 0 || buf.byteLength > MAX_SCANNER_FILE_BYTES) {
+      return {
+        status: 413,
+        body: { ok: false, providerAvailable: false, error: 'Image size is invalid or exceeds limit.' },
+      };
+    }
+
+    const ext = normalizedMime === 'image/webp' ? 'webp' : normalizedMime === 'image/jpeg' ? 'jpg' : 'png';
+    const sec = validateMagicAndSecurity({
+      fileName: `vision-page-${pageNumber}.${ext}`,
+      mimeType: normalizedMime,
+      bytes: new Uint8Array(buf),
+    });
+    if (!sec.valid || sec.format !== 'image') {
+      return {
+        status: 422,
+        body: {
+          ok: false,
+          providerAvailable: false,
+          error: sec.error ?? 'Image failed server magic-byte validation.',
+        },
+      };
+    }
+
+    const providerPref = (env.VISION_OCR_PROVIDER || 'auto').trim().toLowerCase();
+    if (providerPref === 'disabled' || providerPref === 'off' || providerPref === 'none') {
+      return {
+        status: 200,
+        body: {
+          ok: false,
+          providerAvailable: false,
+          error: 'Vision OCR fallback is disabled by server configuration.',
+        },
+      };
+    }
+
+    const geminiKey = env.GEMINI_API_KEY?.trim();
+    const customApiKey = env.VISION_OCR_API_KEY?.trim();
+    const customBaseUrl = env.VISION_OCR_BASE_URL?.trim();
+    const useOpenAiCompatible =
+      (providerPref === 'openai_compatible' || (!geminiKey && customApiKey && customBaseUrl)) &&
+      Boolean(customApiKey && customBaseUrl);
+
+    const verbatimInstruction = [
+      'You are a high-precision verbatim academic document OCR transcriber for PQGuide.',
+      'STRICT RULES:',
+      '1. Transcribe every visible word, character, small font, number, punctuation mark, question number, option label, and mathematical expression VERBATIM in exact reading order.',
+      '2. Preserve paragraphs, headings, indented sub-questions, and two-column reading order (read left column top-to-bottom before right column top-to-bottom).',
+      '3. Represent mathematical formulas clearly using LaTeX ($...$ or $$...$$) or exact Unicode symbols (∑, ∫, √, ≤, ≥, ≠, ±, θ, π).',
+      '4. Preserve tabular data as clean Markdown tables (| Col 1 | Col 2 |).',
+      '5. NEVER summarize, paraphrase, rewrite, silently fix student/exam grammar, or invent/hallucinate unreadable words.',
+      '6. If any word, glyph, or equation region is smudged, occluded, or uncertain, mark it explicitly as [uncertain: <text_or_illegible>] and list it in uncertainSpans.',
+      reason ? `Context: Local OCR triggered fallback (${reason}).` : '',
+      regionHint ? `Region note: ${regionHint}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    if (useOpenAiCompatible && customBaseUrl && customApiKey) {
+      const modelUsed = env.VISION_OCR_MODEL?.trim() || 'gpt-4o-mini';
+      try {
+        const endpoint = `${customBaseUrl.replace(/\/+$/, '')}/chat/completions`;
+        const resp = await fetchImpl(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${customApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: modelUsed,
+            temperature: 0,
+            messages: [
+              { role: 'system', content: verbatimInstruction },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Return strict JSON: {"text": string, "confidenceEstimate": number (0-100), "uncertainSpans": [{"text": string, "confidence": number, "reason": string}]}.',
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: { url: `data:${normalizedMime};base64,${cleanB64}` },
+                  },
+                ],
+              },
+            ],
+            response_format: { type: 'json_object' },
+          }),
+        });
+        if (!resp.ok) {
+          return {
+            status: 200,
+            body: {
+              ok: false,
+              providerAvailable: true,
+              provider: 'openai_compatible',
+              modelUsed,
+              error: `Vision OCR provider returned HTTP ${resp.status}.`,
+            },
+          };
+        }
+        const payload = (await resp.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        const rawJson = payload.choices?.[0]?.message?.content || '{}';
+        const parsed = JSON.parse(rawJson) as {
+          text?: string;
+          confidenceEstimate?: number;
+          uncertainSpans?: Array<Partial<UncertainSpan>>;
+        };
+        const extractedText = typeof parsed.text === 'string' ? parsed.text.trim() : '';
+        return {
+          status: 200,
+          body: {
+            ok: Boolean(extractedText),
+            providerAvailable: true,
+            provider: 'openai_compatible',
+            modelUsed,
+            text: extractedText,
+            confidenceEstimate:
+              typeof parsed.confidenceEstimate === 'number'
+                ? Math.max(0, Math.min(100, Math.round(parsed.confidenceEstimate)))
+                : undefined,
+            uncertainSpans: Array.isArray(parsed.uncertainSpans)
+              ? parsed.uncertainSpans
+                  .filter((u) => typeof u?.text === 'string' && u.text.trim().length > 0)
+                  .slice(0, 25)
+                  .map((u) => ({
+                    text: String(u.text).slice(0, 120),
+                    confidence:
+                      typeof u.confidence === 'number'
+                        ? Math.max(0, Math.min(100, Math.round(u.confidence)))
+                        : 40,
+                    reason: typeof u.reason === 'string' ? u.reason.slice(0, 140) : 'Vision OCR uncertain region',
+                  }))
+              : [],
+            error: extractedText ? undefined : 'Vision OCR returned empty text.',
+          },
+        };
+      } catch (err) {
+        return {
+          status: 200,
+          body: {
+            ok: false,
+            providerAvailable: true,
+            provider: 'openai_compatible',
+            modelUsed,
+            error: err instanceof Error ? err.message.slice(0, 180) : 'Vision OCR request failed.',
+          },
+        };
+      }
+    }
+
+    if (!geminiKey) {
+      return {
+        status: 200,
+        body: {
+          ok: false,
+          providerAvailable: false,
+          error: 'No server Vision OCR API key configured (set GEMINI_API_KEY or VISION_OCR_API_KEY).',
+        },
+      };
+    }
+
+    const modelUsed = env.VISION_OCR_MODEL?.trim() || GEMINI_MODEL;
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: geminiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+
+      const response = await ai.models.generateContent({
+        model: modelUsed,
+        contents: [
+          { text: verbatimInstruction },
+          {
+            inlineData: {
+              mimeType: normalizedMime,
+              data: cleanB64,
+            },
+          },
+        ],
+        config: {
+          temperature: 0,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              text: { type: Type.STRING },
+              confidenceEstimate: { type: Type.INTEGER },
+              uncertainSpans: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    text: { type: Type.STRING },
+                    confidence: { type: Type.INTEGER },
+                    reason: { type: Type.STRING },
+                  },
+                  required: ['text', 'confidence', 'reason'],
+                },
+              },
+            },
+            required: ['text', 'confidenceEstimate', 'uncertainSpans'],
+          },
+        },
+      });
+
+      const parsed = JSON.parse(response.text || '{}') as {
+        text?: string;
+        confidenceEstimate?: number;
+        uncertainSpans?: Array<Partial<UncertainSpan>>;
+      };
+      const extractedText = typeof parsed.text === 'string' ? parsed.text.trim() : '';
+      return {
+        status: 200,
+        body: {
+          ok: Boolean(extractedText),
+          providerAvailable: true,
+          provider: 'gemini',
+          modelUsed,
+          text: extractedText,
+          confidenceEstimate:
+            typeof parsed.confidenceEstimate === 'number'
+              ? Math.max(0, Math.min(100, Math.round(parsed.confidenceEstimate)))
+              : undefined,
+          uncertainSpans: Array.isArray(parsed.uncertainSpans)
+            ? parsed.uncertainSpans
+                .filter((u) => typeof u?.text === 'string' && u.text.trim().length > 0)
+                .slice(0, 25)
+                .map((u) => ({
+                  text: String(u.text).slice(0, 120),
+                  confidence:
+                    typeof u.confidence === 'number'
+                      ? Math.max(0, Math.min(100, Math.round(u.confidence)))
+                      : 45,
+                  reason: typeof u.reason === 'string' ? u.reason.slice(0, 140) : 'Vision OCR flagged uncertainty',
+                }))
+            : [],
+          error: extractedText ? undefined : 'Vision OCR returned empty transcription.',
+        },
+      };
+    } catch (err) {
+      return {
+        status: 200,
+        body: {
+          ok: false,
+          providerAvailable: true,
+          provider: 'gemini',
+          modelUsed,
+          error: err instanceof Error ? err.message.slice(0, 180) : 'Gemini Vision OCR request failed.',
+        },
+      };
+    }
+  }
+
   return {
     validateAndOptimizeBinary,
     crossCheckWithAi,
+    performVisionOcr,
   };
 }
 

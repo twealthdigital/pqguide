@@ -128,6 +128,30 @@ export function runDeterministicChecks(params: {
     });
   }
 
+  // 3c. Uncertain OCR spans / Vision OCR fallback review safeguard
+  const pagesWithUncertainSpans = artifact.pages.filter(
+    (p) =>
+      (p.uncertainSpans && p.uncertainSpans.length > 0) ||
+      Boolean(p.visionFallbackError) ||
+      Boolean(p.visionFallbackUsed) ||
+      /\[uncertain:/i.test(p.text)
+  );
+  if (pagesWithUncertainSpans.length > 0) {
+    const spanCount = pagesWithUncertainSpans.reduce(
+      (sum, p) => sum + (p.uncertainSpans?.length ?? 0),
+      0
+    );
+    checks.push({
+      id: 'chk-uncertainty',
+      label: 'Uncertain OCR spans safeguard',
+      category: 'quality',
+      passed: false,
+      severity: 'warning',
+      detail: `${spanCount || pagesWithUncertainSpans.length} uncertain region(s), or page(s) read by Vision OCR, need a human reviewer to check them before publication.`,
+      pageNumbers: pagesWithUncertainSpans.map((p) => p.pageNumber),
+    });
+  }
+
   // 4. QR code safety inspection
   if (artifact.qrCodesFound.length > 0) {
     const unsafeQr = artifact.qrCodesFound.filter((q) => !q.isSafeUrl);

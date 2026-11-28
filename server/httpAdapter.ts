@@ -14,7 +14,7 @@ export type NodeHttpResponse = ServerResponse & {
 };
 
 const MAX_BODY_BYTES = 64 * 1024;
-const MAX_DOC_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_DOC_BODY_BYTES = 8 * 1024 * 1024;
 
 function sendJson(
   res: NodeHttpResponse,
@@ -547,7 +547,52 @@ export function createDocumentHttpHandlers(engine = defaultDocumentEngine) {
     sendJson(res, result.status, result.body);
   }
 
+  // Vision calls can cost money, so each client gets a modest rolling allowance.
+  const visionHits = new Map<string, number[]>();
+  const VISION_WINDOW_MS = 10 * 60 * 1000;
+  const VISION_MAX_PER_WINDOW = 60;
+
+  async function handleVisionOcr(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const clientKey = getClientIp(req);
+    const nowMs = Date.now();
+    const recent = (visionHits.get(clientKey) ?? []).filter((t) => nowMs - t < VISION_WINDOW_MS);
+    if (recent.length >= VISION_MAX_PER_WINDOW) {
+      sendJson(res, 429, {
+        ok: false,
+        providerAvailable: true,
+        error: 'Too many Vision OCR requests. Try again in a few minutes.',
+      });
+      return;
+    }
+    recent.push(nowMs);
+    visionHits.set(clientKey, recent);
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req, MAX_DOC_BODY_BYTES);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid Vision OCR request payload.' });
+      return;
+    }
+    const result = await engine.performVisionOcr({ body });
+    sendJson(res, result.status, result.body);
+  }
+
   return {
+    handleVisionOcr,
     handleValidate,
     handleCrossCheck,
   };

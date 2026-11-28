@@ -1339,6 +1339,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                       <ScannedPageSideBySide
                         key={pg.pageNumber}
                         page={pg}
+                        showTechnical={isSuperAdmin}
                         totalPages={previewRecord.pages.length}
                       />
                     ))}

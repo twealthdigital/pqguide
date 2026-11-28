@@ -23,7 +23,7 @@ export function createApiApp(deps?: OtpEngineDeps) {
   });
 
   app.use('/api/auth', express.json({ limit: '64kb' }));
-  app.use('/api/documents', express.json({ limit: '4mb' }));
+  app.use('/api/documents', express.json({ limit: '8mb' }));
 
   const otpEngine = deps ? createOtpEngine(deps) : undefined;
   const handlers = otpEngine
@@ -100,6 +100,10 @@ export function createApiApp(deps?: OtpEngineDeps) {
 
   app.post('/api/auth/super-admin/reset-password', (req: Request, res: Response) => {
     void superAdminHandlers.handleResetPassword(req, res);
+  });
+
+  app.post('/api/documents/vision-ocr', (req: Request, res: Response) => {
+    void documentHandlers.handleVisionOcr(req, res);
   });
 
   app.post('/api/documents/validate', (req: Request, res: Response) => {

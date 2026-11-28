@@ -423,6 +423,7 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
 
                     <ScannedPageSideBySide
                       page={activePage}
+                      showTechnical={showTechnical}
                       totalPages={selectedDoc.pages.length}
                     />
                   </div>

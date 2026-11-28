@@ -22,6 +22,18 @@ export interface ImageQualityAnalysis extends PageImageQualityMetrics {
   isLikelyBlank: boolean;
 }
 
+export interface QuadPoint {
+  x: number;
+  y: number;
+}
+
+export interface DocumentQuadResult {
+  detected: boolean;
+  corners: [QuadPoint, QuadPoint, QuadPoint, QuadPoint]; // TL, TR, BR, BL
+  targetWidth: number;
+  targetHeight: number;
+}
+
 export interface PreprocessedImageResult {
   ocrDataUrl: string;
   previewDataUrl: string;
@@ -35,6 +47,8 @@ export interface PreprocessedImageResult {
   qualityMetrics: ImageQualityAnalysis;
   isLikelyBlank: boolean;
   qrMatches: string[];
+  perspectiveCorrected?: boolean;
+  quadCorners?: [QuadPoint, QuadPoint, QuadPoint, QuadPoint];
 }
 
 interface RawGrayBuffer {
@@ -286,6 +300,370 @@ export function analyzeGrayscaleQuality(
 }
 
 /**
+ * Detects a 4-corner quadrilateral paper document sheet framed by a darker/textured surface
+ * (supports skewed, rotated, and trapezoidal camera photos).
+ */
+export function detectDocumentQuad(
+  gray: Uint8Array,
+  width: number,
+  height: number
+): DocumentQuadResult {
+  const fallback: DocumentQuadResult = {
+    detected: false,
+    corners: [
+      { x: 0, y: 0 },
+      { x: width - 1, y: 0 },
+      { x: width - 1, y: height - 1 },
+      { x: 0, y: height - 1 },
+    ],
+    targetWidth: width,
+    targetHeight: height,
+  };
+
+  if (width < 180 || height < 180) return fallback;
+
+  // Estimate inner sheet brightness vs outer ring brightness
+  let innerSum = 0;
+  let innerCount = 0;
+  for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.7); y += 3) {
+    const off = y * width;
+    for (let x = Math.floor(width * 0.3); x < Math.floor(width * 0.7); x += 3) {
+      innerSum += gray[off + x];
+      innerCount += 1;
+    }
+  }
+  const innerMean = innerCount > 0 ? innerSum / innerCount : 200;
+  if (innerMean < 130) return fallback;
+
+  // Outer perimeter ring check: only run 4-corner perspective warp when border contains dark background
+  let borderDark = 0;
+  let borderTotal = 0;
+  const ringY = Math.max(3, Math.floor(height * 0.04));
+  const ringX = Math.max(3, Math.floor(width * 0.04));
+  const borderThresh = Math.max(70, Math.min(135, innerMean - 50));
+  for (let y = 0; y < height; y += Math.max(2, Math.floor(height / 90))) {
+    for (let x = 0; x < width; x += Math.max(2, Math.floor(width / 90))) {
+      if (y < ringY || y >= height - ringY || x < ringX || x >= width - ringX) {
+        if (gray[y * width + x] < borderThresh) borderDark += 1;
+        borderTotal += 1;
+      }
+    }
+  }
+  if (borderTotal === 0 || borderDark / borderTotal < 0.28) {
+    return fallback;
+  }
+
+  // Downsample to ~220px grid for fast flood-fill connected component + corner hull extraction
+  const scale = Math.min(1, 220 / Math.max(width, height));
+  const sw = Math.max(48, Math.round(width * scale));
+  const sh = Math.max(48, Math.round(height * scale));
+  const small = new Uint8Array(sw * sh);
+  for (let sy = 0; sy < sh; sy += 1) {
+    const oy = Math.min(height - 1, Math.round((sy * (height - 1)) / Math.max(1, sh - 1)));
+    const rowOff = oy * width;
+    for (let sx = 0; sx < sw; sx += 1) {
+      const ox = Math.min(width - 1, Math.round((sx * (width - 1)) / Math.max(1, sw - 1)));
+      small[sy * sw + sx] = gray[rowOff + ox];
+    }
+  }
+
+  // Build binary paper sheet mask & flood-fill from image center so desk glare spots are ignored
+  const sheetThresh = Math.max(92, Math.min(150, innerMean - 48));
+  const mask = new Uint8Array(sw * sh);
+  for (let i = 0; i < mask.length; i += 1) {
+    if (small[i] >= sheetThresh) mask[i] = 1;
+  }
+
+  // Find a seed near center
+  let seedX = Math.floor(sw / 2);
+  let seedY = Math.floor(sh / 2);
+  if (mask[seedY * sw + seedX] === 0) {
+    let found = false;
+    for (let r = 1; r <= 12 && !found; r += 1) {
+      for (let dy = -r; dy <= r && !found; dy += 1) {
+        for (let dx = -r; dx <= r && !found; dx += 1) {
+          const nx = seedX + dx;
+          const ny = seedY + dy;
+          if (nx >= 0 && nx < sw && ny >= 0 && ny < sh && mask[ny * sw + nx] === 1) {
+            seedX = nx;
+            seedY = ny;
+            found = true;
+          }
+        }
+      }
+    }
+    if (!found) return fallback;
+  }
+
+  const visited = new Uint8Array(sw * sh);
+  const queue = new Int32Array(sw * sh);
+  let head = 0;
+  let tail = 0;
+  const startIdx = seedY * sw + seedX;
+  visited[startIdx] = 1;
+  queue[tail++] = startIdx;
+
+  // Include small dark ink islands inside paper by 1-pixel morphological closing neighborhood check
+  while (head < tail) {
+    const idx = queue[head++];
+    const x = idx % sw;
+    const y = Math.floor(idx / sw);
+    const neighbors = [
+      x > 0 ? idx - 1 : -1,
+      x + 1 < sw ? idx + 1 : -1,
+      y > 0 ? idx - sw : -1,
+      y + 1 < sh ? idx + sw : -1,
+    ];
+    for (const n of neighbors) {
+      if (n < 0 || visited[n]) continue;
+      if (mask[n] === 1) {
+        visited[n] = 1;
+        queue[tail++] = n;
+      } else {
+        // Bridge thin dark ink lines inside the page (if opposite side is bright paper)
+        const nx = n % sw;
+        const ny = Math.floor(n / sw);
+        const nnx = nx + (nx - x);
+        const nny = ny + (ny - y);
+        if (
+          nnx >= 0 &&
+          nnx < sw &&
+          nny >= 0 &&
+          nny < sh &&
+          mask[nny * sw + nnx] === 1 &&
+          !visited[nny * sw + nnx]
+        ) {
+          visited[n] = 1;
+          visited[nny * sw + nnx] = 1;
+          queue[tail++] = nny * sw + nnx;
+        }
+      }
+    }
+  }
+
+  const areaFrac = tail / (sw * sh);
+  if (areaFrac < 0.16 || areaFrac > 0.94) return fallback;
+
+  // Extract boundary pixels of the connected sheet component & find extreme quad corners
+  let minSum = Infinity;
+  let maxSum = -Infinity;
+  let minDiff = Infinity;
+  let maxDiff = -Infinity;
+  let tl: QuadPoint = { x: 0, y: 0 };
+  let br: QuadPoint = { x: sw - 1, y: sh - 1 };
+  let bl: QuadPoint = { x: 0, y: sh - 1 };
+  let tr: QuadPoint = { x: sw - 1, y: 0 };
+
+  for (let y = 0; y < sh; y += 1) {
+    for (let x = 0; x < sw; x += 1) {
+      if (!visited[y * sw + x]) continue;
+      const isEdge =
+        x === 0 ||
+        x === sw - 1 ||
+        y === 0 ||
+        y === sh - 1 ||
+        !visited[y * sw + (x - 1)] ||
+        !visited[y * sw + (x + 1)] ||
+        !visited[(y - 1) * sw + x] ||
+        !visited[(y + 1) * sw + x];
+      if (!isEdge) continue;
+      const sum = x + y;
+      const diff = x - y;
+      if (sum < minSum) {
+        minSum = sum;
+        tl = { x, y };
+      }
+      if (sum > maxSum) {
+        maxSum = sum;
+        br = { x, y };
+      }
+      if (diff > maxDiff) {
+        maxDiff = diff;
+        tr = { x, y };
+      }
+      if (diff < minDiff) {
+        minDiff = diff;
+        bl = { x, y };
+      }
+    }
+  }
+
+  const toOrig = (pt: QuadPoint): QuadPoint => ({
+    x: Math.max(0, Math.min(width - 1, Math.round((pt.x * (width - 1)) / Math.max(1, sw - 1)))),
+    y: Math.max(0, Math.min(height - 1, Math.round((pt.y * (height - 1)) / Math.max(1, sh - 1)))),
+  });
+
+  const oTl = toOrig(tl);
+  const oTr = toOrig(tr);
+  const oBr = toOrig(br);
+  const oBl = toOrig(bl);
+
+  // Verify convex quad geometry & reasonable dimensions
+  const dist = (a: QuadPoint, b: QuadPoint) => Math.hypot(a.x - b.x, a.y - b.y);
+  const topW = dist(oTl, oTr);
+  const botW = dist(oBl, oBr);
+  const leftH = dist(oTl, oBl);
+  const rightH = dist(oTr, oBr);
+  if (
+    topW < width * 0.25 ||
+    botW < width * 0.25 ||
+    leftH < height * 0.25 ||
+    rightH < height * 0.25
+  ) {
+    return fallback;
+  }
+
+  // Polygon shoelace area check
+  const poly = [oTl, oTr, oBr, oBl];
+  let shoelace = 0;
+  for (let i = 0; i < 4; i += 1) {
+    const next = poly[(i + 1) % 4];
+    shoelace += poly[i].x * next.y - next.x * poly[i].y;
+  }
+  const quadArea = Math.abs(shoelace) / 2;
+  const quadFrac = quadArea / (width * height);
+  if (quadFrac < 0.16 || quadFrac > 0.94) {
+    return fallback;
+  }
+
+  // Ensure all 4 cross products have consistent sign (strictly convex quad)
+  let sign = 0;
+  for (let i = 0; i < 4; i += 1) {
+    const a = poly[i];
+    const b = poly[(i + 1) % 4];
+    const c = poly[(i + 2) % 4];
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (Math.abs(cross) < 1e-3) return fallback;
+    const curSign = cross > 0 ? 1 : -1;
+    if (sign === 0) sign = curSign;
+    else if (sign !== curSign) return fallback;
+  }
+
+  // Slightly pad corners outward by 2px so edge text lines remain safely inside
+  const padOut = (pt: QuadPoint, cx: number, cy: number): QuadPoint => ({
+    x: Math.max(0, Math.min(width - 1, Math.round(pt.x + (pt.x < cx ? -2 : 2)))),
+    y: Math.max(0, Math.min(height - 1, Math.round(pt.y + (pt.y < cy ? -2 : 2)))),
+  });
+  const cx = (oTl.x + oTr.x + oBr.x + oBl.x) / 4;
+  const cy = (oTl.y + oTr.y + oBr.y + oBl.y) / 4;
+  const padded: [QuadPoint, QuadPoint, QuadPoint, QuadPoint] = [
+    padOut(oTl, cx, cy),
+    padOut(oTr, cx, cy),
+    padOut(oBr, cx, cy),
+    padOut(oBl, cx, cy),
+  ];
+
+  const targetWidth = Math.max(64, Math.round(Math.max(topW, botW)));
+  const targetHeight = Math.max(64, Math.round(Math.max(leftH, rightH)));
+
+  return {
+    detected: true,
+    corners: padded,
+    targetWidth,
+    targetHeight,
+  };
+}
+
+/** Solves an 8x8 linear system Ax = b via Gaussian elimination with partial pivoting. */
+function solveLinearSystem8(A: number[][], b: number[]): number[] | null {
+  const n = 8;
+  const M = A.map((row, idx) => [...row, b[idx]]);
+  for (let col = 0; col < n; col += 1) {
+    let pivotRow = col;
+    let maxVal = Math.abs(M[col][col]);
+    for (let r = col + 1; r < n; r += 1) {
+      const val = Math.abs(M[r][col]);
+      if (val > maxVal) {
+        maxVal = val;
+        pivotRow = r;
+      }
+    }
+    if (maxVal < 1e-10) return null;
+    if (pivotRow !== col) {
+      const tmp = M[col];
+      M[col] = M[pivotRow];
+      M[pivotRow] = tmp;
+    }
+    const diag = M[col][col];
+    for (let k = col; k <= n; k += 1) {
+      M[col][k] /= diag;
+    }
+    for (let r = 0; r < n; r += 1) {
+      if (r === col) continue;
+      const factor = M[r][col];
+      if (Math.abs(factor) < 1e-12) continue;
+      for (let k = col; k <= n; k += 1) {
+        M[r][k] -= factor * M[col][k];
+      }
+    }
+  }
+  return M.map((row) => row[n]);
+}
+
+/**
+ * Rectifies a 4-corner perspective quadrilateral `[TL, TR, BR, BL]` into a rectangular
+ * orthographic grayscale buffer using exact projective homography + bilinear sampling.
+ */
+export function warpPerspectiveGrayscale(
+  gray: Uint8Array,
+  width: number,
+  height: number,
+  corners: [QuadPoint, QuadPoint, QuadPoint, QuadPoint],
+  targetWidth: number,
+  targetHeight: number,
+  fillValue = 250
+): RawGrayBuffer {
+  const dstPts: [QuadPoint, QuadPoint, QuadPoint, QuadPoint] = [
+    { x: 0, y: 0 },
+    { x: targetWidth - 1, y: 0 },
+    { x: targetWidth - 1, y: targetHeight - 1 },
+    { x: 0, y: targetHeight - 1 },
+  ];
+
+  // Solve homography H mapping dst (u,v) -> src (x,y) for inverse bilinear lookup
+  const A: number[][] = [];
+  const b: number[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const { x: u, y: v } = dstPts[i];
+    const { x, y } = corners[i];
+    A.push([u, v, 1, 0, 0, 0, -x * u, -x * v]);
+    b.push(x);
+    A.push([0, 0, 0, u, v, 1, -y * u, -y * v]);
+    b.push(y);
+  }
+
+  const h = solveLinearSystem8(A, b);
+  if (!h) {
+    return resizeGrayscaleBilinear(gray, width, height, targetWidth, targetHeight);
+  }
+  const [h0, h1, h2, h3, h4, h5, h6, h7] = h;
+  const out = new Uint8Array(targetWidth * targetHeight);
+  out.fill(fillValue);
+
+  for (let v = 0; v < targetHeight; v += 1) {
+    const outOff = v * targetWidth;
+    for (let u = 0; u < targetWidth; u += 1) {
+      const denom = h6 * u + h7 * v + 1;
+      if (Math.abs(denom) < 1e-8) continue;
+      const sx = (h0 * u + h1 * v + h2) / denom;
+      const sy = (h3 * u + h4 * v + h5) / denom;
+      if (sx < 0 || sx >= width - 1 || sy < 0 || sy >= height - 1) continue;
+      const x0 = Math.floor(sx);
+      const y0 = Math.floor(sy);
+      const fx = sx - x0;
+      const fy = sy - y0;
+      const r0 = y0 * width;
+      const r1 = (y0 + 1) * width;
+      const topVal = gray[r0 + x0] * (1 - fx) + gray[r0 + x0 + 1] * fx;
+      const botVal = gray[r1 + x0] * (1 - fx) + gray[r1 + x0 + 1] * fx;
+      out[outOff + u] = Math.round(topVal * (1 - fy) + botVal * fy);
+    }
+  }
+
+  return { gray: out, width: targetWidth, height: targetHeight };
+}
+
+/**
  * Detects a bright document sheet framed by a darker table/desk surface.
  * Only trims margins when outer rows/columns are substantially darker than inner content,
  * so normal white-margin scans are left untouched.
@@ -362,8 +740,7 @@ export function detectDocumentCropBox(
 }
 
 /**
- * Estimates slight page tilt (-7.5 to +7.5 degrees) by maximizing squared horizontal
- * gradient projection variance across scanlines on the central document region.
+ * Estimates page tilt (-14 to +14 degrees) via coarse 1° + fine 0.25° gradient projection search.
  */
 export function estimateSkewAngle(
   gray: Uint8Array,
@@ -371,7 +748,6 @@ export function estimateSkewAngle(
   height: number
 ): number {
   if (width < 120 || height < 120) return 0;
-  // Work on a compact sample grid (max ~420px wide) for sub-15ms skew estimation
   const stepX = Math.max(1, Math.floor(width / 360));
   const stepY = Math.max(1, Math.floor(height / 420));
   const sw = Math.max(32, Math.floor(width / stepX));
@@ -384,7 +760,6 @@ export function estimateSkewAngle(
     }
   }
 
-  // Precompute vertical edge magnitude
   const edges = new Uint8Array(sw * sh);
   for (let y = 1; y < sh - 1; y += 1) {
     for (let x = 1; x < sw - 1; x += 1) {
@@ -393,15 +768,12 @@ export function estimateSkewAngle(
     }
   }
 
-  let bestDeg = 0;
-  let bestScore = -1;
-  let zeroScore = 0;
   const y0 = Math.floor(sh * 0.08);
   const y1 = Math.floor(sh * 0.92);
   const x0 = Math.floor(sw * 0.08);
   const x1 = Math.floor(sw * 0.92);
 
-  for (let deg = -7.5; deg <= 7.5; deg += 0.5) {
+  const scoreAngle = (deg: number): number => {
     const tan = Math.tan((deg * Math.PI) / 180);
     const bins = new Float64Array(sh);
     for (let y = y0; y < y1; y += 1) {
@@ -418,14 +790,32 @@ export function estimateSkewAngle(
     for (let i = 0; i < sh; i += 1) {
       score += bins[i] * bins[i];
     }
-    if (Math.abs(deg) < 0.01) zeroScore = score;
-    if (score > bestScore) {
-      bestScore = score;
-      bestDeg = deg;
+    return score;
+  };
+
+  const zeroScore = scoreAngle(0);
+  let coarseDeg = 0;
+  let coarseScore = zeroScore;
+
+  for (let deg = -14; deg <= 14; deg += 1) {
+    if (deg === 0) continue;
+    const score = scoreAngle(deg);
+    if (score > coarseScore) {
+      coarseScore = score;
+      coarseDeg = deg;
     }
   }
 
-  // Only deskew if non-zero angle meaningfully improves line alignment over 0 deg
+  let bestDeg = coarseDeg;
+  let bestScore = coarseScore;
+  for (let deg = Math.max(-14.5, coarseDeg - 1.25); deg <= Math.min(14.5, coarseDeg + 1.25); deg += 0.25) {
+    const score = scoreAngle(deg);
+    if (score > bestScore) {
+      bestScore = score;
+      bestDeg = Number(deg.toFixed(2));
+    }
+  }
+
   if (Math.abs(bestDeg) < 0.5 || bestScore < zeroScore * 1.04) {
     return 0;
   }
@@ -678,6 +1068,86 @@ export function applySoftSauvolaNormalization(
   return out;
 }
 
+/**
+ * Estimates smooth background paper illumination on a coarse grid using local upper-percentile
+ * (paper surface estimate immune to dark text strokes) and divides uneven shadows/creases
+ * smoothly before character contrast enhancement so tiny symbols and decimals remain intact.
+ */
+export function normalizeShadowIllumination(
+  gray: Uint8Array,
+  width: number,
+  height: number
+): Uint8Array {
+  if (width < 64 || height < 64) return gray.slice();
+  const cell = Math.max(12, Math.round(Math.min(width, height) / 36));
+  const gw = Math.max(4, Math.ceil(width / cell));
+  const gh = Math.max(4, Math.ceil(height / cell));
+  const coarseBg = new Float32Array(gw * gh);
+
+  for (let gy = 0; gy < gh; gy += 1) {
+    const y0 = gy * cell;
+    const y1 = Math.min(height, y0 + cell);
+    for (let gx = 0; gx < gw; gx += 1) {
+      const x0 = gx * cell;
+      const x1 = Math.min(width, x0 + cell);
+      const samples: number[] = [];
+      for (let y = y0; y < y1; y += 2) {
+        const off = y * width;
+        for (let x = x0; x < x1; x += 2) {
+          samples.push(gray[off + x]);
+        }
+      }
+      if (samples.length === 0) {
+        coarseBg[gy * gw + gx] = 240;
+      } else {
+        samples.sort((a, b) => a - b);
+        // 85th percentile estimates clean paper background even over dense text blocks
+        const p85 = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.85))];
+        coarseBg[gy * gw + gx] = Math.max(48, p85);
+      }
+    }
+  }
+
+  // Smooth 3x3 average pass over coarse grid to prevent block seams across creases
+  const smoothBg = new Float32Array(gw * gh);
+  for (let gy = 0; gy < gh; gy += 1) {
+    for (let gx = 0; gx < gw; gx += 1) {
+      let sum = 0;
+      let cnt = 0;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const ny = Math.max(0, Math.min(gh - 1, gy + dy));
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const nx = Math.max(0, Math.min(gw - 1, gx + dx));
+          sum += coarseBg[ny * gw + nx];
+          cnt += 1;
+        }
+      }
+      smoothBg[gy * gw + gx] = sum / cnt;
+    }
+  }
+
+  const out = new Uint8Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const fyGrid = (y + 0.5) / cell - 0.5;
+    const gy0 = Math.max(0, Math.min(gh - 1, Math.floor(fyGrid)));
+    const gy1 = Math.max(0, Math.min(gh - 1, gy0 + 1));
+    const ty = Math.max(0, Math.min(1, fyGrid - gy0));
+    const rowOff = y * width;
+    for (let x = 0; x < width; x += 1) {
+      const fxGrid = (x + 0.5) / cell - 0.5;
+      const gx0 = Math.max(0, Math.min(gw - 1, Math.floor(fxGrid)));
+      const gx1 = Math.max(0, Math.min(gw - 1, gx0 + 1));
+      const tx = Math.max(0, Math.min(1, fxGrid - gx0));
+      const topBg = smoothBg[gy0 * gw + gx0] * (1 - tx) + smoothBg[gy0 * gw + gx1] * tx;
+      const botBg = smoothBg[gy1 * gw + gx0] * (1 - tx) + smoothBg[gy1 * gw + gx1] * tx;
+      const localBg = Math.max(40, topBg * (1 - ty) + botBg * ty);
+      const val = (gray[rowOff + x] * 248) / localBg;
+      out[rowOff + x] = val <= 0 ? 0 : val >= 255 ? 255 : Math.round(val);
+    }
+  }
+  return out;
+}
+
 export function selectPreprocessingStrategy(
   quality: ImageQualityAnalysis,
   override?: PreprocessingStrategy
@@ -834,21 +1304,42 @@ export async function preprocessImageForOcr(input: {
 
   const preQuality = analyzeGrayscaleQuality(gray, width, height);
 
-  // 1. Auto-crop dark surrounding borders (table/desk backgrounds around white sheet)
-  const cropBox = detectDocumentCropBox(gray, width, height);
-  if (cropBox.cropped) {
-    const cropped = cropGrayscale(gray, width, height, cropBox);
-    gray = cropped.gray;
-    width = cropped.width;
-    height = cropped.height;
-    appliedSteps.push('document_boundary_crop');
+  // 1. Detect 4-corner quadrilateral perspective boundary first; fallback to rectangular crop
+  let perspectiveCorrected = false;
+  let quadCorners: [QuadPoint, QuadPoint, QuadPoint, QuadPoint] | undefined;
+  const quad = detectDocumentQuad(gray, width, height);
+  if (quad.detected) {
+    const warped = warpPerspectiveGrayscale(
+      gray,
+      width,
+      height,
+      quad.corners,
+      quad.targetWidth,
+      quad.targetHeight,
+      250
+    );
+    gray = warped.gray;
+    width = warped.width;
+    height = warped.height;
+    perspectiveCorrected = true;
+    quadCorners = quad.corners;
+    appliedSteps.push('perspective_warp_4pt');
+  } else {
+    const cropBox = detectDocumentCropBox(gray, width, height);
+    if (cropBox.cropped) {
+      const cropped = cropGrayscale(gray, width, height, cropBox);
+      gray = cropped.gray;
+      width = cropped.width;
+      height = cropped.height;
+      appliedSteps.push('document_boundary_crop');
+    }
   }
 
   const qualityMetrics = analyzeGrayscaleQuality(gray, width, height);
-  // Preserve border flag from uncropped inspection when crop happened
+  // Preserve border flag from uncropped inspection when crop/warp happened
   qualityMetrics.darkBorderFraction = preQuality.darkBorderFraction;
 
-  // 2. Estimate skew on native grid BEFORE resizing
+  // 2. Estimate skew on native grid BEFORE resizing (supports up to ±14 degrees)
   const skewDeg = estimateSkewAngle(gray, width, height);
   qualityMetrics.skewAngleDeg = skewDeg;
 
@@ -911,7 +1402,13 @@ export async function preprocessImageForOcr(input: {
     appliedSteps.push(`deskew_${skewDeg > 0 ? '-' : '+'}${Math.abs(skewDeg).toFixed(1)}deg`);
   }
 
-  // 4. Adaptive enhancement selection based on measured image quality
+  // 5. Flatten uneven lighting / flash falloff / fold shadows cleanly before local contrast enhancement
+  if (qualityMetrics.isUnevenLighting || qualityMetrics.shadowVariance >= 9) {
+    gray = normalizeShadowIllumination(gray, width, height);
+    appliedSteps.push('illumination_divide');
+  }
+
+  // 6. Adaptive enhancement selection based on measured image quality
   const strategy = selectPreprocessingStrategy(qualityMetrics, input.strategyOverride);
   let ocrGray: Uint8Array;
   let previewGray: Uint8Array;
@@ -938,7 +1435,7 @@ export async function preprocessImageForOcr(input: {
     previewGray = ocrGray;
   }
 
-  // 5. Encode PNG lossless for OCR & compact preview JPEG (<= 1280px wide) for storage/UI
+  // 7. Encode PNG lossless for OCR & compact preview JPEG (<= 1280px wide) for storage/UI
   let ocrDataUrl: string;
   let ocrBytes: Uint8Array;
   let previewDataUrl: string;
@@ -994,5 +1491,7 @@ export async function preprocessImageForOcr(input: {
     qualityMetrics,
     isLikelyBlank: qualityMetrics.isLikelyBlank,
     qrMatches,
+    perspectiveCorrected,
+    quadCorners,
   };
 }

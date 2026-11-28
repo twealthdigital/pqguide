@@ -11,6 +11,7 @@ import type {
   ExtractionQualityStatus,
   PageExtractionMethod,
   QrCodeMatch,
+  UncertainSpan,
 } from '../../core/types';
 import {
   computeSha256Hex,
@@ -26,7 +27,11 @@ import {
   uint8ToBase64DataUrl,
   type PreprocessedImageResult,
 } from './imagePreprocessor';
-import { recognizeWithTesseractPool } from './ocrEngine';
+import {
+  recognizeWithTesseractPool,
+  type VisionFallbackMode,
+  type VisionOcrRunner,
+} from './ocrEngine';
 import {
   detectRepeatedHeadersFooters,
   extractFormulasFromText,
@@ -71,14 +76,22 @@ export interface OcrRunnerResult {
   warnings?: string[];
   preprocessed?: PreprocessedImageResult;
   orientationCorrectedDeg?: 0 | 90 | 180 | 270;
+  ocrEngineUsed?: 'tesseract' | 'vision' | 'hybrid_tesseract_vision';
+  visionFallbackUsed?: boolean;
+  visionFallbackError?: string;
+  uncertainSpans?: UncertainSpan[];
+  perspectiveCorrected?: boolean;
 }
 
 export type OcrRunner = (input: {
   imageDataUrl?: string;
   bytes?: Uint8Array;
   mimeType?: string;
+  pageNumber?: number;
   signal?: AbortSignal;
   skipPreprocessing?: boolean;
+  visionFallback?: VisionFallbackMode;
+  visionOcrRunner?: VisionOcrRunner;
   onOcrProgress?: (pct: number, statusText: string) => void;
 }) => Promise<OcrRunnerResult>;
 
@@ -191,8 +204,11 @@ export async function defaultBrowserOcrRunner(input: {
   imageDataUrl?: string;
   bytes?: Uint8Array;
   mimeType?: string;
+  pageNumber?: number;
   signal?: AbortSignal;
   skipPreprocessing?: boolean;
+  visionFallback?: VisionFallbackMode;
+  visionOcrRunner?: VisionOcrRunner;
   onOcrProgress?: (pct: number, statusText: string) => void;
 }): Promise<OcrRunnerResult> {
   throwIfAborted(input.signal);
@@ -200,8 +216,11 @@ export async function defaultBrowserOcrRunner(input: {
     imageDataUrl: input.imageDataUrl,
     bytes: input.bytes,
     mimeType: input.mimeType,
+    pageNumber: input.pageNumber,
     signal: input.signal,
     skipPreprocessing: input.skipPreprocessing,
+    visionFallback: input.visionFallback,
+    visionOcrRunner: input.visionOcrRunner,
     onOcrProgress: input.onOcrProgress,
   });
   return {
@@ -210,6 +229,11 @@ export async function defaultBrowserOcrRunner(input: {
     warnings: res.warnings,
     preprocessed: res.preprocessed,
     orientationCorrectedDeg: res.orientationCorrectedDeg,
+    ocrEngineUsed: res.ocrEngineUsed,
+    visionFallbackUsed: res.visionFallbackUsed,
+    visionFallbackError: res.visionFallbackError,
+    uncertainSpans: res.uncertainSpans,
+    perspectiveCorrected: res.perspectiveCorrected,
   };
 }
 
@@ -715,6 +739,8 @@ async function processPdfBuffer(params: {
   signal?: AbortSignal;
   ocrRunner: OcrRunner;
   pdfPageRenderer?: PdfPageRenderer;
+  visionFallback?: VisionFallbackMode;
+  visionOcrRunner?: VisionOcrRunner;
   onProgress?: (update: ScanProgressUpdate) => void;
 }): Promise<{
   pages: ExtractedPageContent[];
@@ -944,6 +970,12 @@ async function processPdfBuffer(params: {
       }
     }
 
+    let ocrEngineUsed: ExtractedPageContent['ocrEngineUsed'];
+    let visionFallbackUsed = false;
+    let visionFallbackError: string | undefined;
+    let uncertainSpans: UncertainSpan[] = [];
+    let perspectiveCorrected = false;
+
     const canRunOcr = Boolean(highResOcrBytes || highResOcrDataUrl);
     if ((needsFullOcr || isMixedPage) && canRunOcr) {
       params.onProgress?.({
@@ -961,7 +993,10 @@ async function processPdfBuffer(params: {
           imageDataUrl: highResOcrDataUrl,
           bytes: highResOcrBytes,
           mimeType: highResMime || 'image/png',
+          pageNumber: pageNo,
           signal: params.signal,
+          visionFallback: params.visionFallback,
+          visionOcrRunner: params.visionOcrRunner,
           onOcrProgress: (pct, statusText) => {
             params.onProgress?.({
               stage: 'ocr',
@@ -977,6 +1012,11 @@ async function processPdfBuffer(params: {
         ocrApplied = true;
         ocrConfidence = ocrRes.confidence;
         ocrScores.push(ocrRes.confidence);
+        ocrEngineUsed = ocrRes.ocrEngineUsed ?? 'tesseract';
+        visionFallbackUsed = Boolean(ocrRes.visionFallbackUsed);
+        visionFallbackError = ocrRes.visionFallbackError;
+        uncertainSpans = ocrRes.uncertainSpans ?? [];
+        perspectiveCorrected = Boolean(ocrRes.perspectiveCorrected);
         if (ocrRes.preprocessed?.appliedSteps) {
           preprocessingApplied.push(...ocrRes.preprocessed.appliedSteps);
         }
@@ -1040,6 +1080,11 @@ async function processPdfBuffer(params: {
       extractionMethod,
       ocrApplied,
       ocrConfidence,
+      ocrEngineUsed,
+      visionFallbackUsed,
+      visionFallbackError,
+      uncertainSpans: uncertainSpans.length > 0 ? uncertainSpans : undefined,
+      perspectiveCorrected,
       processingStatus: pageStatus.status,
       isIncomplete: pageStatus.isIncomplete,
       wasTruncated,
@@ -1204,6 +1249,8 @@ export async function scanSingleAcademicInput(
     pdfPageRenderer?: PdfPageRenderer;
     onProgress?: (update: ScanProgressUpdate) => void;
     bypassCache?: boolean;
+    visionFallback?: VisionFallbackMode;
+    visionOcrRunner?: VisionOcrRunner;
   }
 ): Promise<ScannedArtifactOutput> {
   const startedAt = Date.now();
@@ -1333,6 +1380,11 @@ export async function scanSingleAcademicInput(
     const pageWarnings: string[] = [];
     const pageErrors: string[] = [];
     let finalPrep = prep;
+    let ocrEngineUsed: ExtractedPageContent['ocrEngineUsed'] = 'tesseract';
+    let visionFallbackUsed = false;
+    let visionFallbackError: string | undefined;
+    let uncertainSpans: UncertainSpan[] = [];
+    let perspectiveCorrected = Boolean(prep?.perspectiveCorrected);
 
     try {
       // Pass preprocessed high-res image when default runner is used; also pass raw bytes
@@ -1341,7 +1393,10 @@ export async function scanSingleAcademicInput(
         imageDataUrl: prep?.ocrDataUrl ?? optimizedPreviewUrl,
         bytes: input.bytes,
         mimeType,
+        pageNumber: 1,
         signal: options?.signal,
+        visionFallback: options?.visionFallback,
+        visionOcrRunner: options?.visionOcrRunner,
         onOcrProgress: (pct, statusText) => {
           options?.onProgress?.({
             stage: 'ocr',
@@ -1356,9 +1411,16 @@ export async function scanSingleAcademicInput(
       });
       ocrText = ocrRes.text;
       averageOcrConfidence = ocrRes.confidence;
+      ocrEngineUsed = ocrRes.ocrEngineUsed ?? 'tesseract';
+      visionFallbackUsed = Boolean(ocrRes.visionFallbackUsed);
+      visionFallbackError = ocrRes.visionFallbackError;
+      uncertainSpans = ocrRes.uncertainSpans ?? [];
       if (ocrRes.preprocessed) {
         finalPrep = ocrRes.preprocessed;
         optimizedPreviewUrl = ocrRes.preprocessed.previewDataUrl || optimizedPreviewUrl;
+        perspectiveCorrected = Boolean(ocrRes.preprocessed.perspectiveCorrected);
+      } else if (ocrRes.perspectiveCorrected !== undefined) {
+        perspectiveCorrected = ocrRes.perspectiveCorrected;
       }
       if (ocrRes.warnings) pageWarnings.push(...ocrRes.warnings);
       if (ocrRes.orientationCorrectedDeg && ocrRes.orientationCorrectedDeg > 0) {
@@ -1418,6 +1480,11 @@ export async function scanSingleAcademicInput(
         extractionMethod: 'ocr',
         ocrApplied: true,
         ocrConfidence: averageOcrConfidence,
+        ocrEngineUsed,
+        visionFallbackUsed,
+        visionFallbackError,
+        uncertainSpans: uncertainSpans.length > 0 ? uncertainSpans : undefined,
+        perspectiveCorrected,
         processingStatus: pageStatus.status,
         isIncomplete: pageStatus.isIncomplete,
         wasTruncated: ocrText.length >= MAX_PAGE_TEXT_CHARS,
@@ -1444,6 +1511,8 @@ export async function scanSingleAcademicInput(
       signal: options?.signal,
       ocrRunner,
       pdfPageRenderer: options?.pdfPageRenderer,
+      visionFallback: options?.visionFallback,
+      visionOcrRunner: options?.visionOcrRunner,
       onProgress: options?.onProgress,
     });
     pages = pdfOut.pages;

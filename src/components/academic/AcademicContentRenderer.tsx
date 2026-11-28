@@ -491,8 +491,11 @@ export const ScannedPageSideBySide: React.FC<{
   page: ExtractedPageContent;
   imageUrl?: string;
   totalPages?: number;
-}> = ({ page, imageUrl, totalPages }) => {
-  const resolvedImageUrl = imageUrl || pageImageUrl(page);
+  /** Engine, perspective and uncertain-span details. Super Admin only. */
+  showTechnical?: boolean;
+}> = ({ page, imageUrl, totalPages, showTechnical = false }) => {
+  // The image is shown only when the caller passes one (the Extracted view is text only).
+  const resolvedImageUrl = imageUrl;
   const text = page.text.trim();
   const charCount = page.charCount ?? text.replace(/\s+/g, '').length;
   const methodLabel =
@@ -505,6 +508,15 @@ export const ScannedPageSideBySide: React.FC<{
           : page.extractionMethod === 'plain_text'
             ? 'Text'
             : 'Native PDF';
+  const engineBadge = !showTechnical
+    ? null
+    :
+    page.ocrEngineUsed === 'hybrid_tesseract_vision'
+      ? 'Hybrid Tesseract + Vision'
+      : page.ocrEngineUsed === 'vision'
+        ? 'Vision OCR'
+        : null;
+  const uncertainSpans = showTechnical ? (page.uncertainSpans ?? []) : [];
   const statusBadge =
     page.processingStatus === 'failed'
       ? 'bg-[#FEE2E2] text-[#B91C1C]'
@@ -536,7 +548,8 @@ export const ScannedPageSideBySide: React.FC<{
           />
           <figcaption className="text-xs text-[#505460] font-medium">
             Page {page.pageNumber}
-            {totalPages && totalPages > 1 ? ` of ${totalPages}` : ''} · {methodLabel}
+            {totalPages && totalPages > 1 ? ` of ${totalPages}` : ''} · {showTechnical ? methodLabel : 'Scanned page'}
+            {showTechnical && page.perspectiveCorrected ? ' · Perspective rectified' : ''}
           </figcaption>
         </figure>
       )}
@@ -545,22 +558,53 @@ export const ScannedPageSideBySide: React.FC<{
           <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
             Extracted text · Page {page.pageNumber}
           </p>
+          {showTechnical && (
           <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
             <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460]">
               {methodLabel}
             </span>
+            {engineBadge && (
+              <span className="rounded-md bg-[#1D1E23] px-2 py-0.5 text-white">
+                {engineBadge}
+              </span>
+            )}
+            {showTechnical && page.perspectiveCorrected && (
+              <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#1A1B20]">
+                4-pt Rectified
+              </span>
+            )}
             <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460] font-mono-tabular">
               {page.wordCount}w · {charCount}c
             </span>
             <span className={`rounded-md px-2 py-0.5 ${statusBadge}`}>{statusText}</span>
           </div>
+          )}
         </div>
-        {page.warnings.length > 0 && (
+        {showTechnical && page.warnings.length > 0 && (
           <div className="rounded-xl bg-[#FEF3C7]/60 border border-[#FDE68A] px-2.5 py-1.5 text-[11px] text-[#92400E] space-y-0.5">
             {page.warnings.map((w, i) => (
               <p key={i}>{w}</p>
             ))}
           </div>
+        )}
+        {uncertainSpans.length > 0 && (
+          <details className="rounded-xl bg-[#FEF3C7]/45 border border-[#FDE68A] px-2.5 py-2 text-[11px] text-[#78350F]">
+            <summary className="font-bold cursor-pointer select-none">
+              Uncertain Spans Requiring Review ({uncertainSpans.length})
+            </summary>
+            <ul className="mt-1.5 space-y-1 border-t border-[#FDE68A]/70 pt-1.5">
+              {uncertainSpans.slice(0, 12).map((span, idx) => (
+                <li key={idx} className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-mono-tabular font-semibold text-[#1A1B20] break-all">
+                    "{span.text}"
+                  </span>
+                  <span className="text-[10px] text-[#92400E]">
+                    {span.confidence}% · {span.reason}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
         {page.errors && page.errors.length > 0 && (
           <div className="rounded-xl bg-[#FEF2F2] border border-[#FECACA] px-2.5 py-1.5 text-[11px] text-[#B91C1C] space-y-0.5">

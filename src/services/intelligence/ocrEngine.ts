@@ -1,30 +1,56 @@
 /**
- * PQGuide OCR Recognition Engine
+ * PQGuide Hybrid OCR Recognition Engine
  *
- * Engine Audit (Tesseract.js vs PaddleOCR):
- * - PaddleOCR (PP-OCRv4) offers strong scene-text accuracy, but requires a Python
- *   runtime + PaddlePaddle/ONNX native weights (~300MB+) hosted on dedicated server
- *   infrastructure. That would introduce mandatory backend hosting costs or fail in
- *   PQGuide's React SPA + stateless Node/Vercel runtime.
- * - Upgraded Multi-Pass Tesseract.js v7 runs 100% locally in Browser (WASM) and Node.js
- *   with zero paid external APIs or recurring cloud dependencies. Paired with PQGuide's
- *   adaptive imagePreprocessor (border crop, skew correction, 300-DPI upscaling,
- *   Soft Sauvola lighting normalization, unsharp deblurring), multi-pass PSM selection,
- *   and 90/180/270 orientation recovery, it recovers dense exam sheets and mixed scans cleanly.
+ * Architecture:
+ * - Bounded 2-worker Tesseract.js v7 pool (WASM/Node) with block/line/word bounding boxes,
+ *   multi-pass PSM selection, 2-column reading-order reconstruction, and 90/180/270 orientation recovery.
+ * - Paired with adaptive imagePreprocessor (4-corner perspective warp, border crop, ±14° deskew,
+ *   300-DPI Lanczos upscaling, coarse illumination division, Soft Sauvola shadow cleanup, unsharp deblur).
+ * - Optional multimodal Vision OCR fallback (`/api/documents/vision-ocr` or custom runner) triggered
+ *   when local OCR confidence is low, text is sparse/noisy, or multiple uncertain spans appear.
+ *   Uncertain regions are explicitly flagged for Super Admin review — never invented or silently altered.
  */
 
 import { PSM, createWorker } from 'tesseract.js';
 import { sanitizePlainText } from '../../core/security';
+import type { UncertainSpan } from '../../core/types';
 import {
   preprocessImageForOcr,
+  uint8ToBase64DataUrl,
   type PreprocessedImageResult,
   type PreprocessingStrategy,
 } from './imagePreprocessor';
+
+export type VisionFallbackMode = 'auto' | 'always' | 'off';
+
+export interface VisionOcrRunnerInput {
+  imageBase64: string;
+  mimeType: string;
+  pageNumber?: number;
+  reason?: string;
+  signal?: AbortSignal;
+}
+
+export interface VisionOcrRunnerResult {
+  ok: boolean;
+  providerAvailable: boolean;
+  provider?: string;
+  modelUsed?: string;
+  text?: string;
+  confidenceEstimate?: number;
+  uncertainSpans?: UncertainSpan[];
+  error?: string;
+}
+
+export type VisionOcrRunner = (
+  input: VisionOcrRunnerInput
+) => Promise<VisionOcrRunnerResult>;
 
 export interface OcrExecutionInput {
   imageDataUrl?: string;
   bytes?: Uint8Array;
   mimeType?: string;
+  pageNumber?: number;
   signal?: AbortSignal;
   /** Skip imagePreprocessor if caller already passed an enhanced OCR-ready image. */
   skipPreprocessing?: boolean;
@@ -32,6 +58,10 @@ export interface OcrExecutionInput {
   onOcrProgress?: (pct: number, statusText: string) => void;
   /** Per-pass recognition timeout in milliseconds (default 45_000). */
   timeoutMs?: number;
+  /** Multimodal Vision OCR fallback policy (default 'auto'). */
+  visionFallback?: VisionFallbackMode;
+  /** Optional custom Vision OCR runner (defaults to browser `/api/documents/vision-ocr`). */
+  visionOcrRunner?: VisionOcrRunner;
 }
 
 export interface OcrExecutionResult {
@@ -42,28 +72,45 @@ export interface OcrExecutionResult {
   orientationCorrectedDeg: 0 | 90 | 180 | 270;
   psmUsed: string;
   passesRun: number;
+  ocrEngineUsed: 'tesseract' | 'vision' | 'hybrid_tesseract_vision';
+  visionFallbackUsed: boolean;
+  visionFallbackError?: string;
+  uncertainSpans: UncertainSpan[];
+  perspectiveCorrected?: boolean;
 }
 
 type TesseractWorker = Awaited<ReturnType<typeof createWorker>>;
 
-let sharedWorker: TesseractWorker | null = null;
-let sharedWorkerInit: Promise<TesseractWorker> | null = null;
-let workerQueueTail: Promise<unknown> = Promise.resolve();
-let activeProgressSink: ((pct: number, statusText: string) => void) | undefined;
+interface PooledWorkerSlot {
+  id: number;
+  worker: TesseractWorker | null;
+  initPromise: Promise<TesseractWorker> | null;
+  busy: boolean;
+  onProgress?: (pct: number, statusText: string) => void;
+}
 
-async function getReusableWorker(): Promise<TesseractWorker> {
-  if (sharedWorker) return sharedWorker;
-  if (!sharedWorkerInit) {
-    sharedWorkerInit = createWorker('eng', undefined, {
+const OCR_POOL_SIZE = 2;
+const workerPool: PooledWorkerSlot[] = Array.from({ length: OCR_POOL_SIZE }, (_, idx) => ({
+  id: idx,
+  worker: null,
+  initPromise: null,
+  busy: false,
+}));
+const waiterQueue: Array<(slot: PooledWorkerSlot) => void> = [];
+
+async function initSlotWorker(slot: PooledWorkerSlot): Promise<TesseractWorker> {
+  if (slot.worker) return slot.worker;
+  if (!slot.initPromise) {
+    slot.initPromise = createWorker('eng', undefined, {
       logger: (msg: { status?: string; progress?: number }) => {
-        if (!activeProgressSink) return;
+        if (!slot.onProgress) return;
         if (msg.status === 'recognizing text' && typeof msg.progress === 'number') {
-          activeProgressSink(
+          slot.onProgress(
             Math.max(0, Math.min(100, Math.round(msg.progress * 100))),
             'Recognizing characters'
           );
         } else if (msg.status && typeof msg.progress === 'number') {
-          activeProgressSink(
+          slot.onProgress(
             Math.max(0, Math.min(25, Math.round(msg.progress * 25))),
             msg.status
           );
@@ -75,29 +122,60 @@ async function getReusableWorker(): Promise<TesseractWorker> {
           user_defined_dpi: '300',
           preserve_interword_spaces: '1',
         });
-        sharedWorker = worker;
-        sharedWorkerInit = null;
+        slot.worker = worker;
+        slot.initPromise = null;
         return worker;
       })
       .catch((err) => {
-        sharedWorker = null;
-        sharedWorkerInit = null;
+        slot.worker = null;
+        slot.initPromise = null;
         throw err;
       });
   }
-  return sharedWorkerInit;
+  return slot.initPromise;
 }
 
-export async function shutdownOcrWorkerPool(): Promise<void> {
-  const existing = sharedWorker;
-  sharedWorker = null;
-  sharedWorkerInit = null;
+async function acquireWorkerSlot(): Promise<PooledWorkerSlot> {
+  const idle = workerPool.find((s) => !s.busy);
+  if (idle) {
+    idle.busy = true;
+    return idle;
+  }
+  return new Promise<PooledWorkerSlot>((resolve) => {
+    waiterQueue.push((slot) => {
+      slot.busy = true;
+      resolve(slot);
+    });
+  });
+}
+
+function releaseWorkerSlot(slot: PooledWorkerSlot): void {
+  slot.onProgress = undefined;
+  const next = waiterQueue.shift();
+  if (next) {
+    next(slot);
+  } else {
+    slot.busy = false;
+  }
+}
+
+async function terminateSlotWorker(slot: PooledWorkerSlot): Promise<void> {
+  const existing = slot.worker;
+  slot.worker = null;
+  slot.initPromise = null;
   if (existing) {
     try {
       await existing.terminate();
     } catch {
       // Best-effort cleanup
     }
+  }
+}
+
+export async function shutdownOcrWorkerPool(): Promise<void> {
+  for (const slot of workerPool) {
+    await terminateSlotWorker(slot);
+    slot.busy = false;
   }
 }
 
@@ -112,9 +190,10 @@ export function scoreOcrCandidate(text: string, confidence: number): {
   score: number;
   validWords: number;
   alnumChars: number;
+  noiseRatio: number;
 } {
   const trimmed = text.trim();
-  if (!trimmed) return { score: 0, validWords: 0, alnumChars: 0 };
+  if (!trimmed) return { score: 0, validWords: 0, alnumChars: 0, noiseRatio: 0 };
   const alnumChars = (trimmed.match(/[A-Za-z0-9]/g) ?? []).length;
   const tokens = trimmed.split(/\s+/).filter(Boolean);
   let validWords = 0;
@@ -128,8 +207,9 @@ export function scoreOcrCandidate(text: string, confidence: number): {
       validWords += 0.5;
     }
   }
-  const noiseChars = (trimmed.match(/[^A-Za-z0-9\s.,;:?!()[\]{}\-+*/=<>%$#@&'"°∑∫√≤≥≠≈π]/g) ?? [])
-    .length;
+  const noiseChars = (
+    trimmed.match(/[^A-Za-z0-9\s.,;:?!()[\]{}\-+*/=<>%$#@&'"°∑∫√≤≥≠≈π]/g) ?? []
+  ).length;
   const noiseRatio = noiseChars / Math.max(1, trimmed.length);
   const wordDensity = validWords / Math.max(1, tokens.length);
 
@@ -138,15 +218,18 @@ export function scoreOcrCandidate(text: string, confidence: number): {
       score: Math.min(12, Math.round(alnumChars * 0.5)),
       validWords: Math.floor(validWords),
       alnumChars,
+      noiseRatio,
     };
   }
 
   const lengthBonus = Math.min(35, Math.log10(alnumChars + 1) * 10);
-  const wordBonus = Math.min(35, validWords * 0.6);
-  // Count high-signal 3+ letter words that do not mix digits inside letters (like "ISYNO0")
   const cleanDictionaryLikeWords = tokens.filter((raw) => {
     const c = raw.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '');
-    return /^[A-Za-z]{3,}$/.test(c) && /[aeiouyAEIOUY]/.test(c) && !/[A-Z]{2}\d|\d[A-Z]{2}/.test(raw);
+    return (
+      /^[A-Za-z]{3,}$/.test(c) &&
+      /[aeiouyAEIOUY]/.test(c) &&
+      !/[A-Z]{2}\d|\d[A-Z]{2}/.test(raw)
+    );
   }).length;
   const qualityScore =
     confidence * 0.7 +
@@ -159,6 +242,7 @@ export function scoreOcrCandidate(text: string, confidence: number): {
     score: Math.max(0, Math.min(120, Number(qualityScore.toFixed(2)))),
     validWords: Math.floor(validWords),
     alnumChars,
+    noiseRatio: Number(noiseRatio.toFixed(4)),
   };
 }
 
@@ -181,16 +265,151 @@ function cleanOcrOutputText(raw: string): string {
   return sanitizePlainText(normalized, 60_000);
 }
 
-async function runSerializedRecognition(params: {
+interface TesseractLineNode {
+  text?: string;
+  confidence?: number;
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
+  words?: Array<{
+    text?: string;
+    confidence?: number;
+    bbox?: { x0: number; y0: number; x1: number; y1: number };
+  }>;
+}
+
+interface TesseractBlockNode {
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
+  paragraphs?: Array<{
+    lines?: TesseractLineNode[];
+  }>;
+}
+
+/**
+ * Inspects Tesseract hierarchical blocks/lines/words to:
+ * 1) Reorder genuine 2-column image layouts left-column-first without scrambling wide headers/tables.
+ * 2) Collect low-confidence uncertain word/line spans with coordinates for Super Admin review.
+ */
+function analyzeBlocksAndOrder(
+  blocks: TesseractBlockNode[] | null | undefined,
+  fallbackText: string
+): { orderedText: string; uncertainSpans: UncertainSpan[] } {
+  if (!Array.isArray(blocks) || blocks.length === 0) {
+    return { orderedText: fallbackText, uncertainSpans: [] };
+  }
+
+  const lines: TesseractLineNode[] = [];
+  let maxX = 0;
+
+  for (const blk of blocks) {
+    if (blk.bbox?.x1 && blk.bbox.x1 > maxX) maxX = blk.bbox.x1;
+    for (const para of blk.paragraphs ?? []) {
+      for (const ln of para.lines ?? []) {
+        if ((ln.text ?? '').trim()) {
+          lines.push(ln);
+          if (ln.bbox?.x1 && ln.bbox.x1 > maxX) maxX = ln.bbox.x1;
+        }
+      }
+    }
+  }
+
+  const uncertainSpans: UncertainSpan[] = [];
+  const seenSpanKeys = new Set<string>();
+
+  for (const ln of lines) {
+    const lnText = (ln.text ?? '').trim();
+    const lnConf = Number.isFinite(ln.confidence) ? Math.round(ln.confidence!) : 100;
+    const words = ln.words ?? [];
+
+    for (const w of words) {
+      const wt = (w.text ?? '').trim();
+      const wc = Number.isFinite(w.confidence) ? Math.round(w.confidence!) : 100;
+      if (wt.length >= 2 && /[A-Za-z0-9]/.test(wt) && wc < 58 && uncertainSpans.length < 18) {
+        const key = `${wt.toLowerCase()}@${Math.round((w.bbox?.y0 ?? 0) / 15)}`;
+        if (!seenSpanKeys.has(key)) {
+          seenSpanKeys.add(key);
+          uncertainSpans.push({
+            text: wt.slice(0, 80),
+            confidence: wc,
+            reason: `Low character confidence (${wc}%)`,
+            bbox: w.bbox,
+          });
+        }
+      }
+    }
+
+    if (
+      lnText.length >= 4 &&
+      lnConf < 55 &&
+      uncertainSpans.length < 22 &&
+      !seenSpanKeys.has(lnText.toLowerCase().slice(0, 32))
+    ) {
+      seenSpanKeys.add(lnText.toLowerCase().slice(0, 32));
+      uncertainSpans.push({
+        text: lnText.slice(0, 120),
+        confidence: lnConf,
+        reason: `Low line recognition confidence (${lnConf}%)`,
+        bbox: ln.bbox,
+      });
+    }
+  }
+
+  // Reorder 2-column dense scanned layouts cleanly when strong central vertical split exists
+  let orderedText = fallbackText;
+  if (lines.length >= 8 && maxX > 300) {
+    const midX = maxX * 0.5;
+    const gutter = Math.max(14, maxX * 0.03);
+    const leftLines: TesseractLineNode[] = [];
+    const rightLines: TesseractLineNode[] = [];
+    const fullLines: TesseractLineNode[] = [];
+
+    for (const ln of lines) {
+      const x0 = ln.bbox?.x0 ?? 0;
+      const x1 = ln.bbox?.x1 ?? maxX;
+      if (x1 <= midX + gutter * 0.5 && x1 - x0 < maxX * 0.56) {
+        leftLines.push(ln);
+      } else if (x0 >= midX - gutter * 0.5 && x1 - x0 < maxX * 0.56) {
+        rightLines.push(ln);
+      } else {
+        fullLines.push(ln);
+      }
+    }
+
+    if (
+      leftLines.length >= 4 &&
+      rightLines.length >= 4 &&
+      fullLines.length <= Math.min(leftLines.length, rightLines.length) * 0.5
+    ) {
+      const sortByY = (arr: TesseractLineNode[]) =>
+        arr
+          .slice()
+          .sort((a, b) => (a.bbox?.y0 ?? 0) - (b.bbox?.y0 ?? 0))
+          .map((l) => (l.text ?? '').trim())
+          .filter(Boolean)
+          .join('\n');
+
+      const rebuilt = [sortByY(fullLines), sortByY(leftLines), sortByY(rightLines)]
+        .filter(Boolean)
+        .join('\n\n');
+      if (rebuilt.trim().length > fallbackText.trim().length * 0.8) {
+        orderedText = rebuilt;
+      }
+    }
+  }
+
+  return { orderedText, uncertainSpans };
+}
+
+async function runPooledRecognition(params: {
   source: Buffer | string;
   psm: PSM;
   signal?: AbortSignal;
   timeoutMs: number;
   onProgress?: (pct: number, statusText: string) => void;
-}): Promise<{ text: string; confidence: number }> {
-  const exec = async () => {
+}): Promise<{ text: string; confidence: number; uncertainSpans: UncertainSpan[] }> {
+  throwIfAborted(params.signal);
+  const slot = await acquireWorkerSlot();
+  try {
     throwIfAborted(params.signal);
-    const worker = await getReusableWorker();
+    const worker = await initSlotWorker(slot);
     throwIfAborted(params.signal);
     await worker.setParameters({
       tessedit_pageseg_mode: params.psm,
@@ -198,12 +417,16 @@ async function runSerializedRecognition(params: {
       preserve_interword_spaces: '1',
     });
 
-    activeProgressSink = params.onProgress;
+    slot.onProgress = params.onProgress;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          reject(new Error(`OCR recognition timed out after ${Math.round(params.timeoutMs / 1000)}s.`));
+          reject(
+            new Error(
+              `OCR recognition timed out after ${Math.round(params.timeoutMs / 1000)}s.`
+            )
+          );
         }, params.timeoutMs);
       });
       const abortPromise = params.signal
@@ -221,7 +444,7 @@ async function runSerializedRecognition(params: {
         : null;
 
       const racers: Array<Promise<Awaited<ReturnType<TesseractWorker['recognize']>>>> = [
-        worker.recognize(params.source),
+        worker.recognize(params.source, undefined, { text: true, blocks: true }),
         timeoutPromise,
       ];
       if (abortPromise) racers.push(abortPromise);
@@ -231,33 +454,72 @@ async function runSerializedRecognition(params: {
       const rawConf = Number.isFinite(res.data?.confidence)
         ? Math.max(0, Math.min(100, Math.round(res.data.confidence)))
         : 0;
-      const cleaned = cleanOcrOutputText(rawText);
+      const { orderedText, uncertainSpans } = analyzeBlocksAndOrder(
+        res.data?.blocks as unknown as TesseractBlockNode[] | null | undefined,
+        rawText
+      );
+      const cleaned = cleanOcrOutputText(orderedText);
       const metrics = scoreOcrCandidate(cleaned, rawConf);
-      // Do not report 95% confidence for empty/near-empty outputs
       const effectiveConf = metrics.alnumChars < 6 ? 0 : rawConf;
-      return { text: cleaned, confidence: effectiveConf };
+      return { text: cleaned, confidence: effectiveConf, uncertainSpans };
     } catch (err) {
-      // Terminate potentially wedged worker on timeout or fatal WASM error so next call recovers
       if ((err as { name?: string })?.name !== 'AbortError') {
-        await shutdownOcrWorkerPool();
+        await terminateSlotWorker(slot);
       }
       throw err;
     } finally {
       if (timer) clearTimeout(timer);
-      activeProgressSink = undefined;
     }
-  };
-
-  const next = workerQueueTail.then(exec, exec);
-  workerQueueTail = next.catch(() => {});
-  return next;
+  } finally {
+    releaseWorkerSlot(slot);
+  }
 }
 
-function toWorkerSource(preprocessed?: PreprocessedImageResult, rawDataUrl?: string): Buffer | string {
+function toWorkerSource(
+  preprocessed?: PreprocessedImageResult,
+  rawDataUrl?: string
+): Buffer | string {
   if (preprocessed?.ocrBytes && typeof Buffer !== 'undefined') {
     return Buffer.from(preprocessed.ocrBytes);
   }
   return preprocessed?.ocrDataUrl ?? rawDataUrl ?? '';
+}
+
+/** A Vision model's self-reported confidence is capped here; it is never treated as measured accuracy. */
+const VISION_CONFIDENCE_CEILING = 70;
+
+async function defaultBrowserVisionOcrRunner(
+  input: VisionOcrRunnerInput
+): Promise<VisionOcrRunnerResult> {
+  if (typeof window === 'undefined' || typeof fetch !== 'function') {
+    return {
+      ok: false,
+      providerAvailable: false,
+      error: 'No Vision OCR runner configured in non-browser context.',
+    };
+  }
+  try {
+    const res = await fetch('/api/documents/vision-ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: input.signal,
+      body: JSON.stringify({
+        imageBase64: input.imageBase64,
+        mimeType: input.mimeType,
+        pageNumber: input.pageNumber,
+        reason: input.reason,
+      }),
+    });
+    const payload = (await res.json()) as VisionOcrRunnerResult;
+    return payload;
+  } catch (err) {
+    if ((err as { name?: string })?.name === 'AbortError') throw err;
+    return {
+      ok: false,
+      providerAvailable: false,
+      error: err instanceof Error ? err.message : 'Vision OCR request failed.',
+    };
+  }
 }
 
 export async function recognizeWithTesseractPool(
@@ -307,12 +569,16 @@ export async function recognizeWithTesseractPool(
       orientationCorrectedDeg: 0,
       psmUsed: 'PSM.AUTO',
       passesRun: 0,
+      ocrEngineUsed: 'tesseract',
+      visionFallbackUsed: false,
+      uncertainSpans: [],
+      perspectiveCorrected: basePrep.perspectiveCorrected,
     };
   }
 
   throwIfAborted(input.signal);
   let passesRun = 1;
-  let best = await runSerializedRecognition({
+  let best = await runPooledRecognition({
     source: primarySource,
     psm: PSM.AUTO,
     signal: input.signal,
@@ -323,13 +589,13 @@ export async function recognizeWithTesseractPool(
   let bestPsm = 'PSM.AUTO';
   let bestOrientation: 0 | 90 | 180 | 270 = 0;
 
-  // Pass 2: Try PSM.SINGLE_BLOCK and/or alternate strategy when Pass 1 confidence or density is low
+  // Pass 2: Try PSM.SINGLE_BLOCK when Pass 1 confidence or density is low
   const needsSecondPass =
     bestScore.validWords < 22 || best.confidence < 58 || bestScore.score < 56;
 
   if (needsSecondPass && !input.signal?.aborted) {
     passesRun += 1;
-    const pass2 = await runSerializedRecognition({
+    const pass2 = await runPooledRecognition({
       source: primarySource,
       psm: PSM.SINGLE_BLOCK,
       signal: input.signal,
@@ -343,7 +609,7 @@ export async function recognizeWithTesseractPool(
     }
   }
 
-  // Pass 3: Alternate preprocessing strategy if still weak (e.g., Soft Sauvola vs Clean Contrast)
+  // Pass 3: Alternate preprocessing strategy if still weak (Soft Sauvola vs Clean Contrast)
   if (
     !input.skipPreprocessing &&
     basePrep &&
@@ -360,7 +626,7 @@ export async function recognizeWithTesseractPool(
         strategyOverride: altStrategy,
       });
       passesRun += 1;
-      const pass3 = await runSerializedRecognition({
+      const pass3 = await runPooledRecognition({
         source: toWorkerSource(altPrep),
         psm: PSM.AUTO,
         signal: input.signal,
@@ -396,14 +662,17 @@ export async function recognizeWithTesseractPool(
           quarterTurns: turns,
         });
         passesRun += 1;
-        const rotRes = await runSerializedRecognition({
+        const rotRes = await runPooledRecognition({
           source: toWorkerSource(rotPrep),
           psm: PSM.AUTO,
           signal: input.signal,
           timeoutMs,
         });
         const rotScore = scoreOcrCandidate(rotRes.text, rotRes.confidence);
-        if (rotScore.score > bestScore.score + 12 || (rotScore.validWords >= bestScore.validWords + 5 && rotScore.score > bestScore.score + 6)) {
+        if (
+          rotScore.score > bestScore.score + 12 ||
+          (rotScore.validWords >= bestScore.validWords + 5 && rotScore.score > bestScore.score + 6)
+        ) {
           best = rotRes;
           bestScore = rotScore;
           basePrep = rotPrep;
@@ -417,6 +686,88 @@ export async function recognizeWithTesseractPool(
     }
   }
 
+  // Pass 5: Optional Hybrid Vision OCR Fallback for difficult / low-confidence / uncertain pages
+  let ocrEngineUsed: OcrExecutionResult['ocrEngineUsed'] = 'tesseract';
+  let visionFallbackUsed = false;
+  let visionFallbackError: string | undefined;
+  let uncertainSpans = best.uncertainSpans.slice();
+
+  const visionMode = input.visionFallback ?? 'auto';
+  const lowConfidence = best.confidence > 0 && best.confidence < 68;
+  const sparseRecovery = bestScore.validWords < 12;
+  const highNoise = bestScore.noiseRatio > 0.14;
+  const multiUncertain = uncertainSpans.length >= 3;
+
+  const shouldTryVision =
+    !input.signal?.aborted &&
+    visionMode !== 'off' &&
+    (visionMode === 'always' || lowConfidence || sparseRecovery || highNoise || multiUncertain);
+
+  if (shouldTryVision) {
+    const fallbackReason =
+      visionMode === 'always'
+        ? 'explicit_vision_mode'
+        : sparseRecovery
+          ? 'sparse_local_ocr'
+          : highNoise
+            ? 'high_symbol_noise'
+            : multiUncertain
+              ? 'multiple_uncertain_spans'
+              : `low_confidence_${best.confidence}`;
+
+    const visionImageDataUrl =
+      basePrep?.ocrDataUrl ??
+      input.imageDataUrl ??
+      (input.bytes ? uint8ToBase64DataUrl(input.bytes, input.mimeType || 'image/png') : '');
+    const visionMime = visionImageDataUrl.startsWith('data:image/jpeg')
+      ? 'image/jpeg'
+      : visionImageDataUrl.startsWith('data:image/webp')
+        ? 'image/webp'
+        : 'image/png';
+
+    const runner = input.visionOcrRunner ?? defaultBrowserVisionOcrRunner;
+    if (visionImageDataUrl) {
+      const vRes = await runner({
+        imageBase64: visionImageDataUrl,
+        mimeType: visionMime,
+        pageNumber: input.pageNumber,
+        reason: fallbackReason,
+        signal: input.signal,
+      });
+
+      if (vRes.ok && vRes.text && vRes.text.trim().length > 0) {
+        const cleanedVision = cleanOcrOutputText(vRes.text);
+        // The model's own confidence is a self-report, not a measured accuracy, and it may be
+        // missing. Never invent one: fall back to the local engine's measured value, and cap
+        // the result so a Vision read can never look more trustworthy than it is.
+        const reportedConf =
+          typeof vRes.confidenceEstimate === 'number' ? vRes.confidenceEstimate : best.confidence;
+        const visionConf = Math.max(0, Math.min(VISION_CONFIDENCE_CEILING, reportedConf));
+        const visionScore = scoreOcrCandidate(cleanedVision, visionConf);
+        visionFallbackUsed = true;
+
+        if (visionMode === 'always' || visionScore.score >= bestScore.score - 2) {
+          best = {
+            text: cleanedVision,
+            confidence: visionConf,
+            uncertainSpans: vRes.uncertainSpans ?? [],
+          };
+          bestScore = visionScore;
+          uncertainSpans = vRes.uncertainSpans ?? [];
+          ocrEngineUsed = bestScore.alnumChars > 0 ? 'hybrid_tesseract_vision' : 'vision';
+          warnings.push(
+            `Text for this page was read by Vision OCR (${vRes.modelUsed || vRes.provider || 'vision'}). It is not independently verified; check it against the original.`
+          );
+        }
+      } else if (vRes.providerAvailable && vRes.error) {
+        visionFallbackError = vRes.error;
+        warnings.push(`Vision OCR fallback could not improve this page: ${vRes.error}`);
+      } else if (visionMode === 'always' && vRes.error) {
+        visionFallbackError = vRes.error;
+      }
+    }
+  }
+
   if (best.confidence > 0 && best.confidence < 65) {
     warnings.push(
       `Low OCR confidence (${best.confidence}%). Image may be blurry, creased, or skewed.`
@@ -424,6 +775,11 @@ export async function recognizeWithTesseractPool(
   }
   if (bestScore.alnumChars < 15) {
     warnings.push('OCR extracted minimal readable text from this page.');
+  }
+  if (uncertainSpans.length > 0) {
+    warnings.push(
+      `${uncertainSpans.length} uncertain word/line span(s) flagged for reviewer verification.`
+    );
   }
   if (basePrep?.qualityMetrics.isBlurry) {
     warnings.push('Low sharpness / blur detected in source image.');
@@ -442,5 +798,10 @@ export async function recognizeWithTesseractPool(
     orientationCorrectedDeg: bestOrientation,
     psmUsed: bestPsm,
     passesRun,
+    ocrEngineUsed,
+    visionFallbackUsed,
+    visionFallbackError,
+    uncertainSpans,
+    perspectiveCorrected: basePrep?.perspectiveCorrected,
   };
 }

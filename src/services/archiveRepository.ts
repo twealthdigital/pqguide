@@ -2433,6 +2433,18 @@ class ArchiveRepository {
       formulas: (payload.formulas ?? []).slice(0, 32),
       qrCodesFound: payload.qrCodesFound ?? [],
       averageOcrConfidence: payload.averageOcrConfidence,
+      ocrEngineSummary: (() => {
+        const engines = Array.from(
+          new Set((payload.pages ?? []).map((pg) => pg.ocrEngineUsed).filter(Boolean))
+        );
+        return engines.length > 0 ? engines.join(', ') : undefined;
+      })(),
+      uncertainPageNumbers: (() => {
+        const nums = (payload.pages ?? [])
+          .filter((pg) => (pg.uncertainSpans && pg.uncertainSpans.length > 0) || Boolean(pg.visionFallbackError))
+          .map((pg) => pg.pageNumber);
+        return nums.length > 0 ? nums : undefined;
+      })(),
       extractionQualityStatus: payload.extractionQualityStatus,
       processedPages: payload.processedPages,
       unprocessedPages: payload.unprocessedPages,

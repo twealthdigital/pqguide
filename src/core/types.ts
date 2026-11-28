@@ -599,6 +599,13 @@ export interface PageImageQualityMetrics {
   blankRatio?: number;
 }
 
+export interface UncertainSpan {
+  text: string;
+  confidence: number;
+  reason: string;
+  bbox?: { x0: number; y0: number; x1: number; y1: number };
+}
+
 export interface ExtractedPageContent {
   pageNumber: number;
   text: string;
@@ -614,6 +621,11 @@ export interface ExtractedPageContent {
   preprocessingApplied?: string[];
   errors?: string[];
   renderedPreviewUrl?: string;
+  ocrEngineUsed?: 'tesseract' | 'vision' | 'hybrid_tesseract_vision';
+  visionFallbackUsed?: boolean;
+  visionFallbackError?: string;
+  uncertainSpans?: UncertainSpan[];
+  perspectiveCorrected?: boolean;
   diagrams: ExtractedDiagramAsset[];
   tables: ExtractedTable[];
   formulas: ExtractedFormula[];
@@ -714,6 +726,10 @@ export interface AcademicDocumentRecord {
   extractionWarnings?: string[];
   deterministicChecks: DeterministicCheckResult[];
   aiFindings?: AiCrossCheckFindings;
+  /** Which OCR engine(s) read this document, e.g. "tesseract" or "hybrid_tesseract_vision". */
+  ocrEngineSummary?: string;
+  /** Pages with uncertain text that need a human to check them. */
+  uncertainPageNumbers?: number[];
   decision: DocumentPipelineDecision;
   publicationStatus: DocumentPublicationStatus;
   /** Where the live copy appears for students once published. */
