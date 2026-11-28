@@ -5,6 +5,10 @@ import {
   validateMagicAndSecurity,
   MAX_SCANNER_FILE_BYTES,
 } from '../src/services/intelligence/fileSecurity.ts';
+import {
+  preprocessImageForOcr,
+  type ImageQualityAnalysis,
+} from '../src/services/intelligence/imagePreprocessor.ts';
 import type {
   AiCrossCheckFindings,
   DocumentRiskLevel,
@@ -28,6 +32,9 @@ export interface ServerValidateDocumentResult {
     duplicateKnownInIndex?: boolean;
     existingDocId?: string;
     optimizedPreviewUrl?: string;
+    ocrReadyImageUrl?: string;
+    preprocessingApplied?: string[];
+    qualityMetrics?: ImageQualityAnalysis;
     width?: number;
     height?: number;
     securityFlags?: string[];
@@ -107,6 +114,9 @@ export function createDocumentEngine(deps?: DocumentServiceDeps) {
     let safeFileName = fileName;
     let detectedFormat = 'document';
     let optimizedPreviewUrl: string | undefined;
+    let ocrReadyImageUrl: string | undefined;
+    let preprocessingApplied: string[] | undefined;
+    let qualityMetrics: ImageQualityAnalysis | undefined;
     let width: number | undefined;
     let height: number | undefined;
 
@@ -195,6 +205,9 @@ export function createDocumentEngine(deps?: DocumentServiceDeps) {
         duplicateKnownInIndex,
         existingDocId,
         optimizedPreviewUrl,
+        ocrReadyImageUrl,
+        preprocessingApplied,
+        qualityMetrics,
         width,
         height,
         securityFlags,

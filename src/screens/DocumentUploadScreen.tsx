@@ -72,6 +72,9 @@ interface QueueItem {
   stageLabel: string;
   currentPage?: number;
   totalPages?: number;
+  progressPercent?: number;
+  ocrProgress?: number;
+  preprocessingStatus?: string;
   error?: string;
   inputFile?: ScanInputFile;
   abortController?: AbortController;
@@ -106,6 +109,22 @@ const NOTIFY_OPTIONS: Array<{ value: DocumentPublishOptions['notify']; label: st
 
 function destinationLabel(d?: string): string {
   return d === 'past_question' ? 'Past Questions' : d === 'study_material' ? 'Materials' : 'the student side';
+}
+
+function qualityBadge(status?: AcademicDocumentRecord['extractionQualityStatus']): {
+  label: string;
+  toneClass: string;
+} {
+  if (status === 'failed') {
+    return { label: 'Scan failed', toneClass: 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]' };
+  }
+  if (status === 'needs_review') {
+    return { label: 'Needs review', toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]' };
+  }
+  if (status === 'completed_with_warnings') {
+    return { label: 'Warnings', toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]' };
+  }
+  return { label: 'Clean scan', toneClass: 'bg-[#DCFCE7] text-[#15803D] border-[#86EFAC]' };
 }
 
 function formatBytes(bytes: number): string {
@@ -196,6 +215,8 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
   const [notice, setNotice] = useState<string | null>(null);
   const [previewRecord, setPreviewRecord] = useState<AcademicDocumentRecord | null>(null);
   const [previewMode, setPreviewMode] = useState<'extracted' | 'optimized'>('extracted');
+  const [editingExtracted, setEditingExtracted] = useState(false);
+  const [extractedDraft, setExtractedDraft] = useState('');
   const [decliningId, setDecliningId] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -259,6 +280,9 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
         stageLabel: upd.stageLabel,
         currentPage: upd.currentPage,
         totalPages: upd.totalPages,
+        progressPercent: upd.progressPercent,
+        ocrProgress: upd.ocrProgress,
+        preprocessingStatus: upd.preprocessingStatus,
       });
     };
 
@@ -330,6 +354,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
       patchQueueItem(id, {
         stage: 'deterministic_checks',
         stageLabel: 'Running deterministic integrity, duplicate & structure checks',
+        progressPercent: 90,
       });
 
       const localDup = archiveRepository.findDocumentBySha256(artifact.sha256);
@@ -338,6 +363,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
       patchQueueItem(id, {
         stage: 'ai_cross_check',
         stageLabel: 'Cross-checking academic structure & risk signals',
+        progressPercent: 94,
       });
 
       const validation = await validateScannedDocument({
@@ -365,6 +391,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
       patchQueueItem(id, {
         stage: 'decision',
         stageLabel: 'Finalizing verification status & saving to repository',
+        progressPercent: 98,
       });
 
       const selectedLevel: StudentLevel =
@@ -397,6 +424,10 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
         formulas: artifact.formulas,
         qrCodesFound: artifact.qrCodesFound,
         averageOcrConfidence: artifact.averageOcrConfidence,
+        extractionQualityStatus: artifact.extractionQualityStatus,
+        processedPages: artifact.processedPages,
+        unprocessedPages: artifact.unprocessedPages,
+        extractionWarnings: artifact.extractionWarnings,
         deterministicChecks: validation.deterministicChecks,
         aiFindings: validation.aiFindings,
         decision: validation.decision,
@@ -916,6 +947,28 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                           </span>
                         )}
                       </div>
+                      <p className="mt-1 text-xs text-[#505460]">
+                        {item.stageLabel}
+                        {item.totalPages && item.currentPage
+                          ? ` · Page ${item.currentPage} of ${item.totalPages}`
+                          : ''}
+                        {typeof item.ocrProgress === 'number' && item.stage === 'ocr'
+                          ? ` · OCR ${item.ocrProgress}%`
+                          : ''}
+                      </p>
+                      {item.preprocessingStatus && item.status === 'processing' && (
+                        <p className="mt-0.5 text-[11px] text-[#686C78]">
+                          Preprocessing: {item.preprocessingStatus}
+                        </p>
+                      )}
+                      {item.status === 'processing' && (
+                        <div className="mt-2 w-full max-w-xs h-1.5 rounded-full bg-white border border-[#1A1B20]/10 overflow-hidden">
+                          <div
+                            className="h-full bg-[#1D1E23] transition-all duration-200"
+                            style={{ width: `${Math.max(8, item.progressPercent ?? 12)}%` }}
+                          />
+                        </div>
+                      )}
                       {isSuperAdmin && item.error && (
                         <p className="mt-1 text-xs font-medium text-[#B91C1C]">{item.error}</p>
                       )}
@@ -929,8 +982,21 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                           : 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]'
                       }`}
                     >
-                      {isPending ? 'Pending' : 'Failed'}
+                      {item.status === 'processing'
+                        ? `${item.progressPercent ?? 10}%`
+                        : isPending
+                          ? 'Pending'
+                          : 'Failed'}
                     </span>
+                    {item.status === 'processing' && item.abortController && (
+                      <TactileButton
+                        variant="light"
+                        size="sm"
+                        onClick={() => item.abortController?.abort()}
+                      >
+                        Cancel
+                      </TactileButton>
+                    )}
                     {!isPending && item.inputFile && (
                       <TactileButton
                         variant="dark"
@@ -973,11 +1039,32 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                       <p className="text-xs text-[#505460] mt-0.5">
                         {doc.courseCode} · {doc.schoolCode} · {doc.pageCount} page
                         {doc.pageCount === 1 ? '' : 's'}
+                        {doc.pages.length > 0 &&
+                          ` (${doc.pages.filter((p) => p.processingStatus !== 'failed').length}/${doc.pages.length} extracted)`}
+                        {doc.averageOcrConfidence !== null &&
+                          ` · OCR ${doc.averageOcrConfidence}%`}
                         {isSuperAdmin ? ` · by ${doc.submittedByName}` : ''}
                       </p>
                       <p className="text-xs text-[#686C78] mt-1">{status.note}</p>
+                      {doc.unprocessedPages && doc.unprocessedPages.length > 0 && (
+                        <p className="text-[11px] font-semibold text-[#92400E] mt-1">
+                          Unprocessed pages ({doc.unprocessedPages[0]}–{doc.unprocessedPages[doc.unprocessedPages.length - 1]}) exceeded page limit.
+                        </p>
+                      )}
+                      {doc.extractionWarnings && doc.extractionWarnings.length > 0 && (
+                        <p className="text-[11px] text-[#92400E] mt-1">
+                          {doc.extractionWarnings[0]}
+                        </p>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {doc.extractionQualityStatus && (
+                        <span
+                          className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold ${qualityBadge(doc.extractionQualityStatus).toneClass}`}
+                        >
+                          {qualityBadge(doc.extractionQualityStatus).label}
+                        </span>
+                      )}
                       <span
                         className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold ${status.toneClass}`}
                       >
@@ -990,6 +1077,8 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                           icon={<Eye className="w-3.5 h-3.5" />}
                           onClick={() => {
                             setPreviewMode('extracted');
+                            setEditingExtracted(false);
+                            setExtractedDraft(doc.extractedText);
                             setPreviewRecord(doc);
                           }}
                         >
@@ -1156,6 +1245,73 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
               </div>
             ) : (
               <div className="space-y-4">
+                {previewRecord.unprocessedPages && previewRecord.unprocessedPages.length > 0 && (
+                  <div className="rounded-2xl bg-[#FEF3C7] border border-[#FDE68A] px-3.5 py-2.5 text-xs font-semibold text-[#92400E]">
+                    Pages {previewRecord.unprocessedPages[0]}–{previewRecord.unprocessedPages[previewRecord.unprocessedPages.length - 1]} exceed the safety page limit and were not scanned.
+                  </div>
+                )}
+                {canManage(previewRecord) && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] px-3.5 py-2.5 text-xs">
+                    <span className="font-semibold text-[#505460]">
+                      Extraction quality: <strong className="text-[#1A1B20]">{qualityBadge(previewRecord.extractionQualityStatus).label}</strong>
+                      {previewRecord.averageOcrConfidence !== null &&
+                        ` · Avg OCR ${previewRecord.averageOcrConfidence}%`}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {!editingExtracted ? (
+                        <TactileButton
+                          variant="light"
+                          size="sm"
+                          icon={<Pencil className="w-3.5 h-3.5" />}
+                          onClick={() => {
+                            setExtractedDraft(previewRecord.extractedText);
+                            setEditingExtracted(true);
+                          }}
+                        >
+                          Edit extracted text
+                        </TactileButton>
+                      ) : (
+                        <>
+                          <TactileButton
+                            variant="light"
+                            size="sm"
+                            onClick={() => setEditingExtracted(false)}
+                          >
+                            Cancel
+                          </TactileButton>
+                          <TactileButton
+                            variant="dark"
+                            size="sm"
+                            onClick={() => {
+                              try {
+                                const updated = archiveRepository.updateAcademicDocumentDetails(
+                                  currentUser,
+                                  previewRecord.id,
+                                  { extractedText: extractedDraft }
+                                );
+                                setPreviewRecord(updated);
+                                setEditingExtracted(false);
+                                setNotice(`Saved edited extracted text for "${updated.title}".`);
+                              } catch (err) {
+                                setBannerError(err instanceof Error ? err.message : 'Unable to save text edits.');
+                              }
+                            }}
+                          >
+                            Save text
+                          </TactileButton>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {editingExtracted && (
+                  <textarea
+                    value={extractedDraft}
+                    onChange={(e) => setExtractedDraft(e.target.value)}
+                    rows={12}
+                    className="w-full rounded-2xl border border-[#1A1B20]/15 bg-white p-3.5 font-mono-tabular text-xs leading-relaxed text-[#1A1B20]"
+                  />
+                )}
                 {previewRecord.summary && (
                   <div className="rounded-2xl bg-[#F6F7F9] p-3.5 text-xs sm:text-sm text-[#1A1B20]">
                     <p className="font-bold text-xs uppercase tracking-wider text-[#686C78] mb-1">

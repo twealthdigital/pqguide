@@ -8,6 +8,8 @@ import type {
   ExtractedFormula,
   ExtractedPageContent,
   ExtractedTable,
+  ExtractionQualityStatus,
+  PageExtractionMethod,
   QrCodeMatch,
 } from '../../core/types';
 import {
@@ -20,8 +22,16 @@ import {
   validateMagicAndSecurity,
 } from './fileSecurity';
 import {
+  preprocessImageForOcr,
+  uint8ToBase64DataUrl,
+  type PreprocessedImageResult,
+} from './imagePreprocessor';
+import { recognizeWithTesseractPool } from './ocrEngine';
+import {
+  detectRepeatedHeadersFooters,
   extractFormulasFromText,
   extractTablesFromText,
+  formatMultiPageStructuredText,
   parseStructuredDocument,
 } from './structuredParser';
 import {
@@ -49,12 +59,18 @@ export interface ScanProgressUpdate {
   stageLabel: string;
   currentPage?: number;
   totalPages?: number;
+  progressPercent?: number;
+  ocrProgress?: number;
+  preprocessingStatus?: string;
   detail?: string;
 }
 
 export interface OcrRunnerResult {
   text: string;
   confidence: number; // 0..100
+  warnings?: string[];
+  preprocessed?: PreprocessedImageResult;
+  orientationCorrectedDeg?: 0 | 90 | 180 | 270;
 }
 
 export type OcrRunner = (input: {
@@ -62,7 +78,20 @@ export type OcrRunner = (input: {
   bytes?: Uint8Array;
   mimeType?: string;
   signal?: AbortSignal;
+  skipPreprocessing?: boolean;
+  onOcrProgress?: (pct: number, statusText: string) => void;
 }) => Promise<OcrRunnerResult>;
+
+export type PdfPageRenderer = (params: {
+  pageNumber: number;
+  totalPages: number;
+}) => Promise<{
+  imageDataUrl?: string;
+  bytes?: Uint8Array;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+} | null>;
 
 export interface ScannedArtifactOutput {
   fileName: string;
@@ -90,6 +119,10 @@ export interface ScannedArtifactOutput {
   category: ReturnType<typeof parseStructuredDocument>['category'];
   qrCodesFound: QrCodeMatch[];
   averageOcrConfidence: number | null;
+  extractionQualityStatus: ExtractionQualityStatus;
+  processedPages: number[];
+  unprocessedPages: number[];
+  extractionWarnings: string[];
   securityFlags: string[];
   earlyChecks: DeterministicCheckResult[];
   parentZipName?: string;
@@ -103,6 +136,9 @@ export interface ScanInputFile {
   bytes: Uint8Array;
   parentZipName?: string;
 }
+
+const MAX_PAGE_TEXT_CHARS = 60_000;
+const MAX_DOC_TEXT_CHARS = 240_000;
 
 export async function fileToScanInput(file: File): Promise<ScanInputFile> {
   const buf = await file.arrayBuffer();
@@ -147,183 +183,39 @@ function guessMimeFromExtension(ext: string, fallback = 'application/octet-strea
 }
 
 function uint8ToDataUrl(bytes: Uint8Array, mimeType: string): string {
-  if (typeof Buffer !== 'undefined') {
-    return `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`;
-  }
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const sub = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...sub);
-  }
-  return `data:${mimeType};base64,${btoa(binary)}`;
+  return uint8ToBase64DataUrl(bytes, mimeType);
 }
 
-async function decodeImageAndOptimizeBrowser(
-  bytes: Uint8Array,
-  mimeType: string
-): Promise<{
-  optimizedDataUrl: string;
-  qrMatches: string[];
-  width: number;
-  height: number;
-}> {
-  if (typeof document === 'undefined' || typeof Blob === 'undefined') {
-    return {
-      optimizedDataUrl: uint8ToDataUrl(bytes, mimeType),
-      qrMatches: [],
-      width: 0,
-      height: 0,
-    };
-  }
-
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  const blob = new Blob([copy.buffer], { type: mimeType });
-  const objectUrl = URL.createObjectURL(blob);
-
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('Failed to decode uploaded image.'));
-      el.src = objectUrl;
-    });
-
-    const maxWidth = 1280;
-    const scale = img.width > maxWidth ? maxWidth / img.width : 1;
-    const width = Math.max(1, Math.round(img.width * scale));
-    const height = Math.max(1, Math.round(img.height * scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return {
-        optimizedDataUrl: uint8ToDataUrl(bytes, mimeType),
-        qrMatches: [],
-        width,
-        height,
-      };
-    }
-
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const qrMatches: string[] = [];
-    try {
-      const imgData = ctx.getImageData(0, 0, width, height);
-      const qr = jsQR(imgData.data, width, height, { inversionAttempts: 'dontInvert' });
-      if (qr?.data) qrMatches.push(qr.data);
-    } catch {
-      // Ignore QR read errors on unusual pixel layouts
-    }
-
-    // Create high-legibility grayscale derivative for scanning & OCR
-    const optCanvas = document.createElement('canvas');
-    optCanvas.width = width;
-    optCanvas.height = height;
-    const optCtx = optCanvas.getContext('2d');
-    if (optCtx) {
-      optCtx.fillStyle = '#FFFFFF';
-      optCtx.fillRect(0, 0, width, height);
-      optCtx.filter = 'contrast(118%) brightness(104%)';
-      optCtx.drawImage(img, 0, 0, width, height);
-      return {
-        optimizedDataUrl: optCanvas.toDataURL('image/jpeg', 0.85),
-        qrMatches,
-        width,
-        height,
-      };
-    }
-
-    return {
-      optimizedDataUrl: canvas.toDataURL('image/jpeg', 0.85),
-      qrMatches,
-      width,
-      height,
-    };
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-/**
- * Tesseract reads best when text is roughly 300 DPI. A small or low-resolution image
- * (a cropped screenshot, a thumbnail) comes back with nothing, so it is enlarged first,
- * converted to grayscale and given a little extra contrast. Very large photos are
- * capped so memory stays reasonable. Only the OCR copy changes; the preview is untouched.
- */
-async function prepareImageForOcr(dataUrl: string): Promise<string> {
-  if (typeof document === 'undefined') return dataUrl;
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('Failed to decode image for OCR.'));
-      el.src = dataUrl;
-    });
-    const w = img.naturalWidth || img.width;
-    const h = img.naturalHeight || img.height;
-    if (!w || !h) return dataUrl;
-
-    const targetWidth = w < 1600 ? Math.min(w * 4, 2000) : Math.min(w, 2400);
-    const scale = targetWidth / w;
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(w * scale));
-    canvas.height = Math.max(1, Math.round(h * scale));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return dataUrl;
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.filter = 'grayscale(100%) contrast(120%)';
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/png');
-  } catch {
-    return dataUrl;
-  }
-}
-
-async function defaultBrowserOcrRunner(input: {
+/** Unified adaptive OCR runner working seamlessly in Browser and Node.js. */
+export async function defaultBrowserOcrRunner(input: {
   imageDataUrl?: string;
   bytes?: Uint8Array;
   mimeType?: string;
   signal?: AbortSignal;
+  skipPreprocessing?: boolean;
+  onOcrProgress?: (pct: number, statusText: string) => void;
 }): Promise<OcrRunnerResult> {
   throwIfAborted(input.signal);
-  // Prefer the original bytes (full resolution) over the downsized preview copy.
-  const source = input.bytes
-    ? uint8ToDataUrl(input.bytes, input.mimeType || 'image/png')
-    : (input.imageDataUrl ?? '');
-  if (!source) {
-    throw new Error('No image buffer provided to OCR engine.');
-  }
-  const target = await prepareImageForOcr(source);
-  throwIfAborted(input.signal);
-
-  const { createWorker } = await import('tesseract.js');
-  const worker = await createWorker('eng');
-  try {
-    throwIfAborted(input.signal);
-    const result = await worker.recognize(target);
-    return {
-      text: sanitizePlainText(result.data?.text ?? '', 20_000),
-      confidence: Number.isFinite(result.data?.confidence)
-        ? Math.max(0, Math.min(100, Math.round(result.data.confidence)))
-        : 0,
-    };
-  } finally {
-    await worker.terminate();
-  }
+  const res = await recognizeWithTesseractPool({
+    imageDataUrl: input.imageDataUrl,
+    bytes: input.bytes,
+    mimeType: input.mimeType,
+    signal: input.signal,
+    skipPreprocessing: input.skipPreprocessing,
+    onOcrProgress: input.onOcrProgress,
+  });
+  return {
+    text: res.text,
+    confidence: res.confidence,
+    warnings: res.warnings,
+    preprocessed: res.preprocessed,
+    orientationCorrectedDeg: res.orientationCorrectedDeg,
+  };
 }
 
 function isSafeQrUrl(payload: string): boolean {
   const trimmed = payload.trim();
-  if (!/^https?:\/\//i.test(trimmed)) return true; // Non-URL text payload
+  if (!/^https?:\/\//i.test(trimmed)) return true;
   try {
     const parsed = new URL(trimmed);
     const h = parsed.hostname.toLowerCase();
@@ -348,9 +240,7 @@ function decodeXmlEntities(raw: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
-      String.fromCodePoint(parseInt(hex, 16))
-    )
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)));
 }
 
@@ -376,19 +266,18 @@ async function parseDocxArchive(
   formulas: ExtractedFormula[];
   diagrams: ExtractedDiagramAsset[];
   hasMacros: boolean;
+  wasTruncated: boolean;
 }> {
   throwIfAborted(signal);
   const zip = await JSZip.loadAsync(bytes);
-
   const entryNames = Object.keys(zip.files);
   const hasMacros = entryNames.some((n) => /vbaProject\.bin$/i.test(n));
-
   const documentEntry = zip.file('word/document.xml');
   if (!documentEntry) {
     throw new Error('Corrupt or unsupported DOCX: missing word/document.xml.');
   }
-
   const xml = await documentEntry.async('string');
+
   const headings: string[] = [];
   const tables: ExtractedTable[] = [];
   const formulas: ExtractedFormula[] = [];
@@ -397,7 +286,7 @@ async function parseDocxArchive(
   // Parse OMML math (<m:oMath>...</m:oMath>)
   const mathRegex = /<m:oMath[^>]*>([\s\S]*?)<\/m:oMath>/g;
   let mathMatch: RegExpExecArray | null;
-  while ((mathMatch = mathRegex.exec(xml)) !== null && formulas.length < 24) {
+  while ((mathMatch = mathRegex.exec(xml)) !== null && formulas.length < 32) {
     const mathText = extractXmlTagsText(mathMatch[1]).replace(/\s+/g, ' ').trim();
     if (mathText) {
       formulas.push({
@@ -413,7 +302,7 @@ async function parseDocxArchive(
   // Parse tables (<w:tbl>...</w:tbl>)
   const tblRegex = /<w:tbl\b[^>]*>([\s\S]*?)<\/w:tbl>/g;
   let tblMatch: RegExpExecArray | null;
-  while ((tblMatch = tblRegex.exec(xml)) !== null && tables.length < 10) {
+  while ((tblMatch = tblRegex.exec(xml)) !== null && tables.length < 12) {
     const rows: string[][] = [];
     const trRegex = /<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g;
     let trMatch: RegExpExecArray | null;
@@ -445,7 +334,7 @@ async function parseDocxArchive(
     const isHeading = /<w:pStyle\b[^>]*w:val="(Heading\d|Title|Subtitle)"/i.test(pXml);
     const text = extractXmlTagsText(pXml);
     if (!text) continue;
-    if (isHeading && headings.length < 18) {
+    if (isHeading && headings.length < 24) {
       headings.push(sanitizeSingleLine(text, 120));
       paragraphLines.push(`## ${text}`);
     } else {
@@ -453,12 +342,10 @@ async function parseDocxArchive(
     }
   }
 
-  // Extract embedded media images (diagrams / figures)
   const diagrams: ExtractedDiagramAsset[] = [];
   const mediaEntries = entryNames.filter(
     (name) => /^word\/media\/.+\.(png|jpg|jpeg|webp)$/i.test(name) && !zip.files[name].dir
   );
-
   for (let i = 0; i < Math.min(mediaEntries.length, 10); i += 1) {
     throwIfAborted(signal);
     const entryName = mediaEntries[i];
@@ -486,14 +373,340 @@ async function parseDocxArchive(
     });
   }
 
+  const joined = paragraphLines.join('\n');
+  const sanitized = sanitizePlainText(joined, MAX_PAGE_TEXT_CHARS);
   return {
-    text: sanitizePlainText(paragraphLines.join('\n'), 35_000),
+    text: sanitized,
     headings,
     tables,
     formulas,
     diagrams,
     hasMacros,
+    wasTruncated: joined.trim().length > MAX_PAGE_TEXT_CHARS,
   };
+}
+
+interface PdfTextItemLike {
+  str?: string;
+  width?: number;
+  height?: number;
+  hasEOL?: boolean;
+  transform?: number[];
+}
+
+interface NativePdfTextInspection {
+  text: string;
+  alnumCount: number;
+  wordCount: number;
+  garbleRatio: number;
+  isMultiColumn: boolean;
+  wasTruncated: boolean;
+}
+
+/**
+ * Reconstructs reading order from PDF text items by grouping Y baselines, preserving wide
+ * tabular column gaps, and detecting true 2-column vertical gutters.
+ */
+export function extractPdfPageStructuredText(
+  rawItems: PdfTextItemLike[],
+  pageWidth = 612
+): NativePdfTextInspection {
+  interface PlacedToken {
+    str: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+
+  const tokens: PlacedToken[] = [];
+  for (const item of rawItems) {
+    const str = typeof item.str === 'string' ? item.str : '';
+    if (!str.trim()) continue;
+    const x = Array.isArray(item.transform) ? Number(item.transform[4] ?? 0) : 0;
+    const y = Array.isArray(item.transform) ? Number(item.transform[5] ?? 0) : 0;
+    const h = Math.abs(
+      typeof item.height === 'number' && item.height > 0
+        ? item.height
+        : Array.isArray(item.transform)
+          ? Number(item.transform[3] ?? 10)
+          : 10
+    );
+    const w =
+      typeof item.width === 'number' && item.width >= 0 ? item.width : str.length * h * 0.45;
+    tokens.push({ str: str.trimEnd(), x, y, w, h });
+  }
+
+  if (tokens.length === 0) {
+    return {
+      text: '',
+      alnumCount: 0,
+      wordCount: 0,
+      garbleRatio: 0,
+      isMultiColumn: false,
+      wasTruncated: false,
+    };
+  }
+
+  // Detect 2-column reading layout: significant tokens strictly left/right of central gutter
+  const midX = pageWidth * 0.5;
+  const gutterHalf = Math.max(12, pageWidth * 0.035);
+  let leftOnly = 0;
+  let rightOnly = 0;
+  let crossingMid = 0;
+  for (const t of tokens) {
+    const endX = t.x + t.w;
+    if (endX <= midX - gutterHalf) {
+      leftOnly += 1;
+    } else if (t.x >= midX + gutterHalf) {
+      rightOnly += 1;
+    } else if (t.w > gutterHalf * 2.5) {
+      crossingMid += 1;
+    }
+  }
+  const isMultiColumn = leftOnly >= 8 && rightOnly >= 8 && crossingMid <= Math.min(leftOnly, rightOnly) * 0.25;
+
+  const rebuildStream = (stream: PlacedToken[]): string => {
+    if (stream.length === 0) return '';
+    // Sort top-to-bottom (higher PDF Y first), then left-to-right (smaller X first)
+    const sorted = stream.slice().sort((a, b) => {
+      if (Math.abs(a.y - b.y) > 4.2) return b.y - a.y;
+      return a.x - b.x;
+    });
+
+    // Cluster into horizontal baseline lines
+    const lines: PlacedToken[][] = [];
+    for (const tok of sorted) {
+      const curLine = lines[lines.length - 1];
+      if (!curLine || Math.abs(curLine[0].y - tok.y) > 4.2) {
+        lines.push([tok]);
+      } else {
+        curLine.push(tok);
+      }
+    }
+
+    const outLines: string[] = [];
+    let prevBaselineY: number | null = null;
+    for (const line of lines) {
+      line.sort((a, b) => a.x - b.x);
+      const baselineY = line[0].y;
+      const avgH = line.reduce((acc, t) => acc + t.h, 0) / line.length || 10;
+      if (prevBaselineY !== null && prevBaselineY - baselineY > avgH * 1.65) {
+        outLines.push('');
+      }
+      let assembled = '';
+      let prevEndX: number | null = null;
+      for (const tok of line) {
+        if (prevEndX !== null) {
+          const gap = tok.x - prevEndX;
+          if (gap > Math.max(18, avgH * 1.9)) {
+            assembled += '\t';
+          } else if (gap > Math.max(1.5, avgH * 0.14) && !assembled.endsWith(' ')) {
+            assembled += ' ';
+          }
+        }
+        assembled += tok.str;
+        prevEndX = tok.x + tok.w;
+      }
+      if (assembled.trim()) outLines.push(assembled.trimEnd());
+      prevBaselineY = baselineY;
+    }
+    return outLines.join('\n');
+  };
+
+  let rawText = '';
+  if (isMultiColumn) {
+    const headerOrFull: PlacedToken[] = [];
+    const leftCol: PlacedToken[] = [];
+    const rightCol: PlacedToken[] = [];
+    for (const t of tokens) {
+      const endX = t.x + t.w;
+      if (t.x < midX - gutterHalf && endX > midX + gutterHalf) {
+        headerOrFull.push(t);
+      } else if (endX <= midX + gutterHalf * 0.5) {
+        leftCol.push(t);
+      } else {
+        rightCol.push(t);
+      }
+    }
+    rawText = [rebuildStream(headerOrFull), rebuildStream(leftCol), rebuildStream(rightCol)]
+      .filter((s) => s.trim().length > 0)
+      .join('\n\n');
+  } else {
+    rawText = rebuildStream(tokens);
+  }
+
+  const cleanText = sanitizePlainText(rawText, MAX_PAGE_TEXT_CHARS);
+  const nonWs = cleanText.replace(/\s+/g, '');
+  const alnumCount = (cleanText.match(/[A-Za-z0-9]/g) ?? []).length;
+  const wordCount = cleanText.split(/\s+/).filter((w) => /[A-Za-z0-9]{2,}/.test(w)).length;
+  const weirdChars = (
+    rawText.match(/[\uFFFD\uE000-\uF8FF]|[^\x20-\x7E\n\r\t\u00A0-\u024F\u2000-\u22FF]/g) ?? []
+  ).length;
+  const garbleRatio = nonWs.length > 0 ? weirdChars / nonWs.length : 0;
+
+  return {
+    text: cleanText,
+    alnumCount,
+    wordCount,
+    garbleRatio,
+    isMultiColumn,
+    wasTruncated: rawText.trim().length > MAX_PAGE_TEXT_CHARS,
+  };
+}
+
+/** Merges OCR lines from embedded graphics/scans into native PDF text without duplicating native lines. */
+function mergeNativeAndOcrText(nativeText: string, ocrText: string): {
+  merged: string;
+  addedLines: number;
+} {
+  const nativeLines = nativeText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const nativeTokenSets = nativeLines.map(
+    (l) =>
+      new Set(
+        l
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .split(/\s+/)
+          .filter((w) => w.length >= 2)
+      )
+  );
+
+  const ocrLines = ocrText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => (l.match(/[A-Za-z0-9]/g) ?? []).length >= 5);
+
+  const uniqueOcrLines: string[] = [];
+  for (const line of ocrLines) {
+    const norm = line.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (norm.length < 4) continue;
+    const words = line
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 2);
+    const isDuplicate = nativeTokenSets.some((set) => {
+      if (set.size === 0 || words.length === 0) return false;
+      let overlap = 0;
+      for (const w of words) {
+        if (set.has(w)) overlap += 1;
+      }
+      return overlap / Math.max(words.length, set.size) >= 0.55 || overlap / words.length >= 0.72;
+    });
+    if (!isDuplicate) {
+      uniqueOcrLines.push(line);
+    }
+  }
+
+  if (uniqueOcrLines.length === 0) {
+    return { merged: nativeText, addedLines: 0 };
+  }
+
+  return {
+    merged: `${nativeText.trim()}\n\n[Extracted Embedded Graphic Text]\n${uniqueOcrLines.join('\n')}`,
+    addedLines: uniqueOcrLines.length,
+  };
+}
+
+/** Extracts raw raster image bytes embedded inside a PDF page in headless Node environments. */
+async function extractNodePdfPageRasterFallback(
+  page: {
+    getOperatorList: () => Promise<{ fnArray: number[]; argsArray: unknown[][] }>;
+    objs: { has: (id: string) => boolean; get: (id: string) => unknown };
+    commonObjs?: { has: (id: string) => boolean; get: (id: string) => unknown };
+  },
+  imageOpIds: Set<number>
+): Promise<{ bytes: Uint8Array; mimeType: string; width: number; height: number } | null> {
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') return null;
+  try {
+    const dynamicImport = new Function('mod', 'return import(mod)') as (
+      mod: string
+    ) => Promise<{
+      default?: (
+        buf: Uint8Array,
+        opts: { raw: { width: number; height: number; channels: 1 | 3 | 4 } }
+      ) => { png: () => { toBuffer: () => Promise<Buffer> } };
+    }>;
+    const sharpMod = await dynamicImport('sharp');
+    const sharpFn = sharpMod.default;
+    if (!sharpFn) return null;
+
+    const opList = await page.getOperatorList();
+    for (let idx = 0; idx < opList.fnArray.length; idx += 1) {
+      if (!imageOpIds.has(opList.fnArray[idx])) continue;
+      const objId = opList.argsArray[idx]?.[0];
+      if (typeof objId !== 'string') continue;
+      const imgObj = (
+        page.objs.has(objId)
+          ? page.objs.get(objId)
+          : page.commonObjs?.has(objId)
+            ? page.commonObjs.get(objId)
+            : null
+      ) as {
+        width?: number;
+        height?: number;
+        kind?: number;
+        data?: Uint8Array | Uint8ClampedArray;
+      } | null;
+      if (!imgObj || !imgObj.data || !imgObj.width || !imgObj.height) continue;
+      const pixelCount = imgObj.width * imgObj.height;
+      if (pixelCount < 400) continue;
+      const channels =
+        imgObj.data.length === pixelCount * 4
+          ? 4
+          : imgObj.data.length === pixelCount * 3
+            ? 3
+            : imgObj.data.length === pixelCount
+              ? 1
+              : 0;
+      if (channels === 0) continue;
+      const pngBuf = await sharpFn(new Uint8Array(imgObj.data), {
+        raw: { width: imgObj.width, height: imgObj.height, channels },
+      })
+        .png()
+        .toBuffer();
+      return {
+        bytes: new Uint8Array(pngBuf),
+        mimeType: 'image/png',
+        width: imgObj.width,
+        height: imgObj.height,
+      };
+    }
+  } catch {
+    // Non-fatal fallback; browser canvas or pdfPageRenderer handles rendering
+  }
+  return null;
+}
+
+function classifyPageStatus(params: {
+  text: string;
+  ocrApplied: boolean;
+  ocrConfidence: number | null;
+  warnings: string[];
+  errors: string[];
+}): { status: ExtractionQualityStatus; isIncomplete: boolean } {
+  const alnum = (params.text.match(/[A-Za-z0-9]/g) ?? []).length;
+  if (params.errors.length > 0 && alnum < 15) {
+    return { status: 'failed', isIncomplete: true };
+  }
+  if (alnum < 15) {
+    return { status: 'needs_review', isIncomplete: true };
+  }
+  if (params.ocrApplied && (params.ocrConfidence ?? 0) < 42) {
+    return { status: 'needs_review', isIncomplete: alnum < 60 };
+  }
+  if (
+    params.errors.length > 0 ||
+    params.warnings.length > 0 ||
+    (params.ocrApplied && (params.ocrConfidence ?? 100) < 65)
+  ) {
+    return { status: 'completed_with_warnings', isIncomplete: false };
+  }
+  return { status: 'completed', isIncomplete: false };
 }
 
 async function processPdfBuffer(params: {
@@ -501,6 +714,7 @@ async function processPdfBuffer(params: {
   docId: string;
   signal?: AbortSignal;
   ocrRunner: OcrRunner;
+  pdfPageRenderer?: PdfPageRenderer;
   onProgress?: (update: ScanProgressUpdate) => void;
 }): Promise<{
   pages: ExtractedPageContent[];
@@ -510,12 +724,13 @@ async function processPdfBuffer(params: {
   qrMatches: QrCodeMatch[];
   averageOcrConfidence: number | null;
   optimizedPreviewUrl?: string;
+  processedPages: number[];
+  unprocessedPages: number[];
+  pdfWarnings: string[];
 }> {
   throwIfAborted(params.signal);
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-
   if (typeof window !== 'undefined' && pdfjs.GlobalWorkerOptions) {
-    // Let pdf.js bundle worker resolve gracefully; disableWorker fallback works cleanly if worker blocked in sandbox
     if (!pdfjs.GlobalWorkerOptions.workerSrc) {
       pdfjs.GlobalWorkerOptions.workerSrc = new URL(
         'pdfjs-dist/legacy/build/pdf.worker.mjs',
@@ -542,101 +757,156 @@ async function processPdfBuffer(params: {
   }
 
   const pdfDoc = await loadingTask.promise;
-  const totalPages = Math.min(pdfDoc.numPages, MAX_PDF_PAGES);
+  const totalPagesInPdf = pdfDoc.numPages;
+  const totalPages = Math.min(totalPagesInPdf, MAX_PDF_PAGES);
+  const processedPages: number[] = [];
+  const unprocessedPages: number[] = [];
+  for (let p = MAX_PDF_PAGES + 1; p <= totalPagesInPdf; p += 1) {
+    unprocessedPages.push(p);
+  }
+
   const pages: ExtractedPageContent[] = [];
   const allDiagrams: ExtractedDiagramAsset[] = [];
   const allTables: ExtractedTable[] = [];
   const allFormulas: ExtractedFormula[] = [];
   const qrMatches: QrCodeMatch[] = [];
   const ocrScores: number[] = [];
+  const pdfWarnings: string[] = [];
   let optimizedPreviewUrl: string | undefined;
+
+  const imageOpIds = new Set<number>([
+    pdfjs.OPS.paintImageXObject,
+    pdfjs.OPS.paintInlineImageXObject,
+  ]);
 
   for (let pageNo = 1; pageNo <= totalPages; pageNo += 1) {
     throwIfAborted(params.signal);
+    processedPages.push(pageNo);
+
+    const basePercent = Math.round(((pageNo - 1) / Math.max(1, totalPages)) * 70) + 15;
     params.onProgress?.({
       stage: 'extracting',
-      stageLabel: `Extracting page ${pageNo} of ${totalPages}`,
+      stageLabel: `Inspecting PDF page ${pageNo} of ${totalPages}`,
       currentPage: pageNo,
       totalPages,
+      progressPercent: basePercent,
     });
-
-    // Yield to UI event loop between pages so scrolling/cancel stay responsive
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const page = await pdfDoc.getPage(pageNo);
+    const baseViewport = page.getViewport({ scale: 1 });
     const textContent = await page.getTextContent();
-    const rawItems = textContent.items as Array<{
-      str?: string;
-      hasEOL?: boolean;
-      transform?: number[];
-    }>;
+    const nativeInspection = extractPdfPageStructuredText(
+      textContent.items as PdfTextItemLike[],
+      baseViewport.width || 612
+    );
 
-    let pageText = '';
-    let lastY: number | null = null;
-    for (const item of rawItems) {
-      const str = typeof item.str === 'string' ? item.str : '';
-      const y = Array.isArray(item.transform) ? item.transform[5] : null;
-      if (lastY !== null && y !== null && Math.abs(lastY - y) > 4) {
-        pageText += '\n';
-      } else if (pageText.length > 0 && !pageText.endsWith('\n') && !pageText.endsWith(' ')) {
-        pageText += ' ';
-      }
-      pageText += str;
-      if (item.hasEOL) pageText += '\n';
-      if (y !== null) lastY = y;
-    }
-
-    let cleanedPageText = sanitizePlainText(pageText, 12_000);
+    let cleanedPageText = nativeInspection.text;
     let renderedPreviewUrl: string | undefined;
+    let highResOcrDataUrl: string | undefined;
+    let highResOcrBytes: Uint8Array | undefined;
+    let highResMime: string | undefined;
     let ocrApplied = false;
     let ocrConfidence: number | null = null;
+    let extractionMethod: PageExtractionMethod = 'native_text';
+    let wasTruncated = nativeInspection.wasTruncated;
     const warnings: string[] = [];
+    const errors: string[] = [];
+    const preprocessingApplied: string[] = [];
     const pageDiagrams: ExtractedDiagramAsset[] = [];
 
-    // Check embedded images/diagrams via operator list when canvas is available
     let hasEmbeddedGraphics = false;
     try {
       const opList = await page.getOperatorList();
-      const imageOps = new Set<number>([
-        pdfjs.OPS.paintImageXObject,
-        pdfjs.OPS.paintInlineImageXObject,
-      ]);
-      hasEmbeddedGraphics = opList.fnArray.some((fn: number) => imageOps.has(fn));
+      hasEmbeddedGraphics = opList.fnArray.some((fn: number) => imageOpIds.has(fn));
     } catch {
-      // Ignore op list errors
+      // Non-fatal
     }
 
-    if (typeof document !== 'undefined') {
+    const nativeGarbled = nativeInspection.garbleRatio > 0.16;
+    const nativeTooSparse =
+      nativeInspection.alnumCount < 60 ||
+      (nativeInspection.wordCount < 14 && hasEmbeddedGraphics);
+    const needsFullOcr = nativeGarbled || nativeTooSparse;
+    const isMixedPage = !needsFullOcr && hasEmbeddedGraphics;
+
+    if (nativeGarbled) {
+      warnings.push(
+        `Native text encoding on page ${pageNo} appears garbled; triggering OCR recovery.`
+      );
+    }
+    if (nativeInspection.wasTruncated) {
+      warnings.push(`Page ${pageNo} exceeded ${MAX_PAGE_TEXT_CHARS} characters and was capped.`);
+    }
+
+    // Obtain high-resolution visual render for OCR, QR scanning, and embedded diagram inspection
+    if (params.pdfPageRenderer) {
       try {
-        const viewport = page.getViewport({ scale: 1.35 });
+        const custom = await params.pdfPageRenderer({ pageNumber: pageNo, totalPages });
+        if (custom) {
+          highResOcrBytes = custom.bytes;
+          highResMime = custom.mimeType || 'image/png';
+          highResOcrDataUrl =
+            custom.imageDataUrl ??
+            (custom.bytes ? uint8ToDataUrl(custom.bytes, highResMime) : undefined);
+          renderedPreviewUrl = highResOcrDataUrl;
+          if (!optimizedPreviewUrl && renderedPreviewUrl) {
+            optimizedPreviewUrl = renderedPreviewUrl;
+          }
+        }
+      } catch (err) {
+        warnings.push(
+          `Custom renderer failed on page ${pageNo}: ${err instanceof Error ? err.message : 'unknown error'}`
+        );
+      }
+    } else if (typeof document !== 'undefined') {
+      try {
+        // High-DPI scale (~250-300 DPI equivalent), safely capped at 2500px width
+        const targetScale = Math.min(3.0, Math.max(2.4, 2100 / Math.max(300, baseViewport.width)));
+        const ocrViewport = page.getViewport({ scale: targetScale });
         const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(viewport.width));
-        canvas.height = Math.max(1, Math.round(viewport.height));
+        canvas.width = Math.max(1, Math.round(ocrViewport.width));
+        canvas.height = Math.max(1, Math.round(ocrViewport.height));
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.fillStyle = '#FFFFFF';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
-          await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-          renderedPreviewUrl = canvas.toDataURL('image/jpeg', 0.8);
-          if (!optimizedPreviewUrl) optimizedPreviewUrl = renderedPreviewUrl;
+          await page.render({ canvasContext: ctx, viewport: ocrViewport, canvas }).promise;
+          highResOcrDataUrl = canvas.toDataURL('image/png');
+          highResMime = 'image/png';
 
-          try {
-            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const qr = jsQR(imgData.data, canvas.width, canvas.height, {
-              inversionAttempts: 'dontInvert',
-            });
-            if (qr?.data) {
-              qrMatches.push({
-                pageNumber: pageNo,
-                payload: sanitizeSingleLine(qr.data, 240),
-                isSafeUrl: isSafeQrUrl(qr.data),
-              });
+          // Compact JPEG preview (max 1280px wide) for storage/UI
+          const prevW = Math.min(1280, canvas.width);
+          const prevH = Math.max(1, Math.round((canvas.height * prevW) / canvas.width));
+          const prevCanvas = document.createElement('canvas');
+          prevCanvas.width = prevW;
+          prevCanvas.height = prevH;
+          const prevCtx = prevCanvas.getContext('2d');
+          if (prevCtx) {
+            prevCtx.fillStyle = '#FFFFFF';
+            prevCtx.fillRect(0, 0, prevW, prevH);
+            prevCtx.drawImage(canvas, 0, 0, prevW, prevH);
+            renderedPreviewUrl = prevCanvas.toDataURL('image/jpeg', 0.85);
+            try {
+              const imgData = prevCtx.getImageData(0, 0, prevW, prevH);
+              const qr = jsQR(imgData.data, prevW, prevH, { inversionAttempts: 'dontInvert' });
+              if (qr?.data) {
+                qrMatches.push({
+                  pageNumber: pageNo,
+                  payload: sanitizeSingleLine(qr.data, 240),
+                  isSafeUrl: isSafeQrUrl(qr.data),
+                });
+              }
+            } catch {
+              // Ignore QR scan issues
             }
-          } catch {
-            // Ignore QR scan issues
+          } else {
+            renderedPreviewUrl = highResOcrDataUrl;
           }
 
-          if (hasEmbeddedGraphics && pageDiagrams.length < 4) {
+          if (!optimizedPreviewUrl) optimizedPreviewUrl = renderedPreviewUrl;
+
+          if (hasEmbeddedGraphics && pageDiagrams.length < 4 && renderedPreviewUrl) {
             const ref = await documentStorageAdapter.putBinary({
               folder: 'diagrams',
               docId: params.docId,
@@ -660,34 +930,90 @@ async function processPdfBuffer(params: {
       } catch {
         warnings.push(`Visual preview render unavailable for page ${pageNo}.`);
       }
+    } else if (hasEmbeddedGraphics && (needsFullOcr || isMixedPage)) {
+      const nodeRaster = await extractNodePdfPageRasterFallback(
+        page as unknown as Parameters<typeof extractNodePdfPageRasterFallback>[0],
+        imageOpIds
+      );
+      if (nodeRaster) {
+        highResOcrBytes = nodeRaster.bytes;
+        highResMime = nodeRaster.mimeType;
+        highResOcrDataUrl = uint8ToDataUrl(nodeRaster.bytes, nodeRaster.mimeType);
+        renderedPreviewUrl = highResOcrDataUrl;
+        if (!optimizedPreviewUrl) optimizedPreviewUrl = renderedPreviewUrl;
+      }
     }
 
-    // OCR fallback for scanned / image-heavy PDF pages with sparse embedded text
-    if (cleanedPageText.replace(/\s+/g, '').length < 28 && renderedPreviewUrl) {
+    const canRunOcr = Boolean(highResOcrBytes || highResOcrDataUrl);
+    if ((needsFullOcr || isMixedPage) && canRunOcr) {
       params.onProgress?.({
         stage: 'ocr',
-        stageLabel: `Running OCR on scanned page ${pageNo} of ${totalPages}`,
+        stageLabel: needsFullOcr
+          ? `Running OCR on scanned PDF page ${pageNo} of ${totalPages}`
+          : `Inspecting embedded graphics on mixed page ${pageNo} of ${totalPages}`,
         currentPage: pageNo,
         totalPages,
+        progressPercent: basePercent + 5,
+        preprocessingStatus: 'Adaptive contrast & deskew active',
       });
       try {
         const ocrRes = await params.ocrRunner({
-          imageDataUrl: renderedPreviewUrl,
+          imageDataUrl: highResOcrDataUrl,
+          bytes: highResOcrBytes,
+          mimeType: highResMime || 'image/png',
           signal: params.signal,
+          onOcrProgress: (pct, statusText) => {
+            params.onProgress?.({
+              stage: 'ocr',
+              stageLabel: `OCR page ${pageNo}/${totalPages} (${pct}%)`,
+              currentPage: pageNo,
+              totalPages,
+              ocrProgress: pct,
+              progressPercent: Math.min(88, basePercent + Math.round((pct / 100) * 15)),
+              detail: statusText,
+            });
+          },
         });
         ocrApplied = true;
         ocrConfidence = ocrRes.confidence;
         ocrScores.push(ocrRes.confidence);
-        if (ocrRes.text.trim().length > cleanedPageText.trim().length) {
-          cleanedPageText = ocrRes.text;
+        if (ocrRes.preprocessed?.appliedSteps) {
+          preprocessingApplied.push(...ocrRes.preprocessed.appliedSteps);
         }
-        if (ocrRes.confidence < 65) {
-          warnings.push(`Low OCR confidence (${ocrRes.confidence}%) on page ${pageNo}.`);
+        if (ocrRes.preprocessed?.previewDataUrl && needsFullOcr) {
+          renderedPreviewUrl = ocrRes.preprocessed.previewDataUrl;
+        }
+        if (ocrRes.warnings) warnings.push(...ocrRes.warnings);
+
+        if (needsFullOcr) {
+          extractionMethod = 'ocr';
+          const ocrAlnum = (ocrRes.text.match(/[A-Za-z0-9]/g) ?? []).length;
+          if (nativeGarbled || ocrAlnum >= nativeInspection.alnumCount) {
+            cleanedPageText = ocrRes.text;
+          } else if (ocrAlnum > 0) {
+            const merged = mergeNativeAndOcrText(cleanedPageText, ocrRes.text);
+            cleanedPageText = merged.merged;
+            extractionMethod = 'hybrid_native_plus_ocr';
+          }
+        } else {
+          // Mixed digital + graphic page: merge only unique non-duplicate OCR lines
+          const merged = mergeNativeAndOcrText(cleanedPageText, ocrRes.text);
+          if (merged.addedLines > 0) {
+            cleanedPageText = sanitizePlainText(merged.merged, MAX_PAGE_TEXT_CHARS);
+            extractionMethod = 'hybrid_native_plus_ocr';
+            if (merged.merged.length > MAX_PAGE_TEXT_CHARS) wasTruncated = true;
+          }
         }
       } catch (err) {
         if ((err as { name?: string })?.name === 'AbortError') throw err;
-        warnings.push(`OCR could not complete on page ${pageNo}.`);
+        errors.push(
+          `OCR failed on page ${pageNo}: ${err instanceof Error ? err.message : 'unknown error'}`
+        );
       }
+    } else if (needsFullOcr && !canRunOcr) {
+      warnings.push(
+        `Page ${pageNo} appears scanned or image-based (${nativeInspection.alnumCount} native alphanumeric chars), but no visual rasterizer was available to run OCR.`
+      );
     }
 
     const pageTables = extractTablesFromText(cleanedPageText, pageNo);
@@ -696,28 +1022,44 @@ async function processPdfBuffer(params: {
     allTables.push(...pageTables);
     allFormulas.push(...pageFormulas);
 
+    const charCount = cleanedPageText.replace(/\s+/g, '').length;
+    const wordCount = cleanedPageText.split(/\s+/).filter(Boolean).length;
+    const pageStatus = classifyPageStatus({
+      text: cleanedPageText,
+      ocrApplied,
+      ocrConfidence,
+      warnings,
+      errors,
+    });
+
     pages.push({
       pageNumber: pageNo,
       text: cleanedPageText,
-      wordCount: cleanedPageText.split(/\s+/).filter(Boolean).length,
+      wordCount,
+      charCount,
+      extractionMethod,
       ocrApplied,
       ocrConfidence,
+      processingStatus: pageStatus.status,
+      isIncomplete: pageStatus.isIncomplete,
+      wasTruncated,
+      preprocessingApplied: preprocessingApplied.length > 0 ? preprocessingApplied : undefined,
+      errors: errors.length > 0 ? errors : undefined,
       renderedPreviewUrl,
       diagrams: pageDiagrams,
       tables: pageTables,
       formulas: pageFormulas,
-      warnings,
+      warnings: Array.from(new Set(warnings)),
     });
   }
 
-  if (pdfDoc.numPages > MAX_PDF_PAGES) {
-    pages[pages.length - 1]?.warnings.push(
-      `PDF exceeds ${MAX_PDF_PAGES} pages; inspected first ${MAX_PDF_PAGES} pages.`
-    );
+  if (unprocessedPages.length > 0) {
+    const notice = `PDF has ${totalPagesInPdf} pages; processed pages 1–${totalPages}. Unprocessed pages beyond the ${MAX_PDF_PAGES}-page safety limit: ${unprocessedPages[0]}–${unprocessedPages[unprocessedPages.length - 1]}.`;
+    pdfWarnings.push(notice);
+    pages[pages.length - 1]?.warnings.push(notice);
   }
 
   await (pdfDoc as unknown as { destroy?: () => Promise<void> }).destroy?.();
-
   const averageOcrConfidence =
     ocrScores.length > 0
       ? Math.round(ocrScores.reduce((acc, s) => acc + s, 0) / ocrScores.length)
@@ -731,6 +1073,9 @@ async function processPdfBuffer(params: {
     qrMatches,
     averageOcrConfidence,
     optimizedPreviewUrl,
+    processedPages,
+    unprocessedPages,
+    pdfWarnings,
   };
 }
 
@@ -742,7 +1087,6 @@ export async function inspectAndExtractZipEntries(
   throwIfAborted(signal);
   const zip = await JSZip.loadAsync(zipBytes);
   const names = Object.keys(zip.files).filter((n) => !zip.files[n].dir);
-
   if (names.length === 0) {
     throw new Error(`Archive "${zipFileName}" contains no files.`);
   }
@@ -775,24 +1119,19 @@ export async function inspectAndExtractZipEntries(
     if (!safety.safe) {
       throw new Error(safety.reason ?? `Unsafe archive entry "${rawEntryName}".`);
     }
-
-    // Ignore nested zip archives and macOS metadata forks
     if (name.startsWith('__MACOSX/') || safety.baseName.startsWith('._')) {
       continue;
     }
     if (safety.extension === 'zip') {
       throw new Error(`Nested ZIP archive "${safety.baseName}" is rejected for archive safety.`);
     }
-
     const data = await entry.async('uint8array');
     totalUncompressedBytes += data.byteLength;
-
     if (totalUncompressedBytes > MAX_ZIP_UNCOMPRESSED_BYTES) {
       throw new Error(
         `Archive "${zipFileName}" exceeds ${Math.round(MAX_ZIP_UNCOMPRESSED_BYTES / (1024 * 1024))} MB uncompressed safety limit.`
       );
     }
-
     const internalData = (entry as unknown as { _data?: { compressedSize?: number } })._data;
     const compressedSize = internalData?.compressedSize ?? 0;
     if (
@@ -817,8 +1156,43 @@ export async function inspectAndExtractZipEntries(
   if (extractedFiles.length === 0) {
     throw new Error(`Archive "${zipFileName}" contained no valid academic files.`);
   }
-
   return extractedFiles;
+}
+
+function summarizeExtractionQuality(params: {
+  pages: ExtractedPageContent[];
+  unprocessedPages: number[];
+  docWarnings: string[];
+  averageOcrConfidence: number | null;
+  totalAlnumChars: number;
+}): ExtractionQualityStatus {
+  if (params.pages.length === 0) return 'failed';
+  const failedPages = params.pages.filter((p) => p.processingStatus === 'failed').length;
+  const reviewPages = params.pages.filter(
+    (p) => p.processingStatus === 'needs_review' || p.isIncomplete
+  ).length;
+  if (failedPages === params.pages.length || (params.totalAlnumChars < 12 && failedPages > 0)) {
+    return 'failed';
+  }
+  if (
+    failedPages > 0 ||
+    reviewPages > 0 ||
+    params.unprocessedPages.length > 0 ||
+    params.totalAlnumChars < 25 ||
+    (params.averageOcrConfidence !== null && params.averageOcrConfidence < 45)
+  ) {
+    return 'needs_review';
+  }
+  const hasWarnings =
+    params.docWarnings.length > 0 ||
+    params.pages.some(
+      (p) =>
+        p.processingStatus === 'completed_with_warnings' ||
+        p.warnings.length > 0 ||
+        Boolean(p.wasTruncated)
+    ) ||
+    (params.averageOcrConfidence !== null && params.averageOcrConfidence < 65);
+  return hasWarnings ? 'completed_with_warnings' : 'completed';
 }
 
 export async function scanSingleAcademicInput(
@@ -827,6 +1201,7 @@ export async function scanSingleAcademicInput(
     docId?: string;
     signal?: AbortSignal;
     ocrRunner?: OcrRunner;
+    pdfPageRenderer?: PdfPageRenderer;
     onProgress?: (update: ScanProgressUpdate) => void;
     bypassCache?: boolean;
   }
@@ -838,7 +1213,8 @@ export async function scanSingleAcademicInput(
   throwIfAborted(options?.signal);
   options?.onProgress?.({
     stage: 'validating',
-    stageLabel: 'Validating signature & security constraints',
+    stageLabel: 'Validating file signature & format security',
+    progressPercent: 5,
   });
 
   const magicCheck = validateMagicAndSecurity({
@@ -846,7 +1222,6 @@ export async function scanSingleAcademicInput(
     mimeType: input.type,
     bytes: input.bytes,
   });
-
   if (!magicCheck.valid) {
     throw new Error(magicCheck.error ?? 'File failed magic-byte or security validation.');
   }
@@ -858,12 +1233,12 @@ export async function scanSingleAcademicInput(
   options?.onProgress?.({
     stage: 'hashing',
     stageLabel: 'Computing SHA-256 fingerprint',
+    progressPercent: 10,
   });
 
   const sha256 = await computeSha256Hex(input.bytes);
   const mimeType = input.type || guessMimeFromExtension(magicCheck.extension);
 
-  // Store untouched original reference cleanly outside localStorage
   const originalStorageRef = await documentStorageAdapter.putBinary({
     folder: 'originals',
     docId,
@@ -873,6 +1248,7 @@ export async function scanSingleAcademicInput(
   });
 
   const cached = !options?.bypassCache ? getCachedExtractionByHash(sha256) : null;
+
   const earlyChecks: DeterministicCheckResult[] = [
     {
       id: 'chk-magic',
@@ -883,7 +1259,6 @@ export async function scanSingleAcademicInput(
       detail: `Verified ${magicCheck.format.toUpperCase()} signature for ${magicCheck.safeFileName}.`,
     },
   ];
-
   if (magicCheck.securityFlags.includes('pdf_active_script_action')) {
     earlyChecks.push({
       id: 'chk-pdf-js',
@@ -903,59 +1278,101 @@ export async function scanSingleAcademicInput(
   let optimizedPreviewUrl: string | undefined;
   let averageOcrConfidence: number | null = null;
   let extraHeadings: string[] = [];
+  let processedPages: number[] = [1];
+  let unprocessedPages: number[] = [];
+  const docWarnings: string[] = [];
 
   if (magicCheck.format === 'image') {
     throwIfAborted(options?.signal);
     options?.onProgress?.({
       stage: 'optimizing',
-      stageLabel: 'Optimizing scan contrast & stripping metadata',
+      stageLabel: 'Analyzing scan quality & preprocessing image',
+      currentPage: 1,
+      totalPages: 1,
+      progressPercent: 22,
+      preprocessingStatus: 'Detecting borders, skew & lighting profile',
     });
 
-    const opt = await decodeImageAndOptimizeBrowser(input.bytes, mimeType);
-    optimizedPreviewUrl = opt.optimizedDataUrl;
-
-    await documentStorageAdapter.putBinary({
-      folder: 'optimized',
-      docId,
-      fileName: `opt-${magicCheck.safeFileName}.jpg`,
-      mimeType: 'image/jpeg',
-      dataUrl: opt.optimizedDataUrl,
-    });
-
-    qrCodesFound = opt.qrMatches.map((payload) => ({
-      pageNumber: 1,
-      payload: sanitizeSingleLine(payload, 240),
-      isSafeUrl: isSafeQrUrl(payload),
-    }));
+    let prep: PreprocessedImageResult | undefined;
+    try {
+      prep = await preprocessImageForOcr({
+        bytes: input.bytes,
+        mimeType,
+      });
+      optimizedPreviewUrl = prep.previewDataUrl;
+      qrCodesFound = prep.qrMatches.map((payload) => ({
+        pageNumber: 1,
+        payload: sanitizeSingleLine(payload, 240),
+        isSafeUrl: isSafeQrUrl(payload),
+      }));
+      await documentStorageAdapter.putBinary({
+        folder: 'optimized',
+        docId,
+        fileName: `opt-${magicCheck.safeFileName}.jpg`,
+        mimeType: 'image/jpeg',
+        dataUrl: prep.previewDataUrl,
+      });
+    } catch {
+      optimizedPreviewUrl = uint8ToDataUrl(input.bytes, mimeType);
+    }
 
     throwIfAborted(options?.signal);
     options?.onProgress?.({
       stage: 'ocr',
-      stageLabel: 'Running OCR text recognition on scanned image',
+      stageLabel: 'Running adaptive multi-pass OCR',
       currentPage: 1,
       totalPages: 1,
+      progressPercent: 35,
+      ocrProgress: 0,
+      preprocessingStatus: prep
+        ? `${prep.strategy} (${prep.appliedSteps.join(', ') || 'clean'})`
+        : 'Raw fallback',
     });
 
     let ocrText = '';
     const pageWarnings: string[] = [];
+    const pageErrors: string[] = [];
+    let finalPrep = prep;
+
     try {
+      // Pass preprocessed high-res image when default runner is used; also pass raw bytes
+      // so custom runners or orientation recovery can access full original pixels cleanly.
       const ocrRes = await ocrRunner({
-        imageDataUrl: opt.optimizedDataUrl,
+        imageDataUrl: prep?.ocrDataUrl ?? optimizedPreviewUrl,
         bytes: input.bytes,
         mimeType,
         signal: options?.signal,
+        onOcrProgress: (pct, statusText) => {
+          options?.onProgress?.({
+            stage: 'ocr',
+            stageLabel: `Recognizing scanned text (${pct}%)`,
+            currentPage: 1,
+            totalPages: 1,
+            ocrProgress: pct,
+            progressPercent: 35 + Math.round((pct / 100) * 50),
+            detail: statusText,
+          });
+        },
       });
       ocrText = ocrRes.text;
       averageOcrConfidence = ocrRes.confidence;
-      if (ocrRes.confidence < 65) {
+      if (ocrRes.preprocessed) {
+        finalPrep = ocrRes.preprocessed;
+        optimizedPreviewUrl = ocrRes.preprocessed.previewDataUrl || optimizedPreviewUrl;
+      }
+      if (ocrRes.warnings) pageWarnings.push(...ocrRes.warnings);
+      if (ocrRes.orientationCorrectedDeg && ocrRes.orientationCorrectedDeg > 0) {
+        pageWarnings.push(`Auto-rotated scan by ${ocrRes.orientationCorrectedDeg}° for upright text.`);
+      }
+      if (ocrRes.confidence < 65 && !pageWarnings.some((w) => /confidence/i.test(w))) {
         pageWarnings.push(`Low OCR confidence (${ocrRes.confidence}%). Image may be blurry or skewed.`);
       }
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') throw err;
       averageOcrConfidence = 0;
-      pageWarnings.push(
-        err instanceof Error ? `OCR error: ${err.message}` : 'OCR recognition failed.'
-      );
+      const msg = err instanceof Error ? err.message : 'OCR recognition failed.';
+      pageErrors.push(msg);
+      pageWarnings.push(`OCR error: ${msg}`);
     }
 
     tables = extractTablesFromText(ocrText, 1);
@@ -965,8 +1382,8 @@ export async function scanSingleAcademicInput(
       folder: 'diagrams',
       docId,
       fileName: `page-1-${magicCheck.safeFileName}`,
-      mimeType: 'image/jpeg',
-      dataUrl: opt.optimizedDataUrl,
+      mimeType: optimizedPreviewUrl?.startsWith('data:image/png') ? 'image/png' : 'image/jpeg',
+      dataUrl: optimizedPreviewUrl,
     });
     const pageDiagrams: ExtractedDiagramAsset[] = [
       {
@@ -974,44 +1391,61 @@ export async function scanSingleAcademicInput(
         pageNumber: 1,
         caption: `Scanned sheet (${magicCheck.safeFileName})`,
         kind: 'illustration',
-        mimeType: 'image/jpeg',
-        dataUrl: opt.optimizedDataUrl,
+        mimeType: optimizedPreviewUrl?.startsWith('data:image/png') ? 'image/png' : 'image/jpeg',
+        dataUrl: optimizedPreviewUrl,
         storageRef: imgDiagramRef,
-        width: opt.width || undefined,
-        height: opt.height || undefined,
+        width: finalPrep?.width || undefined,
+        height: finalPrep?.height || undefined,
       },
     ];
     diagrams = pageDiagrams;
+
+    const dedupWarnings = Array.from(new Set(pageWarnings));
+    const pageStatus = classifyPageStatus({
+      text: ocrText,
+      ocrApplied: true,
+      ocrConfidence: averageOcrConfidence,
+      warnings: dedupWarnings,
+      errors: pageErrors,
+    });
 
     pages = [
       {
         pageNumber: 1,
         text: ocrText,
         wordCount: ocrText.split(/\s+/).filter(Boolean).length,
+        charCount: ocrText.replace(/\s+/g, '').length,
+        extractionMethod: 'ocr',
         ocrApplied: true,
         ocrConfidence: averageOcrConfidence,
-        renderedPreviewUrl: opt.optimizedDataUrl,
+        processingStatus: pageStatus.status,
+        isIncomplete: pageStatus.isIncomplete,
+        wasTruncated: ocrText.length >= MAX_PAGE_TEXT_CHARS,
+        qualityMetrics: finalPrep?.qualityMetrics,
+        preprocessingApplied: finalPrep?.appliedSteps,
+        errors: pageErrors.length > 0 ? pageErrors : undefined,
+        renderedPreviewUrl: optimizedPreviewUrl,
         diagrams: pageDiagrams,
         tables,
         formulas,
-        warnings: pageWarnings,
+        warnings: dedupWarnings,
       },
     ];
   } else if (magicCheck.format === 'pdf') {
     throwIfAborted(options?.signal);
     options?.onProgress?.({
       stage: 'extracting',
-      stageLabel: 'Inspecting PDF text & embedded graphics',
+      stageLabel: 'Inspecting PDF pages & embedded graphics',
+      progressPercent: 15,
     });
-
     const pdfOut = await processPdfBuffer({
       bytes: input.bytes,
       docId,
       signal: options?.signal,
       ocrRunner,
+      pdfPageRenderer: options?.pdfPageRenderer,
       onProgress: options?.onProgress,
     });
-
     pages = pdfOut.pages;
     diagrams = pdfOut.diagrams;
     tables = pdfOut.tables;
@@ -1019,20 +1453,24 @@ export async function scanSingleAcademicInput(
     qrCodesFound = pdfOut.qrMatches;
     averageOcrConfidence = pdfOut.averageOcrConfidence;
     optimizedPreviewUrl = pdfOut.optimizedPreviewUrl;
+    processedPages = pdfOut.processedPages;
+    unprocessedPages = pdfOut.unprocessedPages;
+    docWarnings.push(...pdfOut.pdfWarnings);
   } else if (magicCheck.format === 'docx') {
     throwIfAborted(options?.signal);
     options?.onProgress?.({
       stage: 'extracting',
       stageLabel: 'Unpacking DOCX paragraphs, tables, formulas & media',
+      currentPage: 1,
+      totalPages: 1,
+      progressPercent: 45,
     });
-
     const docxOut = await parseDocxArchive(input.bytes, docId, options?.signal);
     extraHeadings = docxOut.headings;
     tables = docxOut.tables;
     formulas = docxOut.formulas;
     diagrams = docxOut.diagrams;
     optimizedPreviewUrl = docxOut.diagrams[0]?.dataUrl;
-
     if (docxOut.hasMacros) {
       magicCheck.securityFlags.push('docx_vba_macros');
       earlyChecks.push({
@@ -1044,18 +1482,33 @@ export async function scanSingleAcademicInput(
         detail: 'Embedded VBA macro archive (vbaProject.bin) detected inside DOCX.',
       });
     }
-
+    const pageWarnings: string[] = [];
+    if (docxOut.wasTruncated) {
+      pageWarnings.push(`DOCX text exceeded ${MAX_PAGE_TEXT_CHARS} character page limit.`);
+    }
+    const pageStatus = classifyPageStatus({
+      text: docxOut.text,
+      ocrApplied: false,
+      ocrConfidence: null,
+      warnings: pageWarnings,
+      errors: [],
+    });
     pages = [
       {
         pageNumber: 1,
         text: docxOut.text,
         wordCount: docxOut.text.split(/\s+/).filter(Boolean).length,
+        charCount: docxOut.text.replace(/\s+/g, '').length,
+        extractionMethod: 'docx_xml',
         ocrApplied: false,
         ocrConfidence: null,
+        processingStatus: pageStatus.status,
+        isIncomplete: pageStatus.isIncomplete,
+        wasTruncated: docxOut.wasTruncated,
         diagrams: docxOut.diagrams,
         tables: docxOut.tables,
         formulas: docxOut.formulas,
-        warnings: [],
+        warnings: pageWarnings,
       },
     ];
   } else {
@@ -1063,33 +1516,78 @@ export async function scanSingleAcademicInput(
     options?.onProgress?.({
       stage: 'extracting',
       stageLabel: 'Reading text & tabular structure',
+      currentPage: 1,
+      totalPages: 1,
+      progressPercent: 45,
     });
-
-    const decoded = sanitizePlainText(
-      new TextDecoder('utf-8', { fatal: false }).decode(input.bytes),
-      40_000
-    );
+    const rawDecoded = new TextDecoder('utf-8', { fatal: false }).decode(input.bytes);
+    const decoded = sanitizePlainText(rawDecoded, MAX_PAGE_TEXT_CHARS);
+    const wasTruncated = rawDecoded.trim().length > MAX_PAGE_TEXT_CHARS;
+    const pageWarnings = wasTruncated
+      ? [`Text file exceeded ${MAX_PAGE_TEXT_CHARS} characters and was safely capped.`]
+      : [];
     tables = extractTablesFromText(decoded, 1);
     formulas = extractFormulasFromText(decoded, 1);
+    const pageStatus = classifyPageStatus({
+      text: decoded,
+      ocrApplied: false,
+      ocrConfidence: null,
+      warnings: pageWarnings,
+      errors: [],
+    });
     pages = [
       {
         pageNumber: 1,
         text: decoded,
         wordCount: decoded.split(/\s+/).filter(Boolean).length,
+        charCount: decoded.replace(/\s+/g, '').length,
+        extractionMethod: 'plain_text',
         ocrApplied: false,
         ocrConfidence: null,
+        processingStatus: pageStatus.status,
+        isIncomplete: pageStatus.isIncomplete,
+        wasTruncated,
         diagrams: [],
         tables,
         formulas,
-        warnings: [],
+        warnings: pageWarnings,
       },
     ];
   }
 
-  const combinedText = sanitizePlainText(
-    pages.map((p) => p.text).filter(Boolean).join('\n\n'),
-    45_000
+  // Strip/normalize repeated multi-page running headers/footers before final structure assembly
+  const headerClean = detectRepeatedHeadersFooters(pages.map((p) => p.text));
+  if (headerClean.cleanedPages.length === pages.length && pages.length > 1) {
+    pages = pages.map((pg, idx) => ({
+      ...pg,
+      text: headerClean.cleanedPages[idx],
+      charCount: headerClean.cleanedPages[idx].replace(/\s+/g, '').length,
+      wordCount: headerClean.cleanedPages[idx].split(/\s+/).filter(Boolean).length,
+    }));
+  }
+
+  const formattedText = formatMultiPageStructuredText(
+    pages.map((p) => ({ pageNumber: p.pageNumber, text: p.text }))
   );
+  const combinedText = sanitizePlainText(formattedText, MAX_DOC_TEXT_CHARS);
+  if (formattedText.length > MAX_DOC_TEXT_CHARS) {
+    docWarnings.push(`Combined extracted text exceeded ${MAX_DOC_TEXT_CHARS} characters and was capped.`);
+  }
+
+  for (const pg of pages) {
+    if (pg.warnings.length > 0) docWarnings.push(...pg.warnings);
+    if (pg.errors && pg.errors.length > 0) docWarnings.push(...pg.errors);
+  }
+  const uniqueDocWarnings = Array.from(new Set(docWarnings));
+  const totalAlnumChars = (combinedText.match(/[A-Za-z0-9]/g) ?? []).length;
+
+  const extractionQualityStatus = summarizeExtractionQuality({
+    pages,
+    unprocessedPages,
+    docWarnings: uniqueDocWarnings,
+    averageOcrConfidence,
+    totalAlnumChars,
+  });
 
   if (!cached && combinedText) {
     setCachedExtractionByHash({
@@ -1107,6 +1605,7 @@ export async function scanSingleAcademicInput(
     extraHeadings,
     extraTables: tables,
     extraFormulas: formulas,
+    detectedHeadersFooters: headerClean.detected,
   });
 
   return {
@@ -1135,6 +1634,10 @@ export async function scanSingleAcademicInput(
     category: structured.category,
     qrCodesFound,
     averageOcrConfidence,
+    extractionQualityStatus,
+    processedPages,
+    unprocessedPages,
+    extractionWarnings: uniqueDocWarnings,
     securityFlags: magicCheck.securityFlags,
     earlyChecks,
     parentZipName: input.parentZipName,

@@ -19,6 +19,7 @@ import {
   ExtractedFormulasList,
   ExtractedTableCard,
   RichInlineText,
+  ScannedPageSideBySide,
 } from '../../../components/academic/AcademicContentRenderer';
 import {
   DetailDialog,
@@ -409,12 +410,29 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
                   <ExtractedDiagramsGallery diagrams={selectedDoc.diagrams} />
                 )}
 
-                <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5">
-                  <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
-                    Extracted Text Excerpt
-                  </p>
-                  <RichInlineText text={selectedDoc.extractedText.slice(0, 3000) || 'None'} />
-                </div>
+                {selectedDoc.unprocessedPages && selectedDoc.unprocessedPages.length > 0 && (
+                  <div className="rounded-xl bg-[#FEF3C7] border border-[#FDE68A] px-3 py-2 text-xs font-semibold text-[#92400E]">
+                    Pages {selectedDoc.unprocessedPages[0]}–{selectedDoc.unprocessedPages[selectedDoc.unprocessedPages.length - 1]} were beyond the safety page limit and were not scanned.
+                  </div>
+                )}
+                {selectedDoc.pages.length > 0 ? (
+                  <div className="space-y-3">
+                    {selectedDoc.pages.map((pg) => (
+                      <ScannedPageSideBySide
+                        key={pg.pageNumber}
+                        page={pg}
+                        totalPages={selectedDoc.pages.length}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5">
+                    <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
+                      Extracted Text
+                    </p>
+                    <RichInlineText text={selectedDoc.extractedText || 'None'} />
+                  </div>
+                )}
               </div>
             )}
 

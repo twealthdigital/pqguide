@@ -9,9 +9,12 @@ import { hasPermission } from '../src/core/permissions.ts';
 import { archiveRepository } from '../src/services/archiveRepository.ts';
 import { validateMagicAndSecurity } from '../src/services/intelligence/fileSecurity.ts';
 import {
+  detectRepeatedHeadersFooters,
   extractFormulasFromText,
   extractTablesFromText,
 } from '../src/services/intelligence/structuredParser.ts';
+import { shutdownOcrWorkerPool } from '../src/services/intelligence/ocrEngine.ts';
+import { MAX_PDF_PAGES } from '../src/services/intelligence/fileSecurity.ts';
 import {
   inspectAndExtractZipEntries,
   scanSingleAcademicInput,
@@ -1170,8 +1173,296 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     assert.equal(otherAdminTitles().includes('GST 111 was uploaded'), false);
     assert.equal(uploaderTitles().includes('GST 111 was uploaded'), false);
   });
+
+  test('17. Real OCR accuracy (CER) on crisp PNG, JPG, WEBP, low-res PNG, blurry/tilted, rotated 180, and blank scans', async () => {
+    const computeCer = (expected: string, actual: string): number => {
+      const a = expected.toLowerCase().replace(/\s+/g, ' ').trim();
+      const b = actual.toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!a.length) return b.length ? 1 : 0;
+      const m = a.length;
+      const n = b.length;
+      let prev = Array.from({ length: n + 1 }, (_, j) => j);
+      for (let i = 1; i <= m; i += 1) {
+        const cur = [i];
+        for (let j = 1; j <= n; j += 1) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+        }
+        prev = cur;
+      }
+      return prev[n] / m;
+    };
+
+    const escapeXml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const examLines = [
+      'ADEKUNLE AJASIN UNIVERSITY, AKUNGBA AKOKO',
+      'COURSE CODE: SEN 202',
+      'SECOND SEMESTER EXAMINATION 2024/2025',
+      'QUESTION ONE (30 MARKS)',
+      'Explain modularity, encapsulation, and software architecture.',
+    ];
+    const groundTruth = examLines.join(' ');
+
+    const renderExamSvg = (w: number, h: number, fontSize: number, lineGap: number) => {
+      const textEls = examLines
+        .map(
+          (line, idx) =>
+            `<text x="${Math.round(w * 0.06)}" y="${Math.round(h * 0.16) + idx * lineGap}" font-family="DejaVu Sans, Liberation Sans, Arial, sans-serif" font-size="${fontSize}" font-weight="${idx < 4 ? 'bold' : 'normal'}" fill="#141414">${escapeXml(line)}</text>`
+        )
+        .join('');
+      return Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="#ffffff"/>${textEls}</svg>`
+      );
+    };
+
+    // (a) Crisp PNG
+    const crispPng = new Uint8Array(await sharp(renderExamSvg(1500, 900, 34, 90)).png().toBuffer());
+    const crispRes = await scanSingleAcademicInput({
+      name: 'SEN202_crisp.png',
+      type: 'image/png',
+      size: crispPng.byteLength,
+      bytes: crispPng,
+    });
+    const crispCer = computeCer(groundTruth, crispRes.extractedText);
+    assert.ok(crispCer < 0.15, `Expected crisp PNG CER < 0.15, got ${crispCer.toFixed(3)}`);
+    assert.equal(crispRes.courseCode, 'SEN 202');
+    assert.equal(crispRes.semester, 'Second Semester');
+    assert.ok((crispRes.averageOcrConfidence ?? 0) >= 65);
+
+    // (b) Crisp JPG & WEBP
+    const jpgBuf = new Uint8Array(await sharp(renderExamSvg(1400, 840, 32, 85)).jpeg({ quality: 82 }).toBuffer());
+    const jpgRes = await scanSingleAcademicInput({
+      name: 'SEN202_scan.jpg',
+      type: 'image/jpeg',
+      size: jpgBuf.byteLength,
+      bytes: jpgBuf,
+    });
+    assert.ok(computeCer(groundTruth, jpgRes.extractedText) < 0.18, 'JPG scan should maintain <18% CER');
+
+    const webpBuf = new Uint8Array(await sharp(renderExamSvg(1400, 840, 32, 85)).webp({ quality: 82 }).toBuffer());
+    const webpRes = await scanSingleAcademicInput({
+      name: 'SEN202_scan.webp',
+      type: 'image/webp',
+      size: webpBuf.byteLength,
+      bytes: webpBuf,
+    });
+    assert.ok(computeCer(groundTruth, webpRes.extractedText) < 0.18, 'WEBP scan should maintain <18% CER');
+
+    // (c) Low-res PNG (~520px wide small screenshot) -> adaptive upscale + normalization
+    const lowResPng = new Uint8Array(
+      await sharp(renderExamSvg(1500, 900, 34, 90)).resize({ width: 520 }).png().toBuffer()
+    );
+    const lowResOut = await scanSingleAcademicInput({
+      name: 'SEN202_lowres.png',
+      type: 'image/png',
+      size: lowResPng.byteLength,
+      bytes: lowResPng,
+    });
+    assert.ok(/SEN\s*202/i.test(lowResOut.extractedText), 'Low-res scan should recover SEN 202');
+    assert.ok(/modularity/i.test(lowResOut.extractedText), 'Low-res scan should recover body keywords');
+    assert.ok(
+      lowResOut.pages[0]?.preprocessingApplied?.some((s) => s.startsWith('upscale_')),
+      'Low-res scan should record upscaling preprocessing'
+    );
+
+    // (d) Blurry + Tilted (+2.5 deg skew, mild blur, low contrast shadow) PNG
+    const skewedBlurry = new Uint8Array(
+      await sharp(renderExamSvg(1400, 840, 34, 90))
+        .rotate(2.5, { background: { r: 225, g: 225, b: 225 } })
+        .blur(1.1)
+        .modulate({ brightness: 0.92 })
+        .png()
+        .toBuffer()
+    );
+    const skewOut = await scanSingleAcademicInput({
+      name: 'SEN202_tilted_blurry.png',
+      type: 'image/png',
+      size: skewedBlurry.byteLength,
+      bytes: skewedBlurry,
+    });
+    assert.ok(
+      computeCer(groundTruth, skewOut.extractedText) < 0.25,
+      `Tilted/blurry scan CER should stay under 25%, got ${computeCer(groundTruth, skewOut.extractedText).toFixed(3)}`
+    );
+
+    // (e) Upside-down 180-degree rotated scan -> orientation recovery
+    const upsideDown = new Uint8Array(
+      await sharp(renderExamSvg(1400, 840, 34, 90)).rotate(180).png().toBuffer()
+    );
+    const upsideOut = await scanSingleAcademicInput({
+      name: 'SEN202_upside_down.png',
+      type: 'image/png',
+      size: upsideDown.byteLength,
+      bytes: upsideDown,
+    });
+    assert.ok(
+      /ADEKUNLE|UNIVERSITY|SEN\s*202|modularity/i.test(upsideOut.extractedText),
+      'Upside-down scan should trigger 180deg orientation recovery'
+    );
+
+    // (f) Empty/blank unreadable image -> must never be falsely labeled clean completed
+    const blankPng = await buildPngBytes(800, 600);
+    const blankOut = await scanSingleAcademicInput({
+      name: 'blank_page.png',
+      type: 'image/png',
+      size: blankPng.byteLength,
+      bytes: blankPng,
+    });
+    assert.ok(
+      blankOut.extractionQualityStatus === 'needs_review' ||
+        blankOut.extractionQualityStatus === 'failed',
+      `Blank image must be flagged needs_review/failed, got ${blankOut.extractionQualityStatus}`
+    );
+  });
+
+  test('18. PDF intelligence: triggers OCR on scanned PDFs with >28 watermark chars, handles mixed PDFs without duplicating native text, and detects 2-column order', async () => {
+    // Scanned-like PDF where embedded text is just a 42-char watermark (previously skipped by < 28 heuristic!)
+    // plus a genuine multi-page mixed PDF: Page 1 crisp native text, Page 2 scanned raster JPEG embedded in PDF
+    const scanImageBuf = await sharp(
+      Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700"><rect width="1200" height="700" fill="#fff"/><text x="60" y="140" font-family="DejaVu Sans, Arial, sans-serif" font-size="36" font-weight="bold" fill="#111">QUESTION TWO (20 MARKS)</text><text x="60" y="230" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#111">Explain Scrum methodology and Agile principles.</text></svg>`
+      )
+    )
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    const mixedPdf = new jsPDF({ unit: 'pt', format: 'a4' });
+    // Page 1: rich native text (> 60 alnum chars)
+    mixedPdf.text('CSC 305 Software Engineering Principles - First Semester', 48, 72);
+    mixedPdf.text('QUESTION ONE (30 MARKS): Define software requirements engineering cleanly.', 48, 108);
+    // Page 2: 38-char watermark (> 28!) + embedded scanned image -> MUST still run OCR!
+    mixedPdf.addPage();
+    mixedPdf.text('CONFIDENTIAL EXAM PAPER HEADER ONLY 1', 48, 48);
+    mixedPdf.addImage(scanImageBuf.toString('base64'), 'JPEG', 40, 90, 500, 290);
+
+    // Page 3: Mixed page with rich native text AND embedded image containing unique extra text
+    mixedPdf.addPage();
+    mixedPdf.text('SECTION B: System Modeling and Design Tradeoffs for Students.', 48, 72);
+    mixedPdf.text('Compare monolithic architecture against modular service boundaries clearly.', 48, 108);
+    mixedPdf.addImage(scanImageBuf.toString('base64'), 'JPEG', 40, 160, 500, 290);
+
+    const mixedBytes = new Uint8Array(mixedPdf.output('arraybuffer'));
+    const scanned = await scanSingleAcademicInput({
+      name: 'CSC305_mixed.pdf',
+      type: 'application/pdf',
+      size: mixedBytes.byteLength,
+      bytes: mixedBytes,
+    });
+
+    assert.equal(scanned.pageCount, 3);
+    assert.equal(scanned.pages[0].extractionMethod, 'native_text');
+    assert.equal(scanned.pages[0].ocrApplied, false);
+    assert.equal(scanned.pages[1].ocrApplied, true, 'Page 2 with >28 char watermark + embedded scan must run OCR');
+    assert.ok(
+      /scrum|agile|question two/i.test(scanned.pages[1].text),
+      `Page 2 OCR should extract embedded scan text, got: ${scanned.pages[1].text}`
+    );
+    assert.equal(scanned.pages[2].extractionMethod, 'hybrid_native_plus_ocr');
+    assert.ok(/monolithic architecture/i.test(scanned.pages[2].text));
+    assert.ok(/scrum|agile/i.test(scanned.pages[2].text));
+  });
+
+  test('19. Over-limit PDF explicitly reports processed vs unprocessed pages and flags completeness check', async () => {
+    const pageCountOverLimit = MAX_PDF_PAGES + 3;
+    const pagesContent = Array.from({ length: pageCountOverLimit }, (_, idx) => [
+      `PHY 401 Quantum Mechanics Lecture Page ${idx + 1}`,
+      `Schrodinger wave equation discussion and operator derivation for section ${idx + 1}.`,
+    ]);
+    const bigPdf = buildValidPdfBytes(pagesContent);
+    const out = await scanSingleAcademicInput({
+      name: 'PHY401_43pages.pdf',
+      type: 'application/pdf',
+      size: bigPdf.byteLength,
+      bytes: bigPdf,
+    });
+
+    assert.equal(out.processedPages.length, MAX_PDF_PAGES);
+    assert.deepEqual(out.unprocessedPages, [MAX_PDF_PAGES + 1, MAX_PDF_PAGES + 2, MAX_PDF_PAGES + 3]);
+    assert.equal(out.extractionQualityStatus, 'needs_review');
+    assert.ok(out.extractionWarnings.some((w) => /unprocessed pages/i.test(w)));
+
+    const validation = await validateScannedDocument({
+      artifact: out,
+      duplicateLookup: { isDuplicate: false },
+    });
+    assert.notEqual(validation.decision, 'auto_approved');
+    const completenessChk = validation.deterministicChecks.find((c) => c.id === 'chk-completeness');
+    assert.ok(completenessChk && !completenessChk.passed);
+  });
+
+  test('20. Structure reconstruction: whitespace-aligned tables, Unicode math equations, and multi-page header/footer deduplication', () => {
+    const multiColTableText = [
+      'AAUA 2024/2025 GRADING SCALE',
+      'Course       Units     Score',
+      'SEN 202      3         84',
+      'CSC 204      3         79',
+      '',
+      '∑ x_i = μ * n',
+      '∫_0^1 x^2 dx = 1/3',
+    ].join('\n');
+    const tables = extractTablesFromText(multiColTableText, 1);
+    assert.equal(tables.length, 1);
+    assert.deepEqual(tables[0].headers, ['Course', 'Units', 'Score']);
+    assert.equal(tables[0].rows.length, 2);
+
+    const formulas = extractFormulasFromText(multiColTableText, 1);
+    assert.ok(formulas.some((f) => f.latex.includes('∑')));
+    assert.ok(formulas.some((f) => f.latex.includes('∫')));
+
+    const repeated = detectRepeatedHeadersFooters([
+      'UNIVERSITY OF EXAM ARCHIVE\nQuestion One content here\nDiscuss database normalization\nPage 1 of 3',
+      'UNIVERSITY OF EXAM ARCHIVE\nQuestion Two content here\nExplain ACID properties clearly\nPage 2 of 3',
+      'UNIVERSITY OF EXAM ARCHIVE\nQuestion Three content here\nAnalyze B-Tree indexing rules\nPage 3 of 3',
+    ]);
+    assert.ok(repeated.detected.length >= 2);
+    assert.ok(!repeated.cleanedPages[1].includes('Page 2 of 3'));
+    assert.ok(repeated.cleanedPages[0].includes('Question One content here'));
+  });
+
+  test('21. OCR failures and timeouts record failed page status cleanly without corrupting repository state', async () => {
+    const imgBytes = await buildPngBytes(600, 400);
+    const failedArtifact = await scanSingleAcademicInput(
+      {
+        name: 'CHM101_broken_ocr.png',
+        type: 'image/png',
+        size: imgBytes.byteLength,
+        bytes: imgBytes,
+      },
+      {
+        ocrRunner: async () => {
+          throw new Error('OCR recognition timed out after 45s.');
+        },
+      }
+    );
+
+    assert.equal(failedArtifact.extractionQualityStatus, 'failed');
+    assert.equal(failedArtifact.pages[0].processingStatus, 'failed');
+    assert.ok(failedArtifact.pages[0].errors?.some((e) => /timed out/i.test(e)));
+
+    const validation = await validateScannedDocument({
+      artifact: failedArtifact,
+      duplicateLookup: { isDuplicate: false },
+    });
+    assert.equal(validation.decision, 'rejected');
+
+    // Corrupted files must reject explicitly
+    const bogusPdf = new TextEncoder().encode('%PDF-1.4\nnot-valid-xref-garbage');
+    await assert.rejects(
+      () =>
+        scanSingleAcademicInput({
+          name: 'corrupt.pdf',
+          type: 'application/pdf',
+          size: bogusPdf.byteLength,
+          bytes: bogusPdf,
+        }),
+      /./
+    );
+  });
 });
 
-after(() => {
+after(async () => {
+  await shutdownOcrWorkerPool();
   archiveRepository.resetAllForDev();
 });

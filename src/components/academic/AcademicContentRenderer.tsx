@@ -492,29 +492,83 @@ export const ScannedPageSideBySide: React.FC<{
   imageUrl?: string;
   totalPages?: number;
 }> = ({ page, imageUrl, totalPages }) => {
+  const resolvedImageUrl = imageUrl || pageImageUrl(page);
   const text = page.text.trim();
+  const charCount = page.charCount ?? text.replace(/\s+/g, '').length;
+  const methodLabel =
+    page.extractionMethod === 'hybrid_native_plus_ocr'
+      ? 'Native + OCR'
+      : page.extractionMethod === 'ocr' || page.ocrApplied
+        ? `OCR${page.ocrConfidence !== null ? ` ${page.ocrConfidence}%` : ''}`
+        : page.extractionMethod === 'docx_xml'
+          ? 'DOCX'
+          : page.extractionMethod === 'plain_text'
+            ? 'Text'
+            : 'Native PDF';
+  const statusBadge =
+    page.processingStatus === 'failed'
+      ? 'bg-[#FEE2E2] text-[#B91C1C]'
+      : page.processingStatus === 'needs_review'
+        ? 'bg-[#FEF3C7] text-[#92400E]'
+        : page.processingStatus === 'completed_with_warnings'
+          ? 'bg-[#FEF3C7] text-[#92400E]'
+          : 'bg-[#DCFCE7] text-[#15803D]';
+  const statusText =
+    page.processingStatus === 'failed'
+      ? 'Failed'
+      : page.processingStatus === 'needs_review'
+        ? 'Needs review'
+        : page.processingStatus === 'completed_with_warnings'
+          ? 'Warnings'
+          : 'Completed';
+
   return (
     <div
-      className={`grid grid-cols-1 gap-3 items-start ${imageUrl ? 'md:grid-cols-2' : ''}`}
+      className={`grid grid-cols-1 gap-3 items-start ${resolvedImageUrl ? 'md:grid-cols-2' : ''}`}
     >
-      {imageUrl && (
+      {resolvedImageUrl && (
         <figure className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2 md:sticky md:top-0">
           <img
-            src={imageUrl}
+            src={resolvedImageUrl}
             alt={`Scanned page ${page.pageNumber}`}
             referrerPolicy="no-referrer"
             className="w-full max-h-[560px] object-contain rounded-xl bg-white"
           />
           <figcaption className="text-xs text-[#505460] font-medium">
             Page {page.pageNumber}
-            {totalPages && totalPages > 1 ? ` of ${totalPages}` : ''} · Scanned page
+            {totalPages && totalPages > 1 ? ` of ${totalPages}` : ''} · {methodLabel}
           </figcaption>
         </figure>
       )}
-      <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5 min-w-0">
-        <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
-          Extracted text · Page {page.pageNumber}
-        </p>
+      <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-2 min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
+            Extracted text · Page {page.pageNumber}
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+            <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460]">
+              {methodLabel}
+            </span>
+            <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460] font-mono-tabular">
+              {page.wordCount}w · {charCount}c
+            </span>
+            <span className={`rounded-md px-2 py-0.5 ${statusBadge}`}>{statusText}</span>
+          </div>
+        </div>
+        {page.warnings.length > 0 && (
+          <div className="rounded-xl bg-[#FEF3C7]/60 border border-[#FDE68A] px-2.5 py-1.5 text-[11px] text-[#92400E] space-y-0.5">
+            {page.warnings.map((w, i) => (
+              <p key={i}>{w}</p>
+            ))}
+          </div>
+        )}
+        {page.errors && page.errors.length > 0 && (
+          <div className="rounded-xl bg-[#FEF2F2] border border-[#FECACA] px-2.5 py-1.5 text-[11px] text-[#B91C1C] space-y-0.5">
+            {page.errors.map((err, i) => (
+              <p key={i}>{err}</p>
+            ))}
+          </div>
+        )}
         {text ? (
           <div className="whitespace-pre-wrap break-words">
             <RichInlineText text={text} className="text-xs sm:text-sm leading-relaxed text-[#3A3D47]" />

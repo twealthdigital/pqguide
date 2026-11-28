@@ -84,6 +84,50 @@ export function runDeterministicChecks(params: {
     });
   }
 
+  // 3b. Page completeness, failed pages, blank scans & page-limit truncation audit
+  const failedOrIncompletePages = artifact.pages.filter(
+    (p) => p.processingStatus === 'failed' || p.isIncomplete || (p.errors && p.errors.length > 0)
+  );
+  const unprocessed = artifact.unprocessedPages ?? [];
+  const truncatedPages = artifact.pages.filter((p) => p.wasTruncated);
+  const qualityStatus = artifact.extractionQualityStatus;
+  if (
+    failedOrIncompletePages.length > 0 ||
+    unprocessed.length > 0 ||
+    truncatedPages.length > 0 ||
+    qualityStatus === 'needs_review' ||
+    qualityStatus === 'failed'
+  ) {
+    const isHardFailure =
+      qualityStatus === 'failed' ||
+      (artifact.pages.length > 0 && failedOrIncompletePages.length === artifact.pages.length && charCount < 20);
+    const parts: string[] = [];
+    if (failedOrIncompletePages.length > 0) {
+      parts.push(
+        `Incomplete or failed extraction on page(s): ${failedOrIncompletePages.map((p) => p.pageNumber).join(', ')}.`
+      );
+    }
+    if (unprocessed.length > 0) {
+      parts.push(
+        `${unprocessed.length} page(s) (${unprocessed[0]}–${unprocessed[unprocessed.length - 1]}) exceed PDF safety page limit and were not scanned.`
+      );
+    }
+    if (truncatedPages.length > 0) {
+      parts.push(
+        `Content capped on page(s) ${truncatedPages.map((p) => p.pageNumber).join(', ')}.`
+      );
+    }
+    checks.push({
+      id: 'chk-completeness',
+      label: 'Page completeness & extraction coverage',
+      category: 'quality',
+      passed: false,
+      severity: isHardFailure ? 'blocker' : 'warning',
+      detail: parts.join(' ') || 'Extraction flagged for manual review due to low completeness.',
+      pageNumbers: failedOrIncompletePages.map((p) => p.pageNumber),
+    });
+  }
+
   // 4. QR code safety inspection
   if (artifact.qrCodesFound.length > 0) {
     const unsafeQr = artifact.qrCodesFound.filter((q) => !q.isSafeUrl);

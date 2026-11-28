@@ -2331,6 +2331,10 @@ class ArchiveRepository {
       formulas: AcademicDocumentRecord['formulas'];
       qrCodesFound: AcademicDocumentRecord['qrCodesFound'];
       averageOcrConfidence: number | null;
+      extractionQualityStatus?: AcademicDocumentRecord['extractionQualityStatus'];
+      processedPages?: number[];
+      unprocessedPages?: number[];
+      extractionWarnings?: string[];
       deterministicChecks: AcademicDocumentRecord['deterministicChecks'];
       aiFindings?: AcademicDocumentRecord['aiFindings'];
       decision: AcademicDocumentRecord['decision'];
@@ -2412,12 +2416,12 @@ class ArchiveRepository {
       originalFileRef: payload.originalFileRef,
       optimizedPreviewUrl: sanitizeSafeUrl(payload.optimizedPreviewUrl),
       pageCount: Math.max(1, payload.pageCount),
-      extractedText: sanitizePlainText(payload.extractedText, 30_000),
+      extractedText: sanitizePlainText(payload.extractedText, 120_000),
       summary: sanitizePlainText(payload.summary, 600),
-      headings: (payload.headings ?? []).map((h) => sanitizeSingleLine(h, 140)).filter(Boolean).slice(0, 20),
+      headings: (payload.headings ?? []).map((h) => sanitizeSingleLine(h, 140)).filter(Boolean).slice(0, 24),
       pages: (payload.pages ?? []).slice(0, 40).map((pg) => ({
         ...pg,
-        text: sanitizePlainText(pg.text, 10_000),
+        text: sanitizePlainText(pg.text, 40_000),
         renderedPreviewUrl: sanitizeSafeUrl(pg.renderedPreviewUrl),
         diagrams: (pg.diagrams ?? []).map((d) => ({ ...d, dataUrl: sanitizeSafeUrl(d.dataUrl) })),
       })),
@@ -2429,6 +2433,10 @@ class ArchiveRepository {
       formulas: (payload.formulas ?? []).slice(0, 32),
       qrCodesFound: payload.qrCodesFound ?? [],
       averageOcrConfidence: payload.averageOcrConfidence,
+      extractionQualityStatus: payload.extractionQualityStatus,
+      processedPages: payload.processedPages,
+      unprocessedPages: payload.unprocessedPages,
+      extractionWarnings: payload.extractionWarnings,
       deterministicChecks: payload.deterministicChecks ?? [],
       aiFindings: payload.aiFindings,
       decision: finalDecision,
@@ -2933,7 +2941,7 @@ class ArchiveRepository {
     patch: Partial<
       Pick<
         AcademicDocumentRecord,
-        'title' | 'courseCode' | 'courseTitle' | 'level' | 'session' | 'semester' | 'category'
+        'title' | 'courseCode' | 'courseTitle' | 'level' | 'session' | 'semester' | 'category' | 'extractedText'
       >
     >
   ): AcademicDocumentRecord {
@@ -2962,6 +2970,21 @@ class ArchiveRepository {
       session: sanitizeIdentifier(patch.session ?? existing.session, 20) || existing.session,
       semester: patch.semester ?? existing.semester,
       category: patch.category ?? existing.category,
+      extractedText:
+        patch.extractedText !== undefined
+          ? sanitizePlainText(patch.extractedText, 120_000)
+          : existing.extractedText,
+      pages:
+        patch.extractedText !== undefined && existing.pages.length === 1
+          ? [
+              {
+                ...existing.pages[0],
+                text: sanitizePlainText(patch.extractedText, 40_000),
+                wordCount: patch.extractedText.trim().split(/\s+/).filter(Boolean).length,
+                charCount: patch.extractedText.replace(/\s+/g, '').length,
+              },
+            ]
+          : existing.pages,
       updatedAt: now,
       processingHistory: [
         ...existing.processingHistory,

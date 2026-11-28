@@ -575,12 +575,44 @@ export interface ExtractedFormula {
   displayMode: boolean;
 }
 
+export type PageExtractionMethod =
+  | 'native_text'
+  | 'ocr'
+  | 'hybrid_native_plus_ocr'
+  | 'docx_xml'
+  | 'plain_text'
+  | 'skipped';
+
+export type ExtractionQualityStatus =
+  | 'completed'
+  | 'completed_with_warnings'
+  | 'needs_review'
+  | 'failed';
+
+export interface PageImageQualityMetrics {
+  width?: number;
+  height?: number;
+  sharpnessScore?: number;
+  contrastScore?: number;
+  shadowVariance?: number;
+  skewAngleDeg?: number;
+  blankRatio?: number;
+}
+
 export interface ExtractedPageContent {
   pageNumber: number;
   text: string;
   wordCount: number;
+  charCount?: number;
+  extractionMethod?: PageExtractionMethod;
   ocrApplied: boolean;
   ocrConfidence: number | null;
+  processingStatus?: ExtractionQualityStatus;
+  isIncomplete?: boolean;
+  wasTruncated?: boolean;
+  qualityMetrics?: PageImageQualityMetrics;
+  preprocessingApplied?: string[];
+  errors?: string[];
   renderedPreviewUrl?: string;
   diagrams: ExtractedDiagramAsset[];
   tables: ExtractedTable[];
@@ -676,6 +708,10 @@ export interface AcademicDocumentRecord {
   formulas: ExtractedFormula[];
   qrCodesFound: QrCodeMatch[];
   averageOcrConfidence: number | null;
+  extractionQualityStatus?: ExtractionQualityStatus;
+  processedPages?: number[];
+  unprocessedPages?: number[];
+  extractionWarnings?: string[];
   deterministicChecks: DeterministicCheckResult[];
   aiFindings?: AiCrossCheckFindings;
   decision: DocumentPipelineDecision;
