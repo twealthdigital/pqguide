@@ -232,6 +232,11 @@ export const AUDIT_ACTION_META: Record<AuditActionType, AuditActionMeta> = {
     whatItDoes: 'Requested clearer upload or corrections from the submitter with review guidance.',
     verb: 'requested document resubmission',
   },
+  doc_deleted: {
+    label: 'Document Deleted',
+    whatItDoes: 'Permanently removed an uploaded document, including any typed copy published to the past questions catalog.',
+    verb: 'deleted an uploaded document',
+  },
   dev_data_reset: {
     label: 'Dev Data Reset',
     whatItDoes: 'Reset local catalog or development storage.',

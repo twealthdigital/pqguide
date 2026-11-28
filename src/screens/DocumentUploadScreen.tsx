@@ -3,16 +3,15 @@ import {
   AlertTriangle,
   Archive,
   CheckCircle2,
+  Clock,
   Eye,
   FileText,
-  FileCheck2,
   Loader2,
   RotateCcw,
-  ScanLine,
   ShieldAlert,
   Trash2,
   UploadCloud,
-  X,
+  XCircle,
 } from 'lucide-react';
 import type {
   AcademicDocCategory,
@@ -47,17 +46,14 @@ import {
   RichInlineText,
 } from '../components/academic/AcademicContentRenderer';
 import {
-  CustomSelect,
   DetailDialog,
   SectionHeadingBar,
   SurfaceCard,
   TactileButton,
 } from '../components/ui';
 
-interface DocumentScannerScreenProps {
+interface DocumentUploadScreenProps {
   currentUser: AuthenticatedUser;
-  /** Super Admin only: jump to the Document Review queue. */
-  onOpenReview?: () => void;
 }
 
 interface QueueItem {
@@ -77,72 +73,79 @@ interface QueueItem {
   record?: AcademicDocumentRecord;
 }
 
-const LEVELS: StudentLevel[] = ['100L', '200L', '300L', '400L', '500L'];
-const SEMESTERS: SemesterType[] = ['First Semester', 'Second Semester'];
-const CATEGORIES: Array<{ value: AcademicDocCategory | 'auto'; label: string }> = [
-  { value: 'auto', label: 'Auto-Detect Category' },
-  { value: 'past_question', label: 'Past Question Paper' },
-  { value: 'study_material', label: 'Study Material / Guide' },
-  { value: 'lecture_note', label: 'Lecture Notes' },
-  { value: 'lab_diagram', label: 'Lab Report & Diagrams' },
-  { value: 'reference', label: 'Reference Formula Sheet' },
-];
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function decisionBadge(record: AcademicDocumentRecord): {
+/**
+ * What the person who uploaded sees. The scanning, typed conversion and AI
+ * cross-check all run in the background, so only the outcome is shown.
+ */
+function uploadStatus(record: AcademicDocumentRecord): {
   label: string;
+  note: string;
   toneClass: string;
 } {
   if (record.publicationStatus === 'published') {
     return {
-      label: 'Verified & Published',
+      label: 'Published',
+      note: 'Live and available.',
       toneClass: 'bg-[#DCFCE7] text-[#15803D] border-[#86EFAC]',
     };
   }
   if (record.publicationStatus === 'rejected') {
     return {
-      label: 'Blocked by Checks · Super Admin Alerted',
+      label: 'Declined',
+      note: record.rejectionReason || 'This document was declined.',
       toneClass: 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]',
     };
   }
-  if (record.publicationStatus === 'flagged') {
+  if (record.publicationStatus === 'resubmission_requested') {
     return {
-      label: 'AI Flagged · Super Admin Alerted',
+      label: 'Resubmit',
+      note: record.rejectionReason || 'A clearer copy is needed.',
+      toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
+    };
+  }
+  if (record.publicationStatus === 'flagged' || record.decision !== 'auto_approved') {
+    return {
+      label: 'Needs attention',
+      note: 'The automatic cross-check found an issue. The Super Admin has been notified.',
       toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
     };
   }
   return {
-    label: 'Awaiting Super Admin Verification',
-    toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
+    label: 'Success',
+    note: 'Converted to a typed document and cross-checked. Waiting for the Super Admin to publish.',
+    toneClass: 'bg-[#DCFCE7] text-[#15803D] border-[#86EFAC]',
   };
 }
 
-export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
-  currentUser,
-  onOpenReview,
-}) => {
+export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({ currentUser }) => {
   const store = useArchiveStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  const [schoolId, setSchoolId] = useState(
-    currentUser.assignedSchoolId || store.selectedSchoolId || store.schools[0]?.id || 'sch-aaua'
-  );
-  const [level, setLevel] = useState<StudentLevel | 'auto'>('auto' as unknown as StudentLevel);
-  const [semester, setSemester] = useState<SemesterType>('First Semester');
-  const [categoryOverride, setCategoryOverride] = useState<AcademicDocCategory | 'auto'>('auto');
-  const [courseCodeOverride, setCourseCodeOverride] = useState('');
-  const [sessionOverride, setSessionOverride] = useState('2024/2025');
+  const isSuperAdmin = currentUser.role === 'super_admin';
+  const schoolId =
+    currentUser.assignedSchoolId || store.selectedSchoolId || store.schools[0]?.id || 'sch-aaua';
+  // Everything below is detected automatically from the document itself.
+  const level: StudentLevel | 'auto' = 'auto';
+  const semester: SemesterType = 'First Semester';
+  const categoryOverride: AcademicDocCategory | 'auto' = 'auto';
+  const courseCodeOverride = '';
+  const sessionOverride = '';
 
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [previewRecord, setPreviewRecord] = useState<AcademicDocumentRecord | null>(null);
   const [previewMode, setPreviewMode] = useState<'extracted' | 'optimized'>('extracted');
+  const [decliningId, setDecliningId] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const restricted = isRestrictedAccount(currentUser);
 
@@ -240,9 +243,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
       });
 
       const localDup = archiveRepository.findDocumentBySha256(artifact.sha256);
-      const effectiveCourseCode = courseCodeOverride.trim()
-        ? courseCodeOverride.trim().toUpperCase()
-        : artifact.courseCode;
+      const effectiveCourseCode = artifact.courseCode;
 
       patchQueueItem(id, {
         stage: 'ai_cross_check',
@@ -286,7 +287,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
         courseTitle: artifact.courseTitle,
         level: selectedLevel,
         schoolId,
-        session: sessionOverride.trim() || artifact.session,
+        session: sessionOverride || artifact.session,
         semester,
         category: categoryOverride === 'auto' ? artifact.category : categoryOverride,
         originalFileName: artifact.fileName,
@@ -317,7 +318,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
       patchQueueItem(id, {
         status: 'completed',
         stage: 'completed',
-        stageLabel: decisionBadge(saved).label,
+        stageLabel: uploadStatus(saved).label,
         record: saved,
         abortController: undefined,
       });
@@ -346,7 +347,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
     setBannerError(null);
     if (restricted) {
       setBannerError(
-        'Your account is currently in read-only mode. Contact support before scanning new documents.'
+        'Your account is currently in read-only mode. Contact support before uploading new documents.'
       );
       return;
     }
@@ -483,10 +484,6 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
     }
   };
 
-  const handleCancelItem = (item: QueueItem) => {
-    item.abortController?.abort();
-  };
-
   const handleRetryItem = (item: QueueItem) => {
     if (!item.inputFile || item.status === 'processing') return;
     void processSingleQueueItem(item.id, item.inputFile);
@@ -496,47 +493,81 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
     setQueue((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const activeCount = useMemo(
+  const pendingCount = useMemo(
     () => queue.filter((q) => q.status === 'processing' || q.status === 'queued').length,
     [queue]
   );
 
+  const visibleQueue = queue.filter((q) => q.status !== 'completed');
+
+  const uploads = useMemo(() => {
+    const all = store.academicDocuments ?? [];
+    return all
+      .filter((d) =>
+        isSuperAdmin ? true : currentUser.assignedSchoolId ? d.schoolId === currentUser.assignedSchoolId : d.submittedById === currentUser.id
+      )
+      .slice()
+      .sort((x, y) => (y.submittedAt > x.submittedAt ? 1 : -1));
+  }, [store.academicDocuments, isSuperAdmin, currentUser.assignedSchoolId, currentUser.id]);
+
+  const runAction = (fn: () => void, success: string) => {
+    setBannerError(null);
+    setNotice(null);
+    try {
+      fn();
+      setNotice(success);
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : 'That action could not be completed.');
+    }
+  };
+
+  const handlePublish = (doc: AcademicDocumentRecord) =>
+    runAction(
+      () => {
+        archiveRepository.reviewSubmittedDocument(currentUser, doc.id, 'approve');
+      },
+      `"${doc.title}" published.`
+    );
+
+  const handleDecline = (doc: AcademicDocumentRecord) =>
+    runAction(() => {
+      archiveRepository.reviewSubmittedDocument(currentUser, doc.id, 'reject', {
+        rejectionReason: declineReason,
+      });
+      setDecliningId(null);
+      setDeclineReason('');
+    }, `"${doc.title}" declined and the uploader was notified.`);
+
+  const handleDelete = (doc: AcademicDocumentRecord) =>
+    runAction(() => {
+      archiveRepository.deleteAcademicDocument(currentUser, doc.id);
+      setConfirmDeleteId(null);
+    }, `"${doc.title}" deleted.`);
+
   return (
     <div className="space-y-6 page-enter">
-      {/* Intro */}
       <SurfaceCard tone="white" className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3 min-w-0 flex-1">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23] text-white">
-              {activeCount > 0 ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <ScanLine className="w-5 h-5" />
-              )}
-            </span>
-            <div className="min-w-0">
-              <h2 className="font-display text-base sm:text-lg font-bold text-[#1A1B20]">
-                Scan &amp; Verify Academic Documents
-              </h2>
-              <p className="mt-1 text-xs sm:text-sm text-[#505460] max-w-2xl">
-                Upload past questions, lecture notes, lab diagrams, DOCX files, or ZIP archives.
-                PQGuide extracts pages, formulas, tables, and diagrams, then runs deterministic and
-                AI cross-checks. Every scan goes to the Super Admin for verification before students
-                can see it, and the Super Admin is alerted straight away if the AI finds a problem.
-              </p>
-            </div>
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23] text-white">
+            {pendingCount > 0 ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <UploadCloud className="w-5 h-5" />
+            )}
+          </span>
+          <div className="min-w-0">
+            <h2 className="font-display text-base sm:text-lg font-bold text-[#1A1B20]">
+              Upload Documents
+            </h2>
+            <p className="mt-1 text-xs sm:text-sm text-[#505460] max-w-2xl">
+              Upload past questions, notes, DOCX files or ZIP archives. Each file shows as Pending
+              while it is converted into a typed document and cross-checked in the background, then
+              updates to Success.
+              {isSuperAdmin
+                ? ' As Super Admin you can publish, decline or delete any upload.'
+                : ' The Super Admin publishes documents once they pass.'}
+            </p>
           </div>
-
-          {onOpenReview && (
-            <TactileButton
-              variant="dark"
-              size="sm"
-              icon={<FileCheck2 className="w-4 h-4" />}
-              onClick={onOpenReview}
-            >
-              Open Document Review
-            </TactileButton>
-          )}
         </div>
       </SurfaceCard>
 
@@ -550,93 +581,16 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
         </div>
       )}
 
-      {/* Optional Course Context */}
-      <SurfaceCard tone="white" className="p-5 space-y-4">
-        <SectionHeadingBar
-          title="Submission Metadata (Optional Overrides)"
-          subtitle="Leave blank or Auto-Detect to extract course codes, formulas, and topics automatically from the document"
-          icon={<ScanLine className="w-4 h-4" />}
-        />
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          <CustomSelect
-            id="scan-school"
-            label="University"
-            value={schoolId}
-            options={store.schools
-              .filter((s) =>
-                currentUser.role === 'school_admin'
-                  ? s.id === currentUser.assignedSchoolId
-                  : s.isActive
-              )
-              .map((s) => ({ value: s.id, label: `${s.code} — ${s.shortName}` }))}
-            onChange={setSchoolId}
-          />
-
-          <CustomSelect
-            id="scan-level"
-            label="Academic Level"
-            value={level as string}
-            options={[
-              { value: 'auto', label: 'Auto-Detect Level' },
-              ...LEVELS.map((l) => ({ value: l, label: l })),
-            ]}
-            onChange={(val) => setLevel(val as StudentLevel)}
-          />
-
-          <CustomSelect
-            id="scan-semester"
-            label="Semester"
-            value={semester}
-            options={SEMESTERS.map((s) => ({ value: s, label: s }))}
-            onChange={(val) => setSemester(val as SemesterType)}
-          />
-
-          <CustomSelect
-            id="scan-category"
-            label="Document Category"
-            value={categoryOverride}
-            options={CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
-            onChange={(val) => setCategoryOverride(val as AcademicDocCategory | 'auto')}
-          />
-
-          <div>
-            <label
-              htmlFor="scan-course-code"
-              className="block text-xs font-medium text-[#686C78] mb-1.5"
-            >
-              Course Code Hint
-            </label>
-            <input
-              id="scan-course-code"
-              type="text"
-              value={courseCodeOverride}
-              onChange={(e) => setCourseCodeOverride(e.target.value)}
-              placeholder="e.g. CSC 201 (auto if blank)"
-              className="w-full min-h-[44px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3.5 text-sm font-medium text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:border-[#1D1E23] focus:bg-white"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="scan-session"
-              className="block text-xs font-medium text-[#686C78] mb-1.5"
-            >
-              Session
-            </label>
-            <input
-              id="scan-session"
-              type="text"
-              value={sessionOverride}
-              onChange={(e) => setSessionOverride(e.target.value)}
-              placeholder="e.g. 2024/2025"
-              className="w-full min-h-[44px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3.5 text-sm font-mono-tabular font-medium text-[#1A1B20] placeholder:text-[#8E93A2] focus:outline-none focus:border-[#1D1E23] focus:bg-white"
-            />
-          </div>
+      {notice && (
+        <div
+          role="status"
+          className="rounded-2xl bg-[#F0FDF4] border border-[#BBF7D0] px-4 py-3 text-xs font-semibold text-[#15803D] flex items-center gap-2"
+        >
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{notice}</span>
         </div>
-      </SurfaceCard>
+      )}
 
-      {/* Drag and Drop Upload Area */}
       <SurfaceCard tone="white" className="p-5">
         <div
           onDragOver={(e) => {
@@ -652,9 +606,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
             }
           }}
           className={`rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${
-            isDragging
-              ? 'border-[#1D1E23] bg-[#EFF1F5]'
-              : 'border-[#1A1B20]/15 bg-[#F6F7F9]'
+            isDragging ? 'border-[#1D1E23] bg-[#EFF1F5]' : 'border-[#1A1B20]/15 bg-[#F6F7F9]'
           }`}
         >
           <input
@@ -670,168 +622,216 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
             }}
             className="hidden"
           />
-
           <div className="mx-auto h-14 w-14 rounded-2xl bg-[#1D1E23] text-white flex items-center justify-center mb-3">
-            {activeCount > 0 ? (
-              <Loader2 className="w-6 h-6 animate-spin" />
-            ) : (
-              <UploadCloud className="w-6 h-6" />
-            )}
+            <UploadCloud className="w-6 h-6" />
           </div>
-
-          <h2 className="font-display text-base sm:text-lg font-bold text-[#1A1B20]">
-            Drop Academic Documents Here
-          </h2>
+          <h3 className="font-display text-base sm:text-lg font-bold text-[#1A1B20]">
+            Drop documents here
+          </h3>
           <p className="text-xs sm:text-sm text-[#505460] mt-1 max-w-lg mx-auto">
-            Supports multi-file batches up to 15 MB per file: PDF, PNG, JPG, JPEG, WEBP, DOCX,
-            ZIP archives, TXT, MD, and CSV. Scripts, SVG, HTML, executables, and zip bombs are blocked.
+            PDF, PNG, JPG, WEBP, DOCX, ZIP, TXT, MD or CSV, up to 15 MB per file. Several files at once is fine.
           </p>
-
-          <div className="mt-5 flex flex-wrap justify-center gap-2.5">
+          <div className="mt-5 flex justify-center">
             <TactileButton
               variant="dark"
               size="md"
-              icon={<ScanLine className="w-4 h-4" />}
+              icon={<UploadCloud className="w-4 h-4" />}
               disabled={restricted}
               onClick={() => fileInputRef.current?.click()}
             >
-              Choose Files to Scan
+              Choose files
             </TactileButton>
           </div>
         </div>
       </SurfaceCard>
 
-      {/* Processing Queue & Results */}
-      {queue.length > 0 && (
+      {(visibleQueue.length > 0 || uploads.length > 0) && (
         <SurfaceCard tone="white" className="p-5 space-y-4">
           <SectionHeadingBar
-            title={`Scanning Session (${queue.length} document${queue.length === 1 ? '' : 's'})`}
-            subtitle={
-              activeCount > 0
-                ? `${activeCount} file(s) currently scanning...`
-                : 'All queued documents finished processing'
-            }
-            icon={
-              activeCount > 0 ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <FileText className="w-4 h-4" />
-              )
-            }
+            title={isSuperAdmin ? `All uploads (${visibleQueue.length + uploads.length})` : `Your uploads (${visibleQueue.length + uploads.length})`}
+            subtitle={pendingCount > 0 ? `${pendingCount} pending` : 'Everything is up to date'}
+            icon={<FileText className="w-4 h-4" />}
           />
 
           <div className="space-y-3">
-            {queue.map((item) => {
-              const badge = item.record ? decisionBadge(item.record) : null;
+            {visibleQueue.map((item) => {
+              const isPending = item.status === 'processing' || item.status === 'queued';
               return (
                 <div
                   key={item.id}
-                  className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-4 space-y-3"
+                  className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-4 flex flex-wrap items-center justify-between gap-3"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0 flex-1">
-                      <div className="h-10 w-10 rounded-xl bg-white border border-[#1A1B20]/10 flex items-center justify-center shrink-0">
-                        {item.status === 'processing' ? (
-                          <Loader2 className="w-5 h-5 animate-spin text-[#1D1E23]" />
-                        ) : item.status === 'completed' ? (
-                          <CheckCircle2 className="w-5 h-5 text-[#15803D]" />
-                        ) : item.status === 'failed' ? (
-                          <ShieldAlert className="w-5 h-5 text-[#B91C1C]" />
-                        ) : item.parentZipName ? (
-                          <Archive className="w-5 h-5 text-[#505460]" />
-                        ) : (
-                          <FileText className="w-5 h-5 text-[#1D1E23]" />
-                        )}
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-display text-sm font-bold text-[#1A1B20] truncate">
-                            {item.fileName}
-                          </p>
-                          <span className="font-mono-tabular text-[11px] text-[#686C78]">
-                            {formatBytes(item.sizeBytes)}
-                          </span>
-                          {item.parentZipName && (
-                            <span className="rounded-md bg-[#ECEEF3] px-2 py-0.5 text-[10px] font-semibold text-[#505460]">
-                              From {item.parentZipName}
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="text-xs text-[#505460] mt-0.5">
-                          {item.stageLabel}
-                          {item.currentPage && item.totalPages
-                            ? ` (Page ${item.currentPage} of ${item.totalPages})`
-                            : ''}
-                        </p>
-
-                        {item.error && (
-                          <p className="mt-1.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] px-3 py-1.5 text-xs font-medium text-[#B91C1C]">
-                            {item.error}
-                          </p>
-                        )}
-                      </div>
+                  <div className="flex items-start gap-3 min-w-[220px] flex-1">
+                    <div className="h-10 w-10 rounded-xl bg-white border border-[#1A1B20]/10 flex items-center justify-center shrink-0">
+                      {isPending ? (
+                        <Clock className="w-5 h-5 text-[#92400E]" />
+                      ) : (
+                        <XCircle className="w-5 h-5 text-[#B91C1C]" />
+                      )}
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      {badge && (
-                        <span
-                          className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold ${badge.toneClass}`}
-                        >
-                          {badge.label}
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-display text-sm font-bold text-[#1A1B20] truncate">
+                          {item.fileName}
+                        </p>
+                        <span className="font-mono-tabular text-[11px] text-[#686C78]">
+                          {formatBytes(item.sizeBytes)}
                         </span>
-                      )}
-
-                      {item.status === 'processing' && (
-                        <TactileButton
-                          variant="light"
-                          size="sm"
-                          icon={<X className="w-3.5 h-3.5" />}
-                          onClick={() => handleCancelItem(item)}
-                        >
-                          Cancel
-                        </TactileButton>
-                      )}
-
-                      {(item.status === 'failed' || item.status === 'cancelled') &&
-                        item.inputFile && (
-                          <TactileButton
-                            variant="dark"
-                            size="sm"
-                            icon={<RotateCcw className="w-3.5 h-3.5" />}
-                            onClick={() => handleRetryItem(item)}
-                          >
-                            Retry
-                          </TactileButton>
+                        {item.parentZipName && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-[#ECEEF3] px-2 py-0.5 text-[10px] font-semibold text-[#505460]">
+                            <Archive className="w-3 h-3" />
+                            {item.parentZipName}
+                          </span>
                         )}
-
-                      {item.status === 'completed' && item.record && (
-                        <TactileButton
-                          variant="dark"
-                          size="sm"
-                          icon={<Eye className="w-3.5 h-3.5" />}
-                          onClick={() => {
-                            setPreviewMode('extracted');
-                            setPreviewRecord(item.record ?? null);
-                          }}
-                        >
-                          Preview Result
-                        </TactileButton>
-                      )}
-
-                      {item.status !== 'processing' && (
-                        <button
-                          type="button"
-                          aria-label={`Dismiss ${item.fileName}`}
-                          onClick={() => handleRemoveItem(item.id)}
-                          className="h-9 w-9 rounded-xl bg-white border border-[#1A1B20]/10 text-[#686C78] hover:text-[#B91C1C] flex items-center justify-center cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      </div>
+                      {item.error && (
+                        <p className="mt-1 text-xs font-medium text-[#B91C1C]">{item.error}</p>
                       )}
                     </div>
                   </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span
+                      className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold ${
+                        isPending
+                          ? 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]'
+                          : 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]'
+                      }`}
+                    >
+                      {isPending ? 'Pending' : 'Failed'}
+                    </span>
+                    {!isPending && item.inputFile && (
+                      <TactileButton
+                        variant="dark"
+                        size="sm"
+                        icon={<RotateCcw className="w-3.5 h-3.5" />}
+                        onClick={() => handleRetryItem(item)}
+                      >
+                        Retry
+                      </TactileButton>
+                    )}
+                    {!isPending && (
+                      <button
+                        type="button"
+                        aria-label={`Dismiss ${item.fileName}`}
+                        onClick={() => handleRemoveItem(item.id)}
+                        className="h-9 w-9 rounded-xl bg-white border border-[#1A1B20]/10 text-[#686C78] hover:text-[#B91C1C] flex items-center justify-center cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {uploads.map((doc) => {
+              const status = uploadStatus(doc);
+              const isPublished = doc.publicationStatus === 'published';
+              return (
+                <div
+                  key={doc.id}
+                  className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-4 space-y-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-[220px] flex-1">
+                      <p className="font-display text-sm font-bold text-[#1A1B20] truncate">
+                        {doc.title}
+                      </p>
+                      <p className="text-xs text-[#505460] mt-0.5">
+                        {doc.courseCode} · {doc.schoolCode} · {doc.pageCount} page
+                        {doc.pageCount === 1 ? '' : 's'}
+                        {isSuperAdmin ? ` · by ${doc.submittedByName}` : ''}
+                      </p>
+                      <p className="text-xs text-[#686C78] mt-1">{status.note}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <span
+                        className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold ${status.toneClass}`}
+                      >
+                        {status.label}
+                      </span>
+                      <TactileButton
+                        variant="light"
+                        size="sm"
+                        icon={<Eye className="w-3.5 h-3.5" />}
+                        onClick={() => {
+                          setPreviewMode('extracted');
+                          setPreviewRecord(doc);
+                        }}
+                      >
+                        View
+                      </TactileButton>
+                    </div>
+                  </div>
+
+                  {isSuperAdmin && (
+                    <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[#1A1B20]/[0.07]">
+                      {!isPublished && (
+                        <TactileButton
+                          variant="dark"
+                          size="sm"
+                          icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                          onClick={() => handlePublish(doc)}
+                        >
+                          {doc.publicationStatus === 'flagged' || doc.publicationStatus === 'rejected'
+                            ? 'Force publish'
+                            : 'Publish'}
+                        </TactileButton>
+                      )}
+                      {doc.publicationStatus !== 'rejected' && (
+                        <TactileButton
+                          variant="light"
+                          size="sm"
+                          icon={<XCircle className="w-3.5 h-3.5 text-[#B91C1C]" />}
+                          onClick={() => {
+                            setDecliningId(decliningId === doc.id ? null : doc.id);
+                            setDeclineReason('');
+                            setConfirmDeleteId(null);
+                          }}
+                        >
+                          Decline
+                        </TactileButton>
+                      )}
+                      <TactileButton
+                        variant="light"
+                        size="sm"
+                        icon={<Trash2 className="w-3.5 h-3.5 text-[#B91C1C]" />}
+                        onClick={() => {
+                          setConfirmDeleteId(confirmDeleteId === doc.id ? null : doc.id);
+                          setDecliningId(null);
+                        }}
+                      >
+                        Delete
+                      </TactileButton>
+                    </div>
+                  )}
+
+                  {isSuperAdmin && decliningId === doc.id && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={declineReason}
+                        onChange={(e) => setDeclineReason(e.target.value)}
+                        placeholder="Reason sent to the uploader"
+                        className="flex-1 min-w-[200px] min-h-[40px] rounded-xl bg-white border border-[#1A1B20]/10 px-3 text-sm"
+                      />
+                      <TactileButton variant="dark" size="sm" onClick={() => handleDecline(doc)}>
+                        Confirm decline
+                      </TactileButton>
+                    </div>
+                  )}
+
+                  {isSuperAdmin && confirmDeleteId === doc.id && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#FEF2F2] border border-[#FECACA] px-3 py-2">
+                      <AlertTriangle className="w-4 h-4 text-[#B91C1C] shrink-0" />
+                      <span className="text-xs font-semibold text-[#B91C1C] flex-1 min-w-[160px]">
+                        Delete this document permanently?
+                      </span>
+                      <TactileButton variant="dark" size="sm" onClick={() => handleDelete(doc)}>
+                        Yes, delete
+                      </TactileButton>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -843,7 +843,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
       <DetailDialog
         open={Boolean(previewRecord)}
         onClose={() => setPreviewRecord(null)}
-        title={previewRecord?.title ?? 'Scanned Document Preview'}
+        title={previewRecord?.title ?? 'Document Preview'}
         subtitle={
           previewRecord
             ? `${previewRecord.courseCode} · ${previewRecord.detectedFormat.toUpperCase()} · ${previewRecord.pageCount} page(s)`
@@ -852,30 +852,16 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
         icon={<FileText className="w-4 h-4" />}
         maxWidthClass="max-w-3xl"
         footer={
-          previewRecord && onOpenReview ? (
-            <TactileButton
-              variant="dark"
-              size="sm"
-              icon={<FileCheck2 className="w-3.5 h-3.5" />}
-              onClick={() => {
-                setPreviewRecord(null);
-                onOpenReview();
-              }}
-            >
-              Open in Document Review
-            </TactileButton>
-          ) : null
+          null
         }
       >
         {previewRecord && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-[#F6F7F9] p-3 border border-[#1A1B20]/10">
               <div className="space-y-0.5 text-xs">
-                <p className="font-bold text-[#1A1B20]">{decisionBadge(previewRecord).label}</p>
+                <p className="font-bold text-[#1A1B20]">{uploadStatus(previewRecord).label}</p>
                 <p className="text-[#505460]">
                   SHA-256: <span className="font-mono-tabular">{previewRecord.sha256.slice(0, 16)}...</span>
-                  {previewRecord.averageOcrConfidence !== null &&
-                    ` · OCR Confidence: ${previewRecord.averageOcrConfidence}%`}
                 </p>
               </div>
               {sanitizeSafeUrl(previewRecord.optimizedPreviewUrl) && (
@@ -900,7 +886,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
                         : 'bg-white text-[#505460] border border-[#1A1B20]/10'
                     }`}
                   >
-                    Scan Preview
+                    Original
                   </button>
                 </div>
               )}
@@ -910,7 +896,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
               <div className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3">
                 <img
                   src={sanitizeSafeUrl(previewRecord.optimizedPreviewUrl)}
-                  alt={`Optimized scan of ${previewRecord.title}`}
+                  alt={`Original of ${previewRecord.title}`}
                   className="w-full max-h-[420px] object-contain rounded-xl bg-white"
                 />
               </div>

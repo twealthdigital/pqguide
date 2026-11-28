@@ -42,7 +42,6 @@ export type SchoolAdminSectionId =
   | 'overview'
   | 'students'
   | 'upload'
-  | 'scan'
   | 'document_library'
   | 'catalog'
   | 'notices';
@@ -484,6 +483,7 @@ export type AuditActionType =
   | 'doc_review_approved'
   | 'doc_review_rejected'
   | 'doc_resubmission_requested'
+  | 'doc_deleted'
   | 'dev_data_reset';
 
 export type AcademicDocFormat = 'pdf' | 'image' | 'docx' | 'text' | 'zip';

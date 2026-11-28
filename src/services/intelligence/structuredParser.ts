@@ -280,3 +280,17 @@ export function parseStructuredDocument(params: {
     questionLines: questionLines.slice(0, 24),
   };
 }
+
+/**
+ * Pulls typed exam questions out of extracted document text. Only lines that look
+ * like numbered questions are used, so nothing is invented from unrelated text.
+ */
+export function extractQuestionsFromText(text: string, max = 40): string[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter((l) => l.length > 10);
+  return lines
+    .filter((l) => /^(q\s?\d+|question\s+\d+|\d{1,2}\s?[.)])/i.test(l))
+    .slice(0, max);
+}

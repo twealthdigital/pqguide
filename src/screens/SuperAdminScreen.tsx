@@ -18,7 +18,7 @@ import { BroadcastsTab } from '../features/admin/super-admin/BroadcastsTab';
 import { SupportInboxTab } from '../features/admin/super-admin/SupportInboxTab';
 import { PastQuestionsManagerTab } from '../features/admin/super-admin/PastQuestionsManagerTab';
 import { StudyMaterialsManagerTab } from '../features/admin/super-admin/StudyMaterialsManagerTab';
-import { DocumentScannerScreen } from './DocumentScannerScreen';
+import { DocumentUploadScreen } from './DocumentUploadScreen';
 import { DocumentLibraryScreen } from './DocumentLibraryScreen';
 import { DocumentReviewTab } from '../features/admin/super-admin/DocumentReviewTab';
 import { PaymentsTab } from '../features/admin/super-admin/PaymentsTab';
@@ -78,8 +78,8 @@ const SECTION_META: Record<
     subtitle: 'Upload structured lecture notes and reading guides across universities.',
   },
   document_scanner: {
-    title: 'Scan Documents',
-    subtitle: 'Scan past questions and notes. Every scan waits here for your verification, with an alert if the AI finds a problem.',
+    title: 'Upload Documents',
+    subtitle: 'Upload past questions and notes. They are converted to typed documents and cross-checked in the background. You can publish, decline or delete any upload.',
   },
   document_review: {
     title: 'Document Review',
@@ -253,10 +253,7 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
       )}
 
       {activeSection === 'document_scanner' && (
-        <DocumentScannerScreen
-          currentUser={currentUser}
-          onOpenReview={() => onSelectSection?.('document_review')}
-        />
+        <DocumentUploadScreen currentUser={currentUser} />
       )}
 
       {activeSection === 'document_review' && (

@@ -29,10 +29,6 @@ import type {
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { archiveRepository } from '../services/archiveRepository';
 import {
-  processUploadedDocument,
-  type ProcessedDocumentResult,
-} from '../services/documentProcessor';
-import {
   CustomSelect,
   DetailDialog,
   SectionHeadingBar,
@@ -40,7 +36,7 @@ import {
   TactileButton,
 } from '../components/ui';
 
-import { DocumentScannerScreen } from './DocumentScannerScreen';
+import { DocumentUploadScreen } from './DocumentUploadScreen';
 import { DocumentLibraryScreen } from './DocumentLibraryScreen';
 
 interface SchoolAdminScreenProps {
@@ -55,7 +51,6 @@ const SECTION_LABELS: Record<SchoolAdminSectionId, string> = {
   overview: 'Overview',
   students: 'Students',
   upload: 'Upload Documents',
-  scan: 'Scan Documents',
   document_library: 'Document Library',
   catalog: 'Past Questions',
   notices: 'Student Notices',
@@ -88,18 +83,8 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
       : null;
   }, [store.schools, currentUser.assignedSchoolId, isSuperAdminPreview, previewSchoolId]);
 
-  const [courseCode, setCourseCode] = useState('');
-  const [courseTitle, setCourseTitle] = useState('');
-  const [department, setDepartment] = useState('General Studies');
-  const [faculty, setFaculty] = useState('General Studies Unit');
-  const [level, setLevel] = useState<PastQuestionDoc['level']>('100L');
-  const [session, setSession] = useState('2024/2025');
-  const [semester, setSemester] = useState<SemesterType>('First Semester');
 
-  const [processing, setProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [processed, setProcessed] = useState<ProcessedDocumentResult | null>(null);
-  const [editableText, setEditableText] = useState('');
   const [publishNotice, setPublishNotice] = useState<string | null>(null);
 
   const [historyFilter, setHistoryFilter] = useState<'all' | 'published' | 'draft'>('all');
@@ -268,79 +253,6 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
     setEditingInDialog(false);
   };
 
-  const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setProcessing(true);
-    setErrorMsg(null);
-    setPublishNotice(null);
-
-    try {
-      const result = await processUploadedDocument(file);
-      setProcessed(result);
-      setCourseCode(result.suggestedCourseCode);
-      setSession(result.suggestedSession);
-      setSemester(result.suggestedSemester);
-      setEditableText(result.suggestedQuestions.join('\n'));
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Could not process uploaded file.');
-    } finally {
-      setProcessing(false);
-      e.target.value = '';
-    }
-  };
-
-  const handleSaveUpload = (targetStatus: 'published' | 'draft') => {
-    if (!processed) return;
-    setErrorMsg(null);
-    setPublishNotice(null);
-
-    const questionLines = editableText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-
-    const parsedYear = parseInt(session.split('/')[1] ?? '2025', 10) || 2025;
-
-    try {
-      const created = archiveRepository.addDocument(currentUser, {
-        id: `doc-${Date.now()}`,
-        schoolId: assignedSchool.id,
-        schoolCode: assignedSchool.code,
-        courseCode: courseCode.trim().toUpperCase() || 'CSC 101',
-        courseTitle: courseTitle.trim() || 'Past Question',
-        department: department.trim() || 'General Studies',
-        faculty: faculty.trim() || 'Academic Affairs',
-        level,
-        session,
-        year: parsedYear,
-        semester,
-        sourceType: processed.sourceType,
-        originalFileName: processed.originalFileName,
-        scannedPagePreviewUrl: processed.scannedPagePreviewUrl,
-        extractedText: processed.extractedText,
-        questions: questionLines.length > 0 ? questionLines : processed.suggestedQuestions,
-        uploadedBy: currentUser.fullName,
-        uploadedAt: new Date().toISOString(),
-        viewsCount: 0,
-        status: targetStatus,
-      });
-
-      setPublishNotice(
-        targetStatus === 'published'
-          ? `${created.courseCode} (${created.session} · ${assignedSchool.code}) published.`
-          : `${created.courseCode} (${created.session} · ${assignedSchool.code}) saved as draft.`
-      );
-      setProcessed(null);
-      setCourseCode('');
-      setCourseTitle('');
-      setEditableText('');
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to save past question.');
-    }
-  };
-
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDoc) return;
@@ -464,11 +376,8 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                   : activeSection === 'students'
                     ? `Track signed-in, active, and registered ${assignedSchool.code} student accounts.`
                     : activeSection === 'upload'
-                      ? adminCms.uploadPanelHint ||
-                        `Upload scanned or typed past question documents for ${assignedSchool.code}.`
-                      : activeSection === 'scan'
-                        ? `Scan past questions and notes for ${assignedSchool.code}. A Super Admin verifies every scan before it is published.`
-                        : activeSection === 'document_library'
+                      ? `Upload past questions and notes for ${assignedSchool.code}. They are converted to typed documents and cross-checked automatically.`
+                      : activeSection === 'document_library'
                         ? 'Browse verified and published scanned documents, with extracted text, tables, formulas and diagrams.'
                         : activeSection === 'catalog'
                         ? `Search, preview, edit, publish, or remove ${assignedSchool.code} past question papers.`
@@ -721,227 +630,11 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
           </div>
         )}
 
-        {activeSection === 'scan' && <DocumentScannerScreen currentUser={currentUser} />}
-
         {activeSection === 'document_library' && (
           <DocumentLibraryScreen currentUser={currentUser} />
         )}
 
-        {activeSection === 'upload' && (
-          <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">
-            <SectionHeadingBar
-              icon={<UploadCloud className="w-4 h-4" />}
-              title={adminCms.uploadPanelTitle}
-              right={
-                onSelectSection ? (
-                  <button
-                    type="button"
-                    onClick={() => onSelectSection('catalog')}
-                    className="min-h-[34px] px-3 rounded-xl bg-white/12 hover:bg-white/20 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <span>View Catalog ({allSchoolDocs.length})</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                ) : undefined
-              }
-            />
-
-            <label
-              className={`block rounded-2xl border-2 border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] transition-colors p-6 text-center ${
-                accountRestricted
-                  ? 'opacity-50 cursor-not-allowed'
-                  : 'hover:bg-[#EFF1F5] cursor-pointer'
-              }`}
-            >
-              <input
-                type="file"
-                disabled={accountRestricted}
-                accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.txt,.md,.csv"
-                onChange={handleFilePicked}
-                className="sr-only"
-              />
-              <div className="h-12 w-12 rounded-2xl tactile-dark text-white flex items-center justify-center mx-auto mb-3">
-                <UploadCloud className="w-5 h-5" />
-              </div>
-              <p className="font-display text-sm font-bold text-[#1A1B20]">
-                {accountRestricted
-                  ? 'Uploads locked'
-                  : processing
-                    ? 'Extracting file...'
-                    : 'Select PDF, DOCX, TXT, or Image'}
-              </p>
-            </label>
-
-            {processed && (
-              <div className="space-y-4 pt-3 border-t border-[#1A1B20]/[0.07]">
-                <div className="rounded-2xl bg-[#F6F7F9] p-4 flex items-start gap-3">
-                  <div className="h-9 w-9 rounded-xl bg-[#1D1E23] text-white flex items-center justify-center shrink-0">
-                    {processed.sourceType === 'scanned_image' ? (
-                      <ScanLine className="w-4 h-4" />
-                    ) : (
-                      <FileText className="w-4 h-4" />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-[#1A1B20] truncate">
-                      {processed.originalFileName}
-                    </p>
-                    <p className="text-xs text-[#505460] mt-0.5">
-                      {processed.processingSummary}
-                    </p>
-                  </div>
-                </div>
-
-                {sanitizeSafeUrl(processed.scannedPagePreviewUrl) && (
-                  <div className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3">
-                    <img
-                      src={sanitizeSafeUrl(processed.scannedPagePreviewUrl)}
-                      alt="Normalized scan preview"
-                      referrerPolicy="no-referrer"
-                      className="max-h-56 mx-auto rounded-lg shadow-xs bg-white"
-                    />
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-[#686C78] mb-1">
-                      University
-                    </label>
-                    <div className="min-h-[42px] rounded-xl bg-[#EEF0F4] border border-[#1A1B20]/10 px-3 flex items-center justify-between gap-2 text-xs font-semibold text-[#1A1B20]">
-                      <span className="truncate">
-                        {assignedSchool.code} — {assignedSchool.shortName}
-                      </span>
-                      <Lock className="w-3.5 h-3.5 text-[#686C78] shrink-0" />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-[#686C78] mb-1">
-                      Course Code
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={courseCode}
-                      onChange={(e) => setCourseCode(e.target.value)}
-                      placeholder="GNS 101"
-                      className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-sm font-semibold"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-[#686C78] mb-1">
-                      Course Title
-                    </label>
-                    <input
-                      type="text"
-                      value={courseTitle}
-                      onChange={(e) => setCourseTitle(e.target.value)}
-                      placeholder="Use of English"
-                      className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-sm font-semibold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-[#686C78] mb-1">
-                      Session
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={session}
-                      onChange={(e) => setSession(e.target.value)}
-                      placeholder="2024/2025"
-                      className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-sm font-mono-tabular font-semibold"
-                    />
-                  </div>
-
-                  <CustomSelect
-                    label="Semester"
-                    value={semester}
-                    options={[
-                      { value: 'First Semester', label: 'First Semester' },
-                      { value: 'Second Semester', label: 'Second Semester' },
-                    ]}
-                    onChange={(val) => setSemester(val as SemesterType)}
-                  />
-
-                  <div>
-                    <label className="block text-xs font-medium text-[#686C78] mb-1">
-                      Faculty
-                    </label>
-                    <input
-                      type="text"
-                      value={faculty}
-                      onChange={(e) => setFaculty(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-sm font-semibold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-[#686C78] mb-1">
-                      Department
-                    </label>
-                    <input
-                      type="text"
-                      value={department}
-                      onChange={(e) => setDepartment(e.target.value)}
-                      className="w-full min-h-[42px] rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 px-3 text-sm font-semibold"
-                    />
-                  </div>
-
-                  <CustomSelect
-                    label="Level"
-                    mono
-                    value={level}
-                    options={[
-                      { value: '100L', label: '100L' },
-                      { value: '200L', label: '200L' },
-                      { value: '300L', label: '300L' },
-                      { value: '400L', label: '400L' },
-                      { value: '500L', label: '500L' },
-                    ]}
-                    onChange={(val) => setLevel(val as PastQuestionDoc['level'])}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-[#686C78] mb-1">
-                    Questions (one per line)
-                  </label>
-                  <textarea
-                    rows={4}
-                    value={editableText}
-                    onChange={(e) => setEditableText(e.target.value)}
-                    className="w-full rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/10 p-3 text-xs sm:text-sm text-[#1A1B20] leading-relaxed"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <TactileButton
-                    type="button"
-                    variant="light"
-                    size="lg"
-                    fullWidth
-                    onClick={() => handleSaveUpload('draft')}
-                  >
-                    Save as Draft
-                  </TactileButton>
-                  <TactileButton
-                    type="button"
-                    variant="dark"
-                    size="lg"
-                    fullWidth
-                    onClick={() => handleSaveUpload('published')}
-                  >
-                    Publish to {assignedSchool.code}
-                  </TactileButton>
-                </div>
-              </div>
-            )}
-          </SurfaceCard>
-        )}
+        {activeSection === 'upload' && <DocumentUploadScreen currentUser={currentUser} />}
 
         {activeSection === 'catalog' && (
           <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-4">

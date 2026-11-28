@@ -674,6 +674,95 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     assert.equal(badRes.status, 422);
     assert.equal(badRes.body.ok, false);
   });
+
+  test('12. Super Admin can force publish, decline and delete any admin upload; catalog follows', () => {
+    const schoolAdmin = makeSchoolAdmin();
+    const superAdmin = makeSuperAdmin();
+
+    const basePayload = {
+      schoolId: 'sch-aaua',
+      title: 'CSC 205 Exam Paper',
+      courseCode: 'CSC 205',
+      courseTitle: 'Discrete Structures',
+      level: '200L' as const,
+      session: '2023/2024',
+      semester: 'First Semester' as const,
+      category: 'past_question' as const,
+      originalFileName: 'csc205.pdf',
+      mimeType: 'application/pdf',
+      detectedFormat: 'pdf' as const,
+      fileSizeBytes: 2048,
+      sha256: 'a'.repeat(64),
+      pageCount: 1,
+      extractedText:
+        'CSC 205 Discrete Structures 2023/2024\n1. Define a partial order and give two examples.\n2. Prove that the sum of two even integers is even.\nInstructions: answer all questions.',
+      summary: 'Discrete structures exam',
+      headings: [],
+      pages: [],
+      diagrams: [],
+      tables: [],
+      formulas: [],
+      qrCodesFound: [],
+      averageOcrConfidence: 40,
+      deterministicChecks: [],
+      decision: 'flagged' as const,
+      riskLevel: 'high' as const,
+      decisionReason: 'Low OCR confidence',
+    };
+
+    const flagged = archiveRepository.submitScannedDocument(schoolAdmin, basePayload);
+    assert.equal(flagged.publicationStatus, 'flagged');
+
+    // School admins can never publish, decline or delete.
+    assert.throws(() => archiveRepository.reviewSubmittedDocument(schoolAdmin, flagged.id, 'approve'));
+    assert.throws(() => archiveRepository.deleteAcademicDocument(schoolAdmin, flagged.id));
+    assert.ok(archiveRepository.getDocumentsForSubmitter(schoolAdmin.id).some((d) => d.id === flagged.id));
+
+    // Super Admin force publishes a flagged document; the typed past question reaches the catalog.
+    const forced = archiveRepository.reviewSubmittedDocument(superAdmin, flagged.id, 'approve');
+    assert.equal(forced.publicationStatus, 'published');
+    assert.match(forced.processingHistory.at(-1)?.detail ?? '', /override/i);
+    const catalogEntry = archiveRepository
+      .getPublishedDocuments()
+      .find((d) => d.id === `pqdoc-${flagged.id}`);
+    assert.ok(catalogEntry, 'published past question appears in student catalog');
+    assert.equal(catalogEntry.questions.length, 2);
+
+    // Declining a published document takes the typed copy offline and stores the reason.
+    const declined = archiveRepository.reviewSubmittedDocument(superAdmin, flagged.id, 'reject', {
+      rejectionReason: 'Wrong course uploaded',
+    });
+    assert.equal(declined.publicationStatus, 'rejected');
+    assert.equal(declined.rejectionReason, 'Wrong course uploaded');
+    assert.equal(
+      archiveRepository.getPublishedDocuments().some((d) => d.id === `pqdoc-${flagged.id}`),
+      false
+    );
+
+    // Publish again, then delete: both the upload and its typed copy disappear.
+    archiveRepository.reviewSubmittedDocument(superAdmin, flagged.id, 'approve');
+    assert.ok(archiveRepository.getPublishedDocuments().some((d) => d.id === `pqdoc-${flagged.id}`));
+    archiveRepository.deleteAcademicDocument(superAdmin, flagged.id);
+    assert.equal(archiveRepository.findDocumentBySha256(basePayload.sha256), undefined);
+    assert.equal(
+      archiveRepository.getPublishedDocuments().some((d) => d.id === `pqdoc-${flagged.id}`),
+      false
+    );
+
+    // Non past question uploads never create catalog entries.
+    const note = archiveRepository.submitScannedDocument(schoolAdmin, {
+      ...basePayload,
+      sha256: 'b'.repeat(64),
+      category: 'lecture_note',
+      decision: 'auto_approved',
+      riskLevel: 'low',
+    });
+    archiveRepository.reviewSubmittedDocument(superAdmin, note.id, 'approve');
+    assert.equal(
+      archiveRepository.getPublishedDocuments().some((d) => d.id === `pqdoc-${note.id}`),
+      false
+    );
+  });
 });
 
 after(() => {

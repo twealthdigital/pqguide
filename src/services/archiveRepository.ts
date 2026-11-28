@@ -52,6 +52,7 @@ import {
   SEED_SCHOOLS,
   SEED_SESSIONS,
 } from '../data/seedCatalog';
+import { extractQuestionsFromText } from './intelligence/structuredParser';
 import { localStore } from './storage/localStore';
 
 const STORAGE_KEY = 'pqguide_aaua_store_v1';
@@ -2499,7 +2500,7 @@ class ArchiveRepository {
       actorRole: actor.role,
       detail:
         action === 'approve'
-          ? `Approved & published to Student Document Library by ${actor.fullName}.`
+          ? `Approved & published by ${actor.fullName}${existing.publicationStatus === 'flagged' || existing.publicationStatus === 'rejected' || existing.decision !== 'auto_approved' ? ' (Super Admin override of automated checks)' : ''}.`
           : cleanReason,
     };
 
@@ -2536,7 +2537,7 @@ class ArchiveRepository {
                 : `Document Rejected: ${updated.courseCode}`,
           message:
             action === 'approve'
-              ? `"${updated.title}" passed Super Admin verification and is now live in the Student Document Library.`
+              ? `"${updated.title}" was approved and published by the Super Admin.`
               : `Your upload "${updated.title}" requires attention: ${cleanReason}`,
           category: 'upload' as const,
           audience: 'admins' as BroadcastAudience,
@@ -2563,7 +2564,112 @@ class ArchiveRepository {
       ].slice(0, 300),
     }));
 
+    this.syncCatalogFromAcademicDoc(updated);
+
     return updated;
+  }
+
+  /**
+   * Keeps the student Past Questions catalog in step with a scanned document. Only an
+   * approved past question with real numbered questions is published; any other status
+   * (declined, resubmission, deleted) removes its typed copy.
+   */
+  private syncCatalogFromAcademicDoc(doc: AcademicDocumentRecord, removeOnly = false): void {
+    const catalogId = `pqdoc-${doc.id}`;
+    const questions =
+      doc.category === 'past_question' && doc.publicationStatus === 'published' && !removeOnly
+        ? extractQuestionsFromText(doc.extractedText)
+        : [];
+    const shouldPublish = questions.length > 0;
+    const existing = this.state.documents.find((d) => d.id === catalogId);
+    if (!shouldPublish && !existing) return;
+
+    const school = this.state.schools.find((s) => s.id === doc.schoolId);
+    const year = parseInt(doc.session.split('/')[1] ?? '', 10) || new Date().getFullYear();
+    const entry: PastQuestionDoc = {
+      id: catalogId,
+      schoolId: doc.schoolId,
+      schoolCode: school?.code ?? doc.schoolCode,
+      courseCode: doc.courseCode,
+      courseTitle: doc.courseTitle,
+      department: doc.department,
+      faculty: doc.faculty,
+      level: doc.level,
+      session: doc.session,
+      year,
+      semester: doc.semester,
+      sourceType: doc.detectedFormat === 'image' ? 'scanned_image' : 'typed_document',
+      originalFileName: doc.originalFileName,
+      scannedPagePreviewUrl: doc.optimizedPreviewUrl,
+      extractedText: sanitizePlainText(doc.extractedText, 8000),
+      questions: questions.map((q) => sanitizeSingleLine(q, 1000)).filter(Boolean),
+      uploadedBy: doc.submittedByName,
+      uploadedById: doc.submittedById,
+      uploadedAt: doc.submittedAt,
+      updatedAt: new Date().toISOString(),
+      viewsCount: existing?.viewsCount ?? 0,
+      status: 'published',
+    };
+
+    this.update((prev) => ({
+      ...prev,
+      sessions:
+        shouldPublish && !prev.sessions.includes(entry.session)
+          ? [entry.session, ...prev.sessions].sort().reverse()
+          : prev.sessions,
+      documents: shouldPublish
+        ? existing
+          ? prev.documents.map((d) => (d.id === catalogId ? entry : d))
+          : [entry, ...prev.documents]
+        : prev.documents.filter((d) => d.id !== catalogId),
+      recentDocIds: shouldPublish
+        ? prev.recentDocIds
+        : prev.recentDocIds.filter((id) => id !== catalogId),
+    }));
+  }
+
+  deleteAcademicDocument(actor: AuthenticatedUser | null | undefined, docId: string): void {
+    this.requirePermission(
+      actor,
+      'docs:review_all',
+      'Only Super Administrators can delete uploaded documents.'
+    );
+    const existing = this.state.academicDocuments.find((d) => d.id === docId);
+    if (!existing) {
+      throw new Error('Submitted document not found.');
+    }
+    const now = new Date().toISOString();
+    this.syncCatalogFromAcademicDoc(existing, true);
+    this.update((prev) => ({
+      ...prev,
+      academicDocuments: prev.academicDocuments.filter((d) => d.id !== docId),
+      notifications: [
+        {
+          id: `notif-del-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title: `Document Removed: ${existing.courseCode}`,
+          message: `Your upload "${existing.title}" was removed by the Super Admin.`,
+          category: 'upload' as const,
+          audience: 'admins' as BroadcastAudience,
+          targetUserId: existing.submittedById,
+          createdAt: now,
+          isRead: false,
+          createdBy: sanitizeSingleLine(actor.fullName, 120),
+          approvalStatus: 'approved' as const,
+        },
+        ...prev.notifications,
+      ],
+      auditLogs: [
+        createAuditEntry(
+          actor,
+          'doc_deleted',
+          'academic_document',
+          docId,
+          `Deleted "${existing.title}" (${existing.courseCode})`,
+          existing.schoolId
+        ),
+        ...prev.auditLogs,
+      ].slice(0, 300),
+    }));
   }
 
   addDocumentReviewNote(

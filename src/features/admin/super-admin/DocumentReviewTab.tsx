@@ -8,6 +8,7 @@ import {
   MessageSquarePlus,
   RotateCcw,
   ShieldAlert,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import type { AcademicDocumentRecord, AuthenticatedUser } from '../../../core/types';
@@ -114,7 +115,7 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
       setInternalNote('');
       onNotice(
         action === 'approve'
-          ? `Approved & published "${updated.title}" to the Student Document Library.`
+          ? `Approved & published "${updated.title}".`
           : action === 'request_resubmission'
             ? `Requested resubmission for "${updated.title}" and notified ${updated.submittedByName}.`
             : `Rejected "${updated.title}" and sent explanation to ${updated.submittedByName}.`
@@ -122,6 +123,18 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
       setSelectedDocId(null);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Unable to save review decision.');
+    }
+  };
+
+  const handleDeleteDoc = () => {
+    if (!selectedDoc) return;
+    if (!window.confirm(`Delete "${selectedDoc.title}" permanently?`)) return;
+    try {
+      archiveRepository.deleteAcademicDocument(currentUser, selectedDoc.id);
+      onNotice(`Deleted "${selectedDoc.title}".`);
+      setSelectedDocId(null);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Unable to delete this document.');
     }
   };
 
@@ -256,6 +269,14 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
         footer={
           selectedDoc ? (
             <>
+              <TactileButton
+                variant="light"
+                size="sm"
+                icon={<Trash2 className="w-3.5 h-3.5 text-[#B91C1C]" />}
+                onClick={handleDeleteDoc}
+              >
+                Delete
+              </TactileButton>
               <TactileButton
                 variant="light"
                 size="sm"
