@@ -34,7 +34,6 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, ReadonlySet<Permission>
   student: new Set<Permission>([
     'pq:read',
     'materials:read',
-    'docs:read_library',
   ]),
   school_admin: new Set<Permission>([
     'pq:read',

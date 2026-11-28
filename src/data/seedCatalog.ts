@@ -277,6 +277,7 @@ export const SEED_NOTIFICATIONS: AppNotification[] = [
     category: 'upload',
     createdAt: '2026-11-22T16:35:00.000Z',
     isRead: false,
+    uploadActivity: true,
     targetDocId: 'pq-aaua-gns103-2425',
   },
   {

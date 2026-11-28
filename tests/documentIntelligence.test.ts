@@ -5,6 +5,7 @@ import { jsPDF } from 'jspdf';
 import sharp from 'sharp';
 import { createDocumentEngine } from '../server/documentService.ts';
 import type { AuthenticatedUser } from '../src/core/types.ts';
+import { hasPermission } from '../src/core/permissions.ts';
 import { archiveRepository } from '../src/services/archiveRepository.ts';
 import { validateMagicAndSecurity } from '../src/services/intelligence/fileSecurity.ts';
 import {
@@ -898,14 +899,14 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     assert.equal(adminFeed().find((n) => n.title === 'CSC 301 was uploaded')?.message, 'It will go live once it is checked.');
     assert.equal(titles(adminFeed(otherAdmin)).includes('CSC 301 was uploaded'), false);
 
-    // 2. Approved: students and other admins see the public notice, the uploader gets the result
+    // 2. Approved: other admins see the public notice, the uploader gets the result, students get nothing
     archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
-    const publicNotice = studentFeed().find((n) => n.title === 'CSC 301 was uploaded');
-    assert.ok(publicNotice, 'student sees the new document');
+    const publicNotice = adminFeed(otherAdmin).find((n) => n.title === 'CSC 301 was uploaded');
+    assert.ok(publicNotice, 'other School Admins see the new document');
     assert.equal(publicNotice.message, 'AAUA uploaded 2023/2024 First Semester.');
     assert.equal(publicNotice.targetDocId, `pqdoc-${doc.id}`);
-    assert.ok(studentFeed(otherStudent).some((n) => n.title === 'CSC 301 was uploaded'));
-    assert.ok(adminFeed(otherAdmin).some((n) => n.title === 'CSC 301 was uploaded'), 'other School Admins see it too');
+    assert.equal(titles(studentFeed()).includes('CSC 301 was uploaded'), false, 'students never see uploads');
+    assert.equal(titles(studentFeed(otherStudent)).includes('CSC 301 was uploaded'), false);
     const approved = adminFeed().find((n) => n.title === 'CSC 301 was approved');
     assert.equal(approved?.message, 'Your upload is now live.');
     assert.equal(
@@ -917,7 +918,7 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
 
     // approving again does not announce it twice
     archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
-    assert.equal(studentFeed().filter((n) => n.title === 'CSC 301 was uploaded').length, 1);
+    assert.equal(adminFeed(otherAdmin).filter((n) => n.title === 'CSC 301 was uploaded').length, 1);
 
     // 3. Rejected: the uploader sees the reason, students see nothing new
     const bad = archiveRepository.submitScannedDocument(uploader, payload('CSC 302', 'f'));
@@ -989,6 +990,70 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     // 8. Nothing anyone can see here says who did it
     noWhoDidIt(studentFeed());
     noWhoDidIt(adminFeed());
+  });
+
+  test('15. Students have no document library permission and get no upload or approval notices', () => {
+    const student = makeStudent('stu-perm-1');
+    assert.equal(hasPermission(student, 'docs:read_library'), false, 'students lose the old library permission');
+    assert.equal(hasPermission(student, 'pq:read'), true);
+    assert.equal(hasPermission(student, 'materials:read'), true);
+    assert.equal(hasPermission(makeSuperAdmin(), 'docs:read_library'), true, 'Super Admin keeps it');
+
+    const superAdmin = makeSuperAdmin();
+    const uploader = makeSchoolAdmin();
+    const studentFeed = () => archiveRepository.getNotificationsForWorkspace('student', student.id);
+    const titles = (list: Array<{ title: string }>) => list.map((n) => n.title);
+
+    // The seeded "was uploaded" notice is for admins only now
+    assert.equal(titles(studentFeed()).some((t) => /was uploaded/i.test(t)), false);
+
+    // An announcement an admin writes about new papers still reaches students
+    archiveRepository.sendBroadcastNotification(superAdmin, {
+      title: 'New papers are out',
+      message: 'Check the archive.',
+      category: 'upload',
+      audience: 'students',
+    });
+    assert.ok(titles(studentFeed()).includes('New papers are out'));
+
+    // Automatic uploaded / approved / rejected / removed notices never reach students
+    const doc = archiveRepository.submitScannedDocument(uploader, {
+      schoolId: 'sch-aaua',
+      title: 'MTH 101 Exam Paper',
+      courseCode: 'MTH 101',
+      courseTitle: 'Test Course',
+      level: '100L' as const,
+      session: '2023/2024',
+      semester: 'First Semester' as const,
+      category: 'past_question' as const,
+      originalFileName: 'MTH101.pdf',
+      mimeType: 'application/pdf',
+      detectedFormat: 'pdf' as const,
+      fileSizeBytes: 2048,
+      sha256: 'b'.repeat(64),
+      pageCount: 1,
+      extractedText: 'MTH 101 2023/2024\n1. Define a set.\n2. State the pigeonhole principle.',
+      summary: 's',
+      headings: [],
+      pages: [],
+      diagrams: [],
+      tables: [],
+      formulas: [],
+      qrCodesFound: [],
+      averageOcrConfidence: 95,
+      deterministicChecks: [],
+      decision: 'auto_approved' as const,
+      riskLevel: 'low' as const,
+    });
+    const before = titles(studentFeed());
+    archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'approve');
+    archiveRepository.reviewSubmittedDocument(superAdmin, doc.id, 'reject', { rejectionReason: 'Changed my mind' });
+    assert.deepEqual(titles(studentFeed()), before, 'approve and reject add nothing for students');
+    assert.equal(
+      titles(studentFeed()).some((t) => /MTH 101/.test(t)),
+      false,
+      'no MTH 101 notice of any kind for students'
+    );
   });
 });
 

@@ -367,7 +367,16 @@ function saveState(state: AppStoreState): void {
 }
 
 /**
- * The public "new document" notice. Students and School Admins both see it.
+ * Automatic notices about uploads (uploaded, approved, rejected, needs a new
+ * upload, removed). Students never get these. Notices saved before the
+ * `uploadActivity` flag existed are recognised by their id prefix.
+ */
+function isUploadActivityNotice(n: AppNotification): boolean {
+  return n.uploadActivity === true || /^notif-(new|doc|rev|del)-/.test(n.id);
+}
+
+/**
+ * The public "new document" notice for School Admins (students do not get it).
  * Kept short and plain: what was uploaded, and by which university.
  */
 function buildNewDocumentNotification(args: {
@@ -392,6 +401,7 @@ function buildNewDocumentNotification(args: {
     targetDocId: args.docId,
     approvalStatus: 'approved',
     exceptUserId: args.exceptUserId,
+    uploadActivity: true,
   };
 }
 
@@ -523,9 +533,10 @@ class ArchiveRepository {
 
   /**
    * Who sees a notification.
-   * - Students: public notices (new documents, announcements) and anything sent to them.
-   * - School Admins: everything students see, admin notices, and anything sent to them
-   *   (for example the result of their uploads).
+   * - Students: announcements and anything sent to them (for example a payment receipt).
+   *   Never upload, approval or rejection notices.
+   * - School Admins: everything students see, new-document notices, admin notices, and
+   *   anything sent to them (for example the result of their uploads).
    * Notices for one university only reach people from that university.
    */
   private isNotificationVisible(
@@ -534,6 +545,7 @@ class ArchiveRepository {
     userId?: string
   ): boolean {
     if ((n.approvalStatus ?? 'approved') !== 'approved') return false;
+    if (workspace === 'student' && isUploadActivityNotice(n)) return false;
     if (n.exceptUserId && n.exceptUserId === userId) return false;
     if (n.targetUserId) {
       if (workspace === 'super_admin') return true;
@@ -2438,6 +2450,7 @@ class ArchiveRepository {
         createdAt: now,
         isRead: false,
         approvalStatus: 'approved' as const,
+        uploadActivity: true,
       };
 
       const auditEntries = [
@@ -2620,6 +2633,7 @@ class ArchiveRepository {
           createdAt: now,
           isRead: false,
           approvalStatus: 'approved' as const,
+          uploadActivity: true,
         },
         ...prev.notifications,
       ],
@@ -2752,6 +2766,7 @@ class ArchiveRepository {
           isRead: false,
           createdBy: sanitizeSingleLine(actor.fullName, 120),
           approvalStatus: 'approved' as const,
+          uploadActivity: true,
         },
         ...prev.notifications,
       ],

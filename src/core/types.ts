@@ -156,6 +156,11 @@ export interface AppNotification {
   targetUserId?: string;
   /** Hide this notice from one person who already got a more specific one. */
   exceptUserId?: string;
+  /**
+   * Automatic upload, approval, rejection or removal notice (not an announcement
+   * written by an admin). These are for admins only and never reach students.
+   */
+  uploadActivity?: boolean;
   createdAt: string;
   updatedAt?: string;
   isRead: boolean;
