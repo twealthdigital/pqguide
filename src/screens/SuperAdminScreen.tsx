@@ -18,6 +18,7 @@ import { BroadcastsTab } from '../features/admin/super-admin/BroadcastsTab';
 import { SupportInboxTab } from '../features/admin/super-admin/SupportInboxTab';
 import { PastQuestionsManagerTab } from '../features/admin/super-admin/PastQuestionsManagerTab';
 import { StudyMaterialsManagerTab } from '../features/admin/super-admin/StudyMaterialsManagerTab';
+import { DocumentScannerScreen } from './DocumentScannerScreen';
 import { DocumentReviewTab } from '../features/admin/super-admin/DocumentReviewTab';
 import { PaymentsTab } from '../features/admin/super-admin/PaymentsTab';
 import { AdminSettingsTab } from '../features/admin/super-admin/AdminSettingsTab';
@@ -75,9 +76,13 @@ const SECTION_META: Record<
     title: 'Study Materials Manager',
     subtitle: 'Upload structured lecture notes and reading guides across universities.',
   },
+  document_scanner: {
+    title: 'Scan Documents',
+    subtitle: 'Scan past questions and notes. Every scan waits here for your verification, with an alert if the AI finds a problem.',
+  },
   document_review: {
     title: 'Document Review',
-    subtitle: 'Verify flagged student uploads, SHA-256 duplicates, OCR scores, and AI cross-checks.',
+    subtitle: 'Verify every scanned document, SHA-256 duplicates, OCR scores, and AI cross-checks.',
   },
   payments: {
     title: 'Payment Verifications',
@@ -239,6 +244,13 @@ export const SuperAdminScreen: React.FC<SuperAdminScreenProps> = ({
           store={store}
           onNotice={handleNotice}
           onError={handleError}
+        />
+      )}
+
+      {activeSection === 'document_scanner' && (
+        <DocumentScannerScreen
+          currentUser={currentUser}
+          onOpenReview={() => onSelectSection?.('document_review')}
         />
       )}
 

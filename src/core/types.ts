@@ -32,6 +32,7 @@ export type SuperAdminSectionId =
   | 'support_inbox'
   | 'past_questions'
   | 'study_materials'
+  | 'document_scanner'
   | 'document_review'
   | 'payments'
   | 'settings';
@@ -40,6 +41,7 @@ export type SchoolAdminSectionId =
   | 'overview'
   | 'students'
   | 'upload'
+  | 'scan'
   | 'catalog'
   | 'notices';
 
@@ -56,9 +58,7 @@ export type AppScreen =
   | 'material_reader'
   | 'mock_exam'
   | 'performance'
-  | 'document_scanner'
   | 'document_library'
-  | 'ai_assistant'
   | 'school_admin'
   | 'super_admin'
   | 'subscription';
@@ -203,7 +203,7 @@ export interface PaymentTransaction {
   userEmail: string;
   matricNumber?: string;
   level?: StudentLevel;
-  tierId: 'standard' | 'pro_ai';
+  tierId: 'standard';
   tierName: string;
   billingPeriod: 'monthly' | 'semester' | 'yearly';
   amountNaira: number;
@@ -254,7 +254,7 @@ export interface ManagedAccount {
   level?: StudentLevel;
   faculty?: string;
   department?: string;
-  subscriptionTier?: 'free' | 'standard' | 'pro_ai' | 'infinity';
+  subscriptionTier?: 'free' | 'standard' | 'infinity';
   sessionState?: 'logged_in' | 'logged_out';
   lastLoginAt?: string;
   lastLogoutAt?: string;
@@ -332,7 +332,6 @@ export interface SiteCmsConfig {
     subtitle: string;
     freeTierName: string;
     standardTierName: string;
-    aiTierName: string;
     checkoutNote: string;
   };
   schoolAdminUi: {
@@ -480,6 +479,7 @@ export type AuditActionType =
   | 'doc_scanned'
   | 'doc_auto_approved'
   | 'doc_flagged'
+  | 'doc_ai_alert'
   | 'doc_review_approved'
   | 'doc_review_rejected'
   | 'doc_resubmission_requested'

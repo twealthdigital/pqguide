@@ -10,14 +10,9 @@ import type { UserRole } from './types';
  */
 export const FREE_TIER_ENABLED = true;
 
-/**
- * Master AI-feature flag backed by server-side Gemini integration & grounded archive retrieval.
- */
-export const AI_INTEGRATION_ENABLED = true;
-
 export type BillingPeriod = 'monthly' | 'semester' | 'yearly';
 
-export type SubscriptionTierId = 'free' | 'standard' | 'pro_ai' | 'infinity';
+export type SubscriptionTierId = 'free' | 'standard' | 'infinity';
 
 export interface BillingPeriodMeta {
   id: BillingPeriod;
@@ -34,12 +29,10 @@ export interface TierPlanPrice {
 
 export interface SubscriptionTierSpec {
   id: SubscriptionTierId;
-  tierNumber: 1 | 2 | 3;
+  tierNumber: 1 | 2;
   name: string;
   audience: string;
   summary: string;
-  aiIncluded: boolean;
-  comingSoon?: boolean;
   pricing: Record<BillingPeriod, TierPlanPrice>;
   features: string[];
   excludedNote?: string;
@@ -70,7 +63,6 @@ export const SUBSCRIPTION_TIERS: SubscriptionTierSpec[] = [
     name: 'Free Starter',
     audience: '',
     summary: '',
-    aiIncluded: false,
     pricing: {
       monthly: { amountNaira: 0, cadenceLabel: '/ month' },
       semester: { amountNaira: 0, cadenceLabel: '/ semester' },
@@ -89,7 +81,6 @@ export const SUBSCRIPTION_TIERS: SubscriptionTierSpec[] = [
     name: 'Standard Pass',
     audience: '',
     summary: '',
-    aiIncluded: false,
     pricing: {
       monthly: { amountNaira: 1000, cadenceLabel: '/ month' },
       semester: {
@@ -108,34 +99,6 @@ export const SUBSCRIPTION_TIERS: SubscriptionTierSpec[] = [
       'All 4 Practice Exam modes (OBJ, Theory, T/F, CBT)',
       'Offline study guide downloads',
       'Full score breakdown & alerts',
-    ],
-  },
-  {
-    id: 'pro_ai',
-    tierNumber: 3,
-    name: 'AI Scholar',
-    audience: '',
-    summary: '',
-    aiIncluded: true,
-    comingSoon: !AI_INTEGRATION_ENABLED,
-    pricing: {
-      monthly: { amountNaira: 2500, cadenceLabel: '/ month' },
-      semester: {
-        amountNaira: 7500,
-        cadenceLabel: '/ semester',
-        equivalentNote: '₦1,875 / mo · Save 25%',
-      },
-      yearly: {
-        amountNaira: 13000,
-        cadenceLabel: '/ year',
-        equivalentNote: '₦1,083 / mo · Save 57%',
-      },
-    },
-    features: [
-      'Everything in Standard Pass',
-      'AI step-by-step question tutor',
-      'AI topic & exam predictions',
-      'AI guide summaries & theory coach',
     ],
   },
 ];
@@ -160,10 +123,10 @@ let currentState: SubscriptionState = (() => {
         ? parsed.billingPeriod
         : 'semester';
     const validTier: SubscriptionTierId | null =
-      parsed.activeTier === 'standard' ||
-      parsed.activeTier === 'pro_ai' ||
-      parsed.activeTier === 'infinity'
+      parsed.activeTier === 'standard' || parsed.activeTier === 'infinity'
         ? parsed.activeTier
+        : (parsed.activeTier as string) === 'pro_ai'
+          ? 'standard'
         : FREE_TIER_ENABLED
           ? 'free'
           : null;
@@ -222,17 +185,7 @@ export const subscriptionService = {
   hasStandardAccess(): boolean {
     if (roleOverride === 'super_admin') return true;
     if (FREE_TIER_ENABLED) return true;
-    return (
-      currentState.activeTier === 'standard' ||
-      currentState.activeTier === 'pro_ai' ||
-      currentState.activeTier === 'infinity'
-    );
-  },
-
-  hasAiAccess(): boolean {
-    if (roleOverride === 'super_admin') return true;
-    if (FREE_TIER_ENABLED && AI_INTEGRATION_ENABLED) return true;
-    return AI_INTEGRATION_ENABLED && currentState.activeTier === 'pro_ai';
+    return currentState.activeTier === 'standard' || currentState.activeTier === 'infinity';
   },
 
   formatNaira(amount: number): string {

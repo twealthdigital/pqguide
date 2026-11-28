@@ -7,7 +7,6 @@ export { CustomSelect, type CustomSelectOption } from './CustomSelect';
 export { NavigationShell } from './NavigationShell';
 export { DetailDialog } from './DetailDialog';
 export { DocumentListSkeleton, HomeScreenSkeleton, SkeletonBox } from './Skeleton';
-export { PqGuideAiIcon, type PqGuideAiState } from './PqGuideAiIcon';
 export { SectionHeadingBar } from './SectionHeadingBar';
 export { SurfaceCard } from './SurfaceCard';
 export { TactileButton, type TactileVariant } from './TactileButton';

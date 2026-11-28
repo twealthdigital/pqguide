@@ -3,8 +3,26 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { sanitizeSafeUrl } from '../../core/security';
+
+export interface StructuredAiBlock {
+  type: 'paragraph' | 'math' | 'steps' | 'table' | 'chart' | 'diagram' | 'practice_question';
+  title?: string;
+  text?: string;
+  latex?: string;
+  displayMode?: boolean;
+  steps?: string[];
+  headers?: string[];
+  rows?: string[][];
+  chartKind?: 'bar' | 'line';
+  chartSeries?: Array<{ label: string; value: number }>;
+  diagramPreset?: 'free_body_incline' | 'cell_mitosis' | 'ohm_circuit' | 'binary_tree';
+  diagramCaption?: string;
+  question?: string;
+  options?: string[];
+  answer?: string;
+  explanation?: string;
+}
 import type { ExtractedDiagramAsset, ExtractedFormula, ExtractedTable } from '../../core/types';
-import type { StructuredAiBlock } from '../../../server/aiService';
 
 export const KatexFormula: React.FC<{
   latex: string;

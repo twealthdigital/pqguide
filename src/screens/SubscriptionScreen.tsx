@@ -5,17 +5,14 @@ import {
   CheckCircle2,
   CreditCard,
   Loader2,
-  Lock,
   X,
 } from 'lucide-react';
-import { PqGuideAiIcon } from '../components/ui/PqGuideAiIcon';
 import type {
   AuthenticatedUser,
   PaymentProvider,
   PaymentTransaction,
 } from '../core/types';
 import {
-  AI_INTEGRATION_ENABLED,
   BILLING_PERIODS,
   FREE_TIER_ENABLED,
   SUBSCRIPTION_TIERS,
@@ -51,24 +48,12 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
   const [verifying, setVerifying] = useState(false);
   const [verifiedReceipt, setVerifiedReceipt] = useState<PaymentTransaction | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const tier3Ref = useRef<HTMLElement | null>(null);
   const timerRef = useRef<number | null>(null);
 
-  const highlightedTier: SubscriptionTierId | null =
-    paywallContext?.highlightTier ?? (paywallContext?.blockedByPaywall ? 'standard' : null);
-  const isAiTrigger = highlightedTier === 'pro_ai';
 
-  // When opened by tapping a disabled AI control, bring Tier 3 into view on smaller viewports.
   useEffect(() => {
     setSelectedNoticeTier(null);
-    if (isAiTrigger && tier3Ref.current) {
-      const timer = window.setTimeout(() => {
-        tier3Ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 140);
-      return () => window.clearTimeout(timer);
-    }
-    return undefined;
-  }, [isAiTrigger, paywallContext]);
+  }, [paywallContext]);
 
   useEffect(() => {
     return () => {
@@ -181,18 +166,14 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
               ? 'Infinity Plan Active'
               : paywallContext?.blockedByPaywall
                 ? 'Pick a plan to continue'
-                : isAiTrigger
-                  ? `Unlock ${subCms.aiTierName}`
-                  : subCms.heading}
+                : subCms.heading}
           </h1>
           <p className="mt-1.5 text-sm text-[#5A5E6B]">
             {activeTier === 'infinity'
-              ? 'Every control across Standard Pass and Tier 3 AI Scholar is unlocked for your Super Admin account.'
+              ? 'Every control across the Standard Pass is unlocked for your Super Admin account.'
               : paywallContext?.blockedByPaywall
-                ? `Free access has ended. Pick ${subCms.standardTierName} or ${subCms.aiTierName} below.`
-                : isAiTrigger
-                  ? `${paywallContext?.featureLabel ?? 'This tool'} is part of ${subCms.aiTierName} (coming soon).`
-                  : subCms.subtitle}
+                ? `Free access has ended. Pick ${subCms.standardTierName} below.`
+                : subCms.subtitle}
           </p>
         </div>
 
@@ -204,14 +185,14 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
           >
             <div className="flex items-center gap-3.5 min-w-0">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white">
-                <PqGuideAiIcon size="sm" />
+                <CheckCircle2 className="h-5 w-5" />
               </span>
               <div className="min-w-0">
                 <p className="font-display text-sm sm:text-base font-bold">
                   Infinity Plan · Master Access Enabled
                 </p>
                 <p className="mt-0.5 text-xs text-[#C3C7D2]">
-                  Unlimited past questions, offline guides, mock exams, AI breakdowns, and flashcards active at no charge.
+                  Unlimited past questions, offline guides, mock exams, and flashcards active at no charge.
                 </p>
               </div>
             </div>
@@ -219,22 +200,6 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
               <CheckCircle2 className="h-4 w-4" />
               Unlocked
             </span>
-          </div>
-        )}
-
-        {/* Compact AI Feature Notice when opened from a locked AI button */}
-        {isAiTrigger && activeTier !== 'infinity' && (
-          <div
-            role="status"
-            className="mx-auto mt-5 flex max-w-2xl items-center gap-3 rounded-2xl border border-[#1A1B20]/10 bg-white px-4 py-3 text-xs text-[#3A3D47] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)] sm:text-sm"
-          >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23] text-white">
-              <PqGuideAiIcon size="xs" />
-            </span>
-            <p className="min-w-0 leading-snug">
-              AI tools launch soon in Tier 3. All core study tools remain available in{' '}
-              <strong className="font-semibold text-[#1A1B20]">Standard Pass</strong>.
-            </p>
           </div>
         )}
 
@@ -272,36 +237,28 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
           )}
         </div>
 
-        {/* 3-Tier Cards Grid (Tier 2 is Dark Ash focal card) */}
-        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-stretch">
+        {/* Plan Cards Grid (Standard is the Dark Ash focal card) */}
+        <div className="mx-auto mt-6 grid max-w-3xl grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
           {SUBSCRIPTION_TIERS.map((tier) => {
             const price = tier.pricing[billingPeriod];
             const isFree = tier.id === 'free';
             const isTier2 = tier.id === 'standard';
-            const isTier3 = tier.id === 'pro_ai';
             const isCurrentFree = isFree && FREE_TIER_ENABLED && activeTier === 'free';
             const isFreeDisabled = isFree && !FREE_TIER_ENABLED;
             const useDarkCard = isTier2;
-            const isHighlightedOutline = isTier3 && isAiTrigger;
-            const showPreviewNotice = selectedNoticeTier === tier.id;
             const displayName =
               tier.id === 'free'
                 ? subCms.freeTierName
-                : tier.id === 'standard'
-                  ? subCms.standardTierName
-                  : subCms.aiTierName;
+                : subCms.standardTierName;
 
             return (
               <section
                 key={tier.id}
-                ref={isTier3 ? tier3Ref : undefined}
                 aria-label={`${displayName} plan`}
                 className={`relative flex flex-col justify-between rounded-3xl p-5 transition-all duration-200 sm:p-6 ${
                   useDarkCard
                     ? 'border-2 border-[#141519] bg-[#16171C] bg-gradient-to-b from-[#23252C] to-[#141519] text-white shadow-[0_22px_44px_-14px_rgba(14,15,20,0.68)]'
-                    : isHighlightedOutline
-                      ? 'border-2 border-[#1D1E23] bg-white text-[#1A1B20] shadow-[0_10px_26px_-12px_rgba(24,25,30,0.2)]'
-                      : 'border border-[#1A1B20]/[0.08] bg-white text-[#1A1B20] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)]'
+                    : 'border border-[#1A1B20]/[0.08] bg-white text-[#1A1B20] shadow-[0_2px_10px_-4px_rgba(24,25,30,0.06)]'
                 }`}
               >
                 <div>
@@ -324,12 +281,6 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
                     {isFreeDisabled && (
                       <span className="font-mono-tabular text-[11px] font-semibold text-[#DC2626]">
                         Ended
-                      </span>
-                    )}
-                    {isTier3 && !AI_INTEGRATION_ENABLED && (
-                      <span className="inline-flex items-center gap-1 font-mono-tabular text-[11px] font-semibold text-[#D97706]">
-                        <Lock className="h-3 w-3" />
-                        Coming soon
                       </span>
                     )}
                   </div>
@@ -429,23 +380,8 @@ export const SubscriptionScreen: React.FC<SubscriptionScreenProps> = ({
                           : 'tactile-dark text-white'
                       }`}
                     >
-                      {isTier3 && !AI_INTEGRATION_ENABLED
-                        ? `Preview · ${subscriptionService.formatNaira(price.amountNaira)}`
-                        : `Choose ${displayName.split(' ')[0]} · ${subscriptionService.formatNaira(price.amountNaira)}`}
+                      {`Choose ${displayName.split(' ')[0]} · ${subscriptionService.formatNaira(price.amountNaira)}`}
                     </button>
-                  )}
-
-                  {showPreviewNotice && (
-                    <p
-                      role="status"
-                      className={`rounded-xl px-3 py-2 text-xs leading-snug ${
-                        useDarkCard
-                          ? 'bg-white/10 text-[#E6E8F0]'
-                          : 'bg-[#F6F7F9] text-[#505460]'
-                      }`}
-                    >
-                      AI Scholar opens when AI launches. Tap Back or Close to keep studying.
-                    </p>
                   )}
                 </div>
               </section>

@@ -203,9 +203,14 @@ export const AUDIT_ACTION_META: Record<AuditActionType, AuditActionMeta> = {
     verb: 'submitted a scanned document',
   },
   doc_auto_approved: {
-    label: 'Document Auto-Approved',
-    whatItDoes: 'Automatically approved and published a clean, low-risk academic document after passing validation checks.',
-    verb: 'had a document auto-approved for publication',
+    label: 'Document Passed Checks',
+    whatItDoes: 'A scanned document passed validation and the AI cross-check. It still waits for Super Admin verification before students can see it.',
+    verb: 'scanned a document that passed all automated checks',
+  },
+  doc_ai_alert: {
+    label: 'AI Cross-Check Alert',
+    whatItDoes: 'The AI cross-check or integrity checks found a problem with a scanned document. The document stays out of the student library until the Super Admin verifies it.',
+    verb: 'scanned a document the AI cross-check marked as not okay',
   },
   doc_flagged: {
     label: 'Document Flagged for Review',

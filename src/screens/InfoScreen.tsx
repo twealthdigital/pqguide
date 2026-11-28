@@ -17,7 +17,6 @@ import {
   Search,
   Send,
 } from 'lucide-react';
-import { PqGuideAiIcon } from '../components/ui/PqGuideAiIcon';
 import type { AppScreen, AuthenticatedUser, SupportTicket } from '../core/types';
 import { useArchiveStore } from '../hooks/useArchiveStore';
 import { submitFeedback } from '../services/feedbackService';
@@ -70,7 +69,7 @@ const AboutPage: React.FC = () => {
   return (
     <div className="space-y-4">
       <FeatureRow
-        icon={<PqGuideAiIcon size="sm" />}
+        icon={<BookOpen className="w-5 h-5" />}
         title={about.card1Title}
         text={about.card1Body}
       />
@@ -156,8 +155,8 @@ const ServicesPage: React.FC<{
       {!restrictedAdminView && (
         <FeatureRow
           icon={<Crown className="w-5 h-5" />}
-          title="Subscription plans & AI Scholar"
-          text="View Monthly, Semester, and Yearly plans across Free Starter, Standard Pass, and AI Scholar from the side menu."
+          title="Subscription plans"
+          text="View Monthly, Semester, and Yearly plans across Free Starter and Standard Pass from the side menu."
           action={{ label: 'View plans', onClick: () => onNavigate('subscription') }}
         />
       )}

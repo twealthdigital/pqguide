@@ -16,7 +16,6 @@ export type Permission =
   | 'docs:scan_submit'
   | 'docs:read_library'
   | 'docs:review_all'
-  | 'ai:use'
   | 'schools:manage'
   | 'admins:manage'
   | 'accounts:manage'
@@ -35,15 +34,14 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, ReadonlySet<Permission>
   student: new Set<Permission>([
     'pq:read',
     'materials:read',
-    'docs:scan_submit',
     'docs:read_library',
-    'ai:use',
   ]),
   school_admin: new Set<Permission>([
     'pq:read',
     'pq:upload_school',
     'pq:manage_school',
     'materials:read',
+    'docs:scan_submit',
   ]),
   super_admin: new Set<Permission>([
     'pq:read',
@@ -54,7 +52,6 @@ export const ROLE_PERMISSIONS: Readonly<Record<UserRole, ReadonlySet<Permission>
     'docs:scan_submit',
     'docs:read_library',
     'docs:review_all',
-    'ai:use',
     'schools:manage',
     'admins:manage',
     'accounts:manage',
@@ -127,7 +124,7 @@ export function canManageSchoolDocument(
 
 /**
  * Checks whether a user can open a screen:
- * - Students: normal student website + document scanner/library + AI + info/support screens ONLY (never admin screens).
+ * - Students: normal student website + published document library + info/support screens ONLY (never admin screens or scanning).
  * - School Admins: ONLY School Admin Desk + Notifications + About/Services/Help/Customer Support
  *   (cannot switch to or open normal student website screens or Super Admin).
  * - Super Admins: full access across Super Admin console, School Admin view, and Student website view.

@@ -40,6 +40,8 @@ import {
   TactileButton,
 } from '../components/ui';
 
+import { DocumentScannerScreen } from './DocumentScannerScreen';
+
 interface SchoolAdminScreenProps {
   currentUser: AuthenticatedUser;
   activeSection?: SchoolAdminSectionId;
@@ -52,6 +54,7 @@ const SECTION_LABELS: Record<SchoolAdminSectionId, string> = {
   overview: 'Overview',
   students: 'Students',
   upload: 'Upload Documents',
+  scan: 'Scan Documents',
   catalog: 'Past Questions',
   notices: 'Student Notices',
 };
@@ -461,7 +464,9 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
                     : activeSection === 'upload'
                       ? adminCms.uploadPanelHint ||
                         `Upload scanned or typed past question documents for ${assignedSchool.code}.`
-                      : activeSection === 'catalog'
+                      : activeSection === 'scan'
+                        ? `Scan past questions and notes for ${assignedSchool.code}. A Super Admin verifies every scan before students see it.`
+                        : activeSection === 'catalog'
                         ? `Search, preview, edit, publish, or remove ${assignedSchool.code} past question papers.`
                         : `Submit and monitor ${assignedSchool.code} student announcements pending Super Admin verification.`}
               </p>
@@ -711,6 +716,8 @@ export const SchoolAdminScreen: React.FC<SchoolAdminScreenProps> = ({
             </div>
           </div>
         )}
+
+        {activeSection === 'scan' && <DocumentScannerScreen currentUser={currentUser} />}
 
         {activeSection === 'upload' && (
           <SurfaceCard tone="white" className="p-5 sm:p-6 space-y-5">

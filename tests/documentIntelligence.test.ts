@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import test, { after, beforeEach, describe } from 'node:test';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import sharp from 'sharp';
-import { createApiApp } from '../server.ts';
 import { createDocumentEngine } from '../server/documentService.ts';
-import { createAiEngine } from '../server/aiService.ts';
 import type { AuthenticatedUser } from '../src/core/types.ts';
 import { archiveRepository } from '../src/services/archiveRepository.ts';
 import { validateMagicAndSecurity } from '../src/services/intelligence/fileSecurity.ts';
@@ -23,7 +20,6 @@ import {
   runDeterministicChecks,
   validateScannedDocument,
 } from '../src/services/intelligence/validationEngine.ts';
-import { buildGroundedAcademicContext } from '../src/services/intelligence/academicContext.ts';
 
 function makeStudent(id = 'usr-student-1', fullName = 'Tolu Adeyemi'): AuthenticatedUser {
   return {
@@ -463,7 +459,7 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     });
     assert.equal(outcome1.publicationStatus, 'published');
 
-    const doc1 = archiveRepository.submitScannedDocument(studentA, {
+    const doc1 = archiveRepository.submitScannedDocument(schoolAdmin, {
       schoolId: 'sch-aaua',
       title: 'CSC 301 Process Scheduling',
       courseCode: 'CSC 301',
@@ -494,7 +490,21 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
       decisionReason: outcome1.decisionReason,
     });
 
-    assert.equal(doc1.publicationStatus, 'published');
+    // Students cannot scan; even clean scans wait for Super Admin verification.
+    assert.throws(
+      () =>
+        archiveRepository.submitScannedDocument(studentA, {
+          ...({} as Parameters<typeof archiveRepository.submitScannedDocument>[1]),
+        }),
+      /School Admin or Super Admin/i
+    );
+    assert.equal(doc1.publicationStatus, 'pending_review');
+    assert.equal(
+      archiveRepository.getPublishedLibraryDocuments().some((d) => d.id === doc1.id),
+      false
+    );
+    const verifiedDoc1 = archiveRepository.reviewSubmittedDocument(superAdmin, doc1.id, 'approve');
+    assert.equal(verifiedDoc1.publicationStatus, 'published');
     assert.ok(archiveRepository.getPublishedLibraryDocuments().some((d) => d.id === doc1.id));
 
     // Re-uploading the identical file hits SHA-256 duplicate check and is flagged/rejected out of Library
@@ -530,7 +540,7 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     });
     assert.equal(flaggedOutcome.publicationStatus, 'flagged');
 
-    const flaggedDoc = archiveRepository.submitScannedDocument(studentA, {
+    const flaggedDoc = archiveRepository.submitScannedDocument(schoolAdmin, {
       schoolId: 'sch-aaua',
       title: 'Blurry Biology Lab Chart',
       courseCode: 'BIO 201',
@@ -566,13 +576,20 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
       archiveRepository.getPublishedLibraryDocuments().some((d) => d.id === flaggedDoc.id),
       false
     );
-    assert.ok(archiveRepository.getDocumentsForSubmitter(studentA.id).some((d) => d.id === flaggedDoc.id));
+    assert.ok(archiveRepository.getDocumentsForSubmitter(schoolAdmin.id).some((d) => d.id === flaggedDoc.id));
     assert.equal(
       archiveRepository.getDocumentsForSubmitter(studentB.id).some((d) => d.id === flaggedDoc.id),
       false
     );
     assert.ok(
       archiveRepository.getDocumentsForReview(superAdmin).some((d) => d.id === flaggedDoc.id)
+    );
+
+    // The Super Admin gets an extra alert when the AI/integrity checks are not okay
+    assert.ok(
+      archiveRepository
+        .getSuperAdminGovernanceNotifications()
+        .some((n) => n.categoryLabel === 'AI Cross-Check Alert' && /Blurry Biology Lab Chart/.test(n.message))
     );
 
     // RBAC: Student and School Admin cannot review submitted documents
@@ -627,7 +644,7 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     );
   });
 
-  test('11. Server Sharp image optimization and Academic AI grounding HTTP routes', async () => {
+  test('11. Server Sharp image optimization and binary validation', async () => {
     const docEngine = createDocumentEngine({ env: {} });
     const pngBytes = await buildPngBytes(240, 120);
 
@@ -656,67 +673,6 @@ describe('Document Intelligence, Security, Verification & Academic AI Suite', ()
     });
     assert.equal(badRes.status, 422);
     assert.equal(badRes.body.ok, false);
-
-    // Academic AI service grounding & anti-hallucination verification
-    const aiEngine = createAiEngine({ env: {} });
-    const context = buildGroundedAcademicContext(archiveRepository.getSnapshot());
-
-    const foundStudy = await aiEngine.runStudyQuery({
-      body: {
-        prompt: 'Find GNS 101 past questions and solve inclined plane force',
-        mode: 'find_archive',
-        context,
-      },
-    });
-    assert.equal(foundStudy.status, 200);
-    assert.equal(foundStudy.body.ok, true);
-    assert.ok(foundStudy.body.response);
-    assert.ok(foundStudy.body.response.citations.length >= 1);
-    assert.ok(foundStudy.body.response.blocks.some((b) => b.type === 'diagram' || b.type === 'math'));
-
-    const missingCourse = await aiEngine.runStudyQuery({
-      body: {
-        prompt: 'Give me ZZZ 999 secret answers',
-        mode: 'find_archive',
-        context,
-      },
-    });
-    assert.equal(missingCourse.status, 200);
-    assert.equal(missingCourse.body.response?.groundedInArchive, false);
-
-    // HTTP integration through Express createApiApp()
-    const app = createApiApp();
-    const server = http.createServer(app);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
-    const addr = server.address();
-    const baseUrl = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
-
-    try {
-      const statusResp = await fetch(`${baseUrl}/api/ai/status`);
-      assert.equal(statusResp.status, 200);
-      const statusJson = (await statusResp.json()) as { ok: boolean; model: string };
-      assert.equal(statusJson.ok, true);
-      assert.equal(statusJson.model, 'gemini-4-hydrogen');
-
-      const badStudy = await fetch(`${baseUrl}/api/ai/study`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: '' }),
-      });
-      assert.equal(badStudy.status, 400);
-
-      const okStudy = await fetch(`${baseUrl}/api/ai/study`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: 'Show quadratic formula step by step', mode: 'step_solution', context }),
-      });
-      assert.equal(okStudy.status, 200);
-      const studyJson = (await okStudy.json()) as { ok: boolean; response?: { blocks: unknown[] } };
-      assert.equal(studyJson.ok, true);
-      assert.ok((studyJson.response?.blocks.length ?? 0) >= 1);
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
   });
 });
 

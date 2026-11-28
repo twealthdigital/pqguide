@@ -49,7 +49,6 @@ export function createDefaultSiteCms(): SiteCmsConfig {
       subtitle: 'Select a billing cycle, then tap a plan below.',
       freeTierName: 'Free Starter',
       standardTierName: 'Standard Pass',
-      aiTierName: 'AI Scholar',
       checkoutNote: 'Verified automatically on callback and logged for Super Admin reconciliation.',
     },
     schoolAdminUi: {
@@ -106,9 +105,9 @@ export function createDefaultSiteCms(): SiteCmsConfig {
           description: 'Structured course study materials you can read online or download offline.',
         },
         {
-          title: 'Scan-to-PDF uploads for schools',
+          title: 'Verified scans from schools',
           description:
-            'Authorized school administrators verify and upload past questions so students get clean, searchable papers.',
+            'School administrators scan and upload past questions, and a Super Admin verifies each one so students get clean, searchable papers.',
         },
       ],
     },
@@ -140,9 +139,9 @@ export function createDefaultSiteCms(): SiteCmsConfig {
             'Submitting an exam automatically opens Performance, where you can review missed questions and your overall percentage rating.',
         },
         {
-          question: 'How do subscriptions and Tier 3 AI Scholar work?',
+          question: 'How do subscriptions work?',
           answer:
-            'Open Subscription Plans from the side panel to compare Free Starter, Standard Pass, and AI Scholar across Monthly, Semester, and Yearly cycles.',
+            'Open Subscription Plans from the side panel to compare Free Starter and Standard Pass across Monthly, Semester, and Yearly cycles.',
         },
       ],
     },

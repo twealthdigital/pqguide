@@ -8,7 +8,6 @@ import {
   Eye,
   FileText,
   FolderOpen,
-  ScanLine,
   ShieldAlert,
 } from 'lucide-react';
 import type {
@@ -31,7 +30,6 @@ import {
 import {
   CustomSelect,
   DetailDialog,
-  PqGuideAiIcon,
   SearchField,
   SectionHeadingBar,
   SurfaceCard,
@@ -41,7 +39,7 @@ import {
 interface DocumentLibraryScreenProps {
   currentUser: AuthenticatedUser;
   initialDocId?: string | null;
-  onNavigate: (screen: AppScreen, opts?: { docLibraryId?: string; aiPrompt?: string }) => void;
+  onNavigate: (screen: AppScreen, opts?: { docLibraryId?: string }) => void;
 }
 
 const CATEGORY_LABELS: Record<AcademicDocCategory, string> = {
@@ -56,7 +54,7 @@ function statusChip(doc: AcademicDocumentRecord): { label: string; cls: string }
   switch (doc.publicationStatus) {
     case 'published':
       return {
-        label: doc.decision === 'auto_approved' ? 'Auto-Approved' : 'Verified Published',
+        label: 'Verified Published',
         cls: 'bg-[#DCFCE7] text-[#15803D]',
       };
     case 'rejected':
@@ -74,7 +72,6 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
   onNavigate,
 }) => {
   const store = useArchiveStore();
-  const [tab, setTab] = useState<'library' | 'submissions'>('library');
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | AcademicDocCategory>('all');
   const [formatFilter, setFormatFilter] = useState<'all' | AcademicDocFormat>('all');
@@ -92,10 +89,9 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
   }, [initialDocId]);
 
   const publishedDocs = archiveRepository.getPublishedLibraryDocuments();
-  const mySubmissions = archiveRepository.getDocumentsForSubmitter(currentUser.id);
 
   const visibleDocs = useMemo(() => {
-    const base = tab === 'library' ? publishedDocs : mySubmissions;
+    const base = publishedDocs;
     const q = query.trim().toLowerCase();
     return base.filter((doc) => {
       if (categoryFilter !== 'all' && doc.category !== categoryFilter) return false;
@@ -110,7 +106,7 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
         doc.extractedText.toLowerCase().includes(q)
       );
     });
-  }, [tab, publishedDocs, mySubmissions, query, categoryFilter, formatFilter, levelFilter]);
+  }, [publishedDocs, query, categoryFilter, formatFilter, levelFilter]);
 
   // Enforce strict access scope: only published docs OR submitter's own submissions (Super Admin can also inspect)
   const selectedDoc = useMemo(() => {
@@ -149,49 +145,16 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
             </h1>
             <p className="text-sm text-[#B8BCC8] max-w-2xl">
               Browse verified uploads with preserved diagrams, structured tables, KaTeX math
-              formulas, and page-by-page navigation — or track your own scanned submissions.
+              formulas, and page-by-page navigation — verified by the Super Admin.
             </p>
           </div>
 
-          <TactileButton
-            variant="light"
-            size="sm"
-            icon={<ScanLine className="w-4 h-4" />}
-            onClick={() => onNavigate('document_scanner')}
-          >
-            Scan New Document
-          </TactileButton>
         </div>
       </SurfaceCard>
 
       {/* Switcher + Search + Filters */}
       <SurfaceCard tone="white" className="p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-xl bg-[#F6F7F9] p-1 border border-[#1A1B20]/10">
-            <button
-              type="button"
-              onClick={() => setTab('library')}
-              className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-                tab === 'library'
-                  ? 'bg-[#1D1E23] text-white'
-                  : 'text-[#505460] hover:text-[#1A1B20]'
-              }`}
-            >
-              Published Library ({publishedDocs.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab('submissions')}
-              className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
-                tab === 'submissions'
-                  ? 'bg-[#1D1E23] text-white'
-                  : 'text-[#505460] hover:text-[#1A1B20]'
-              }`}
-            >
-              My Submissions ({mySubmissions.length})
-            </button>
-          </div>
-
           <div className="w-full sm:w-72">
             <SearchField
               value={query}
@@ -258,21 +221,11 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
             <BookOpen className="w-5 h-5" />
           </div>
           <h2 className="font-display text-base font-bold text-[#1A1B20]">
-            {tab === 'library' ? 'No Published Documents Match Yet' : 'No Submissions Yet'}
+            No Published Documents Match Yet
           </h2>
           <p className="text-xs sm:text-sm text-[#505460] max-w-md mx-auto">
-            {tab === 'library'
-              ? 'Upload PDFs, scanned pages, DOCX lecture notes, or ZIP academic bundles to populate the Student Document Library.'
-              : 'You have not scanned any academic documents in this session yet.'}
+            Verified documents appear here once a Super Admin approves them.
           </p>
-          <TactileButton
-            variant="dark"
-            size="sm"
-            icon={<ScanLine className="w-4 h-4" />}
-            onClick={() => onNavigate('document_scanner')}
-          >
-            Go to Document Scanner
-          </TactileButton>
         </SurfaceCard>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -326,21 +279,6 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
                     By {doc.submittedByName}
                   </span>
                   <div className="flex items-center gap-2">
-                    {doc.publicationStatus === 'published' && (
-                      <TactileButton
-                        variant="light"
-                        size="sm"
-                        icon={<PqGuideAiIcon size="xs" state="idle" />}
-                        onClick={() =>
-                          onNavigate('ai_assistant', {
-                            docLibraryId: doc.id,
-                            aiPrompt: `Explain the main formulas and key questions from ${doc.courseCode} (${doc.title})`,
-                          })
-                        }
-                      >
-                        Ask AI
-                      </TactileButton>
-                    )}
                     <TactileButton
                       variant="dark"
                       size="sm"
@@ -373,23 +311,6 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
         }
         icon={<FileText className="w-4 h-4" />}
         maxWidthClass="max-w-4xl"
-        footer={
-          selectedDoc ? (
-            <TactileButton
-              variant="dark"
-              size="sm"
-              icon={<PqGuideAiIcon size="xs" state="idle" />}
-              onClick={() => {
-                const prompt = `Create a structured study summary and 2 practice questions grounded in ${selectedDoc.courseCode} (${selectedDoc.title})`;
-                const id = selectedDoc.id;
-                setSelectedDocId(null);
-                onNavigate('ai_assistant', { docLibraryId: id, aiPrompt: prompt });
-              }}
-            >
-              Study With PQGuide AI
-            </TactileButton>
-          ) : null
-        }
       >
         {selectedDoc && (
           <div className="space-y-4">

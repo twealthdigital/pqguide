@@ -180,19 +180,6 @@ export const PastQuestionReaderScreen: React.FC<PastQuestionReaderScreenProps> =
           solution={doc.solutions?.[sheet.index] ?? null}
           onClose={closeAnswer}
           onExited={exitedAnswer}
-          onAskAi={
-            onOpenPaywall
-              ? () => {
-                  setSheet(null);
-                  onOpenPaywall({
-                    highlightTier: 'pro_ai',
-                    featureLabel: 'AI Step-by-Step Tutor',
-                    reason:
-                      'Standard covers past questions and worked answers, while Tier 3 (AI Scholar) unlocks conversational AI breakdowns for any question.',
-                  });
-                }
-              : undefined
-          }
         />
       )}
     </div>

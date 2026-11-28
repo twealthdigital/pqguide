@@ -5,7 +5,8 @@ import {
   CheckCircle2,
   Eye,
   FileText,
-  FolderOpen,
+  FileCheck2,
+  Loader2,
   RotateCcw,
   ScanLine,
   ShieldAlert,
@@ -16,7 +17,6 @@ import {
 import type {
   AcademicDocCategory,
   AcademicDocumentRecord,
-  AppScreen,
   AuthenticatedUser,
   SemesterType,
   StudentLevel,
@@ -49,7 +49,6 @@ import {
 import {
   CustomSelect,
   DetailDialog,
-  PqGuideAiIcon,
   SectionHeadingBar,
   SurfaceCard,
   TactileButton,
@@ -57,7 +56,8 @@ import {
 
 interface DocumentScannerScreenProps {
   currentUser: AuthenticatedUser;
-  onNavigate: (screen: AppScreen, opts?: { docLibraryId?: string; aiPrompt?: string }) => void;
+  /** Super Admin only: jump to the Document Review queue. */
+  onOpenReview?: () => void;
 }
 
 interface QueueItem {
@@ -100,28 +100,31 @@ function decisionBadge(record: AcademicDocumentRecord): {
 } {
   if (record.publicationStatus === 'published') {
     return {
-      label:
-        record.decision === 'auto_approved'
-          ? 'Auto-Approved & Published'
-          : 'Approved & Published',
+      label: 'Verified & Published',
       toneClass: 'bg-[#DCFCE7] text-[#15803D] border-[#86EFAC]',
     };
   }
   if (record.publicationStatus === 'rejected') {
     return {
-      label: 'Blocked / Rejected',
+      label: 'Blocked by Checks · Super Admin Alerted',
       toneClass: 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]',
     };
   }
+  if (record.publicationStatus === 'flagged') {
+    return {
+      label: 'AI Flagged · Super Admin Alerted',
+      toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
+    };
+  }
   return {
-    label: 'Queued for Super Admin Review',
+    label: 'Awaiting Super Admin Verification',
     toneClass: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]',
   };
 }
 
 export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
   currentUser,
-  onNavigate,
+  onOpenReview,
 }) => {
   const store = useArchiveStore();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -500,44 +503,40 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
 
   return (
     <div className="space-y-6 page-enter">
-      {/* Header Banner */}
-      <SurfaceCard tone="ash" withWaves className="p-6">
+      {/* Intro */}
+      <SurfaceCard tone="white" className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#C3C7D2]">
-              <PqGuideAiIcon
-                size="sm"
-                state={activeCount > 0 ? 'scanning' : 'idle'}
-              />
-              <span>Document Intelligence Scanner</span>
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1D1E23] text-white">
+              {activeCount > 0 ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <ScanLine className="w-5 h-5" />
+              )}
+            </span>
+            <div className="min-w-0">
+              <h2 className="font-display text-base sm:text-lg font-bold text-[#1A1B20]">
+                Scan &amp; Verify Academic Documents
+              </h2>
+              <p className="mt-1 text-xs sm:text-sm text-[#505460] max-w-2xl">
+                Upload past questions, lecture notes, lab diagrams, DOCX files, or ZIP archives.
+                PQGuide extracts pages, formulas, tables, and diagrams, then runs deterministic and
+                AI cross-checks. Every scan goes to the Super Admin for verification before students
+                can see it, and the Super Admin is alerted straight away if the AI finds a problem.
+              </p>
             </div>
-            <h1 className="font-display text-[32px] sm:text-[40px] font-extrabold tracking-tight text-white leading-[1.1]">
-              Scan &amp; Verify Academic Documents
-            </h1>
-            <p className="text-sm text-[#B8BCC8] max-w-2xl">
-              Upload past questions, lecture notes, lab diagrams, DOCX files, or ZIP archives.
-              PQGuide extracts pages, formulas, tables, diagrams, and runs deterministic + AI cross-checks.
-            </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          {onOpenReview && (
             <TactileButton
-              variant="light"
+              variant="dark"
               size="sm"
-              icon={<FolderOpen className="w-4 h-4" />}
-              onClick={() => onNavigate('document_library')}
+              icon={<FileCheck2 className="w-4 h-4" />}
+              onClick={onOpenReview}
             >
-              Document Library
+              Open Document Review
             </TactileButton>
-            <TactileButton
-              variant="light"
-              size="sm"
-              icon={<PqGuideAiIcon size="xs" state="idle" />}
-              onClick={() => onNavigate('ai_assistant')}
-            >
-              Ask PQGuide AI
-            </TactileButton>
-          </div>
+          )}
         </div>
       </SurfaceCard>
 
@@ -565,7 +564,11 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
             label="University"
             value={schoolId}
             options={store.schools
-              .filter((s) => s.isActive)
+              .filter((s) =>
+                currentUser.role === 'school_admin'
+                  ? s.id === currentUser.assignedSchoolId
+                  : s.isActive
+              )
               .map((s) => ({ value: s.id, label: `${s.code} — ${s.shortName}` }))}
             onChange={setSchoolId}
           />
@@ -670,7 +673,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
 
           <div className="mx-auto h-14 w-14 rounded-2xl bg-[#1D1E23] text-white flex items-center justify-center mb-3">
             {activeCount > 0 ? (
-              <PqGuideAiIcon size="lg" state="scanning" />
+              <Loader2 className="w-6 h-6 animate-spin" />
             ) : (
               <UploadCloud className="w-6 h-6" />
             )}
@@ -710,7 +713,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
             }
             icon={
               activeCount > 0 ? (
-                <PqGuideAiIcon size="sm" state="scanning" />
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <FileText className="w-4 h-4" />
               )
@@ -729,7 +732,7 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
                     <div className="flex items-start gap-3 min-w-0 flex-1">
                       <div className="h-10 w-10 rounded-xl bg-white border border-[#1A1B20]/10 flex items-center justify-center shrink-0">
                         {item.status === 'processing' ? (
-                          <PqGuideAiIcon size="sm" state="scanning" />
+                          <Loader2 className="w-5 h-5 animate-spin text-[#1D1E23]" />
                         ) : item.status === 'completed' ? (
                           <CheckCircle2 className="w-5 h-5 text-[#15803D]" />
                         ) : item.status === 'failed' ? (
@@ -849,33 +852,18 @@ export const DocumentScannerScreen: React.FC<DocumentScannerScreenProps> = ({
         icon={<FileText className="w-4 h-4" />}
         maxWidthClass="max-w-3xl"
         footer={
-          previewRecord ? (
-            <>
-              <TactileButton
-                variant="light"
-                size="sm"
-                icon={<FolderOpen className="w-3.5 h-3.5" />}
-                onClick={() => {
-                  const id = previewRecord.id;
-                  setPreviewRecord(null);
-                  onNavigate('document_library', { docLibraryId: id });
-                }}
-              >
-                Open in Document Library
-              </TactileButton>
-              <TactileButton
-                variant="dark"
-                size="sm"
-                icon={<PqGuideAiIcon size="xs" state="idle" />}
-                onClick={() => {
-                  const prompt = `Summarize key concepts and exam topics from ${previewRecord.courseCode} (${previewRecord.title})`;
-                  setPreviewRecord(null);
-                  onNavigate('ai_assistant', { aiPrompt: prompt, docLibraryId: previewRecord.id });
-                }}
-              >
-                Ask PQGuide AI
-              </TactileButton>
-            </>
+          previewRecord && onOpenReview ? (
+            <TactileButton
+              variant="dark"
+              size="sm"
+              icon={<FileCheck2 className="w-3.5 h-3.5" />}
+              onClick={() => {
+                setPreviewRecord(null);
+                onOpenReview();
+              }}
+            >
+              Open in Document Review
+            </TactileButton>
           ) : null
         }
       >

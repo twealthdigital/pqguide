@@ -34,7 +34,7 @@ interface DocumentReviewTabProps {
   onError: (msg: string) => void;
 }
 
-type ReviewFilter = 'pending_flagged' | 'auto_approved' | 'rejected' | 'all';
+type ReviewFilter = 'pending_flagged' | 'checks_passed' | 'rejected' | 'all';
 
 function riskBadge(risk: AcademicDocumentRecord['riskLevel']): string {
   if (risk === 'high') return 'bg-[#FEE2E2] text-[#B91C1C] border-[#FECACA]';
@@ -64,7 +64,7 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
     () => ({
       pending_flagged: archiveRepository.getDocumentsForReview(currentUser, 'pending_flagged')
         .length,
-      auto_approved: archiveRepository.getDocumentsForReview(currentUser, 'auto_approved')
+      checks_passed: archiveRepository.getDocumentsForReview(currentUser, 'checks_passed')
         .length,
       rejected: archiveRepository.getDocumentsForReview(currentUser, 'rejected').length,
       all: allDocs.length,
@@ -150,7 +150,7 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
             {(
               [
                 ['pending_flagged', `Pending & Flagged (${counts.pending_flagged})`],
-                ['auto_approved', `Auto-Approved (${counts.auto_approved})`],
+                ['checks_passed', `Passed Checks (${counts.checks_passed})`],
                 ['rejected', `Rejected (${counts.rejected})`],
                 ['all', `All Submissions (${counts.all})`],
               ] as Array<[ReviewFilter, string]>

@@ -2185,7 +2185,7 @@ class ArchiveRepository {
 
   getDocumentsForReview(
     actor: AuthenticatedUser | null | undefined,
-    filter: 'pending_flagged' | 'auto_approved' | 'rejected' | 'all' = 'all'
+    filter: 'pending_flagged' | 'checks_passed' | 'rejected' | 'all' = 'all'
   ): AcademicDocumentRecord[] {
     this.requirePermission(
       actor,
@@ -2200,8 +2200,8 @@ class ArchiveRepository {
           doc.publicationStatus === 'resubmission_requested'
         );
       }
-      if (filter === 'auto_approved') {
-        return doc.decision === 'auto_approved' && doc.publicationStatus === 'published';
+      if (filter === 'checks_passed') {
+        return doc.decision === 'auto_approved' && doc.publicationStatus === 'pending_review';
       }
       if (filter === 'rejected') {
         return doc.publicationStatus === 'rejected';
@@ -2252,12 +2252,15 @@ class ArchiveRepository {
     this.requirePermission(
       actor,
       'docs:scan_submit',
-      'Active Student or Super Admin account required to submit scanned academic documents.'
+      'Only active School Admin or Super Admin accounts can scan and submit academic documents.'
     );
 
+    const requestedSchoolId =
+      actor.role === 'school_admin' && actor.assignedSchoolId
+        ? actor.assignedSchoolId
+        : payload.schoolId || this.state.selectedSchoolId;
     const school =
-      this.state.schools.find((s) => s.id === (payload.schoolId || this.state.selectedSchoolId)) ??
-      this.state.schools[0];
+      this.state.schools.find((s) => s.id === requestedSchoolId) ?? this.state.schools[0];
 
     const duplicate = this.findDocumentBySha256(payload.sha256);
     const now = new Date().toISOString();
@@ -2267,14 +2270,15 @@ class ArchiveRepository {
       finalDecision = 'flagged';
     }
 
+    // Every scanned document waits for Super Admin verification. Nothing is published
+    // automatically, even when the deterministic checks and the AI cross-check pass.
+    const aiOk = finalDecision === 'auto_approved';
     const publicationStatus: AcademicDocumentRecord['publicationStatus'] =
-      finalDecision === 'auto_approved'
-        ? 'published'
-        : finalDecision === 'rejected'
-          ? 'rejected'
-          : finalDecision === 'flagged'
-            ? 'flagged'
-            : 'pending_review';
+      finalDecision === 'rejected'
+        ? 'rejected'
+        : finalDecision === 'flagged'
+          ? 'flagged'
+          : 'pending_review';
 
     const docId = payload.id || `adoc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const record: AcademicDocumentRecord = {
@@ -2349,73 +2353,85 @@ class ArchiveRepository {
           id: `ph-${Date.now()}-dec`,
           timestamp: now,
           stage: 'Verification Decision',
-          status:
-            publicationStatus === 'published'
-              ? 'completed'
-              : publicationStatus === 'rejected'
-                ? 'failed'
-                : 'warning',
-          detail:
-            payload.decisionReason ||
-            (publicationStatus === 'published'
-              ? 'Auto-approved and published to Student Document Library.'
-              : 'Routed to Super Admin Document Review.'),
+          status: publicationStatus === 'rejected' ? 'failed' : aiOk ? 'completed' : 'warning',
+          detail: aiOk
+            ? 'Passed deterministic checks and AI cross-check. Awaiting Super Admin verification before publication.'
+            : payload.decisionReason || 'Routed to Super Admin Document Review.',
         },
       ],
     };
 
-    const auditAction: AuditActionType =
-      publicationStatus === 'published' ? 'doc_auto_approved' : 'doc_flagged';
+    const auditAction: AuditActionType = aiOk ? 'doc_auto_approved' : 'doc_flagged';
+    const aiReason = sanitizeSingleLine(
+      payload.decisionReason || record.aiFindings?.reason || 'Integrity or AI checks did not pass.',
+      300
+    );
 
     this.update((prev) => {
-      const nextNotifications =
-        publicationStatus === 'published'
-          ? prev.notifications
-          : [
-              {
-                id: `notif-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                title:
-                  publicationStatus === 'rejected'
-                    ? `Document Blocked: ${record.courseCode}`
-                    : `Document Flagged for Verification: ${record.courseCode}`,
-                message:
-                  publicationStatus === 'rejected'
-                    ? `"${record.title}" failed automated safety/integrity checks and was not published.`
-                    : `"${record.title}" has been queued for Super Admin review before appearing in the Document Library.`,
-                category: 'upload' as const,
-                audience: (actor.role === 'student' ? 'students' : 'admins') as BroadcastAudience,
-                targetUserId: actor.id,
-                createdAt: now,
-                isRead: false,
-                createdBy: 'PQGuide Verification Engine',
-                approvalStatus: 'approved' as const,
-              },
-              ...prev.notifications,
-            ];
+      const submitterNotification = {
+        id: `notif-doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title:
+          publicationStatus === 'rejected'
+            ? `Scan Blocked: ${record.courseCode}`
+            : aiOk
+              ? `Scan Received: ${record.courseCode}`
+              : `Scan Flagged: ${record.courseCode}`,
+        message:
+          publicationStatus === 'rejected'
+            ? `"${record.title}" failed automated safety/integrity checks and was not published. The Super Admin has been alerted.`
+            : aiOk
+              ? `"${record.title}" passed the automated checks and is waiting for Super Admin verification before students can see it.`
+              : `"${record.title}" was flagged by the AI cross-check. The Super Admin has been alerted and will verify it before it appears in the Document Library.`,
+        category: 'upload' as const,
+        audience: 'admins' as BroadcastAudience,
+        targetUserId: actor.id,
+        createdAt: now,
+        isRead: false,
+        createdBy: 'PQGuide Verification Engine',
+        approvalStatus: 'approved' as const,
+      };
+
+      const auditEntries = [
+        createAuditEntry(
+          actor,
+          'doc_scanned',
+          'academic_document',
+          record.id,
+          `Scanned "${record.title}" (${record.courseCode} · ${record.detectedFormat.toUpperCase()})`,
+          record.schoolId
+        ),
+        createAuditEntry(
+          actor,
+          auditAction,
+          'academic_document',
+          record.id,
+          aiOk
+            ? `Passed automated checks, awaiting your verification: "${record.title}"`
+            : `${publicationStatus === 'rejected' ? 'Blocked' : 'Flagged for review'}: "${record.title}"`,
+          record.schoolId
+        ),
+      ];
+
+      // Extra alert for the Super Admin whenever the AI/integrity checks say the
+      // document is not okay, on top of the normal "every scan" entry above.
+      if (!aiOk) {
+        auditEntries.push(
+          createAuditEntry(
+            actor,
+            'doc_ai_alert',
+            'academic_document',
+            record.id,
+            `AI cross-check found problems with "${record.title}" (${record.courseCode}, ${record.riskLevel} risk): ${aiReason}`,
+            record.schoolId
+          )
+        );
+      }
 
       return {
         ...prev,
         academicDocuments: [record, ...prev.academicDocuments].slice(0, 120),
-        notifications: nextNotifications,
-        auditLogs: [
-          createAuditEntry(
-            actor,
-            'doc_scanned',
-            'academic_document',
-            record.id,
-            `Scanned "${record.title}" (${record.courseCode} · ${record.detectedFormat.toUpperCase()})`,
-            record.schoolId
-          ),
-          createAuditEntry(
-            actor,
-            auditAction,
-            'academic_document',
-            record.id,
-            `${publicationStatus === 'published' ? 'Auto-approved' : publicationStatus === 'rejected' ? 'Rejected' : 'Flagged for review'}: "${record.title}"`,
-            record.schoolId
-          ),
-          ...prev.auditLogs,
-        ].slice(0, 300),
+        notifications: [submitterNotification, ...prev.notifications],
+        auditLogs: [...auditEntries.reverse(), ...prev.auditLogs].slice(0, 300),
       };
     });
 
@@ -2523,7 +2539,7 @@ class ArchiveRepository {
               ? `"${updated.title}" passed Super Admin verification and is now live in the Student Document Library.`
               : `Your upload "${updated.title}" requires attention: ${cleanReason}`,
           category: 'upload' as const,
-          audience: 'students' as BroadcastAudience,
+          audience: 'admins' as BroadcastAudience,
           targetUserId: updated.submittedById,
           createdAt: now,
           isRead: false,

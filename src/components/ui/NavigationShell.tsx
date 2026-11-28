@@ -41,7 +41,6 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { PqGuideAiIcon } from './PqGuideAiIcon';
 import type {
   AppScreen,
   AuthenticatedUser,
@@ -488,9 +487,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
             { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
             { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
-            { id: 'document_scanner', label: 'Scan Docs', icon: <ScanLine className="w-5 h-5" /> },
             { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-5 h-5" /> },
-            { id: 'ai_assistant', label: 'PQGuide AI', icon: <PqGuideAiIcon size="xs" /> },
             { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
             { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
           ]
@@ -499,9 +496,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
           { id: 'home', label: 'Home', icon: <Home className="w-5 h-5" /> },
           { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-5 h-5" /> },
           { id: 'materials', label: 'Materials', icon: <Folder className="w-5 h-5" /> },
-          { id: 'document_scanner', label: 'Scan Docs', icon: <ScanLine className="w-5 h-5" /> },
           { id: 'document_library', label: 'Doc Library', icon: <FolderOpen className="w-5 h-5" /> },
-          { id: 'ai_assistant', label: 'PQGuide AI', icon: <PqGuideAiIcon size="xs" /> },
           { id: 'mock_exam', label: 'Practice Exam', icon: <ClipboardCheck className="w-5 h-5" /> },
           { id: 'performance', label: 'Performance', icon: <BarChart3 className="w-5 h-5" /> },
         ];
@@ -517,6 +512,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-[18px] h-[18px]" /> },
     { id: 'students', label: 'Students', icon: <Users className="w-[18px] h-[18px]" /> },
     { id: 'upload', label: 'Upload Documents', icon: <UploadCloud className="w-[18px] h-[18px]" /> },
+    { id: 'scan', label: 'Scan Documents', icon: <ScanLine className="w-[18px] h-[18px]" /> },
     { id: 'catalog', label: 'Past Questions', icon: <FileText className="w-[18px] h-[18px]" /> },
     { id: 'notices', label: 'Student Notices', icon: <Bell className="w-[18px] h-[18px]" /> },
   ];
@@ -543,6 +539,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     },
     { id: 'past_questions', label: 'Past Questions', icon: <FileText className="w-[18px] h-[18px]" /> },
     { id: 'study_materials', label: 'Study Materials', icon: <BookOpen className="w-[18px] h-[18px]" /> },
+    { id: 'document_scanner', label: 'Scan Documents', icon: <ScanLine className="w-[18px] h-[18px]" /> },
     {
       id: 'document_review',
       label: 'Document Review',
@@ -684,8 +681,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const renderSubscriptionSubline = () => {
     if (activeTier === 'infinity') return 'Infinity Plan · All unlocked';
-    if (activeTier === 'standard') return 'Standard · Upgrade to AI';
-    if (activeTier === 'pro_ai') return 'AI Scholar Active';
+    if (activeTier === 'standard') return 'Standard Pass active';
     return FREE_TIER_ENABLED ? 'Free plan · Upgrade anytime' : 'Unlock full access';
   };
 

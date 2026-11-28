@@ -276,7 +276,7 @@ export function computePipelineDecision(params: {
       riskLevel,
       decisionReason:
         reasons.filter(Boolean).join(' ') ||
-        'Flagged for Super Admin verification prior to student library publication.',
+        'Flagged for Super Admin verification before student library publication.',
     };
   }
 
@@ -284,7 +284,7 @@ export function computePipelineDecision(params: {
     decision: 'auto_approved',
     publicationStatus: 'published',
     riskLevel: 'low',
-    decisionReason: 'Passed all deterministic checks and AI cross-check; published to Student Document Library.',
+    decisionReason: 'Passed all deterministic checks and AI cross-check; awaiting Super Admin verification before publication.',
   };
 }
 

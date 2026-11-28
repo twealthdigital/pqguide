@@ -988,25 +988,6 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-[#505460] mb-1.5">
-                        Tier 3 Title (AI Companion)
-                      </label>
-                      <input
-                        type="text"
-                        value={draft.subscriptionPage.aiTierName}
-                        onChange={(e) =>
-                          setDraft((p) => ({
-                            ...p,
-                            subscriptionPage: {
-                              ...p.subscriptionPage,
-                              aiTierName: e.target.value,
-                            },
-                          }))
-                        }
-                        className={inputCls}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-[#505460] mb-1.5">
                         Checkout Verification Note
                       </label>
                       <input

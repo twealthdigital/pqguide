@@ -119,21 +119,9 @@ const SubscriptionScreen = lazy(() =>
   }))
 );
 
-const DocumentScannerScreen = lazy(() =>
-  import('./screens/DocumentScannerScreen').then((m) => ({
-    default: m.DocumentScannerScreen,
-  }))
-);
-
 const DocumentLibraryScreen = lazy(() =>
   import('./screens/DocumentLibraryScreen').then((m) => ({
     default: m.DocumentLibraryScreen,
-  }))
-);
-
-const AiAssistantScreen = lazy(() =>
-  import('./screens/AiAssistantScreen').then((m) => ({
-    default: m.AiAssistantScreen,
   }))
 );
 
@@ -201,7 +189,6 @@ function AppContent() {
   const [paywallContext, setPaywallContext] = useState<PaywallContext | null>(null);
   const [focusSearchSignal, setFocusSearchSignal] = useState(0);
   const [docLibraryFocusId, setDocLibraryFocusId] = useState<string | null>(null);
-  const [aiInitialPrompt, setAiInitialPrompt] = useState<string | null>(null);
   const [activeDropIn, setActiveDropIn] = useState<DropInNotificationItem | null>(null);
   const [authNotice, setAuthNotice] = useState<AuthNotice | null>(() => {
     if (authService.consumeExpiredSessionNotice()) {
@@ -1108,7 +1095,7 @@ function AppContent() {
       openPaywallDirect({
         highlightTier: 'standard',
         blockedByPaywall: true,
-        reason: reason ?? 'Free access has ended. Choose Standard or AI Scholar to continue.',
+        reason: reason ?? 'Free access has ended. Choose the Standard Pass to continue.',
       });
       return false;
     },
@@ -1159,16 +1146,11 @@ function AppContent() {
   );
 
   const handleFeatureNavigate = useCallback(
-    (screen: AppScreen, opts?: { docLibraryId?: string; aiPrompt?: string }) => {
+    (screen: AppScreen, opts?: { docLibraryId?: string }) => {
       if (opts?.docLibraryId !== undefined) {
         setDocLibraryFocusId(opts.docLibraryId ?? null);
-      } else if (screen !== 'document_library' && screen !== 'ai_assistant') {
+      } else if (screen !== 'document_library') {
         setDocLibraryFocusId(null);
-      }
-      if (opts?.aiPrompt !== undefined) {
-        setAiInitialPrompt(opts.aiPrompt ?? null);
-      } else if (screen !== 'ai_assistant') {
-        setAiInitialPrompt(null);
       }
       handleNavigate(screen);
     },
@@ -1482,11 +1464,11 @@ function AppContent() {
     }
     authService.setOnboardingCompleted(false);
     hasCompletedOnboardingRef.current = false;
-    onboardingStepRef.current = 2;
+    onboardingStepRef.current = 1;
     authTrailDepthRef.current = 0;
     setHasCompletedOnboarding(false);
-    setOnboardingStep(2);
-    pushHistory({ __pqgOut: 'onboarding', __pqgStep: 2 });
+    setOnboardingStep(1);
+    pushHistory({ __pqgOut: 'onboarding', __pqgStep: 1 });
     scrollTop();
   }, [pushHistory]);
 
@@ -1802,29 +1784,11 @@ function AppContent() {
           />
         )}
 
-        {activeScreen === 'document_scanner' && (
-          <DocumentScannerScreen
-            currentUser={authenticatedStudent}
-            onNavigate={handleFeatureNavigate}
-          />
-        )}
-
         {activeScreen === 'document_library' && (
           <DocumentLibraryScreen
             currentUser={authenticatedStudent}
             initialDocId={docLibraryFocusId}
             onNavigate={handleFeatureNavigate}
-          />
-        )}
-
-        {activeScreen === 'ai_assistant' && (
-          <AiAssistantScreen
-            currentUser={authenticatedStudent}
-            initialPrompt={aiInitialPrompt}
-            initialDocLibraryId={docLibraryFocusId}
-            onNavigate={handleFeatureNavigate}
-            onOpenDocument={handleOpenDocument}
-            onOpenMaterial={handleOpenMaterial}
           />
         )}
 

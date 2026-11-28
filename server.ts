@@ -3,7 +3,6 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import express, { type Request, type Response } from 'express';
 import {
-  createAiHttpHandlers,
   createDocumentHttpHandlers,
   createOtpHttpHandlers,
   createSuperAdminHttpHandlers,
@@ -25,7 +24,6 @@ export function createApiApp(deps?: OtpEngineDeps) {
 
   app.use('/api/auth', express.json({ limit: '64kb' }));
   app.use('/api/documents', express.json({ limit: '4mb' }));
-  app.use('/api/ai', express.json({ limit: '4mb' }));
 
   const otpEngine = deps ? createOtpEngine(deps) : undefined;
   const handlers = otpEngine
@@ -39,7 +37,6 @@ export function createApiApp(deps?: OtpEngineDeps) {
   const documentHandlers = deps
     ? createDocumentHttpHandlers()
     : createDocumentHttpHandlers();
-  const aiHandlers = createAiHttpHandlers();
 
   app.get('/api/auth/email-otp/status', (req: Request, res: Response) => {
     void handlers.handleStatus(req, res);
@@ -111,14 +108,6 @@ export function createApiApp(deps?: OtpEngineDeps) {
 
   app.post('/api/documents/cross-check', (req: Request, res: Response) => {
     void documentHandlers.handleCrossCheck(req, res);
-  });
-
-  app.get('/api/ai/status', (req: Request, res: Response) => {
-    void aiHandlers.handleStatus(req, res);
-  });
-
-  app.post('/api/ai/study', (req: Request, res: Response) => {
-    void aiHandlers.handleStudy(req, res);
   });
 
   return app;

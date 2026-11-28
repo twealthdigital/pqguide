@@ -1,15 +1,10 @@
 import React, { useEffect } from 'react';
-import { ArrowRight, CheckCircle2, FileText, FolderOpen, Lock, ScanLine } from 'lucide-react';
+import { ArrowRight, CheckCircle2, FileText, FolderOpen } from 'lucide-react';
 import type { AppScreen, PastQuestionDoc } from '../core/types';
-import {
-  subscriptionService,
-  useSubscription,
-  type PaywallContext,
-} from '../core/subscription';
+import type { PaywallContext } from '../core/subscription';
 import { useArchiveSearch } from '../hooks/useArchiveSearch';
 import {
   DocumentListSkeleton,
-  PqGuideAiIcon,
   SurfaceCard,
   TactileButton,
   WaveHeader,
@@ -31,8 +26,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onNavigate,
 }) => {
   const search = useArchiveSearch();
-  useSubscription();
-  const aiUnlocked = subscriptionService.hasAiAccess();
   const {
     store,
     activeSchool,
@@ -190,73 +183,23 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                   <span>{cms.guideStep2}</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <PqGuideAiIcon size="xs" className="text-[#1D1E23] shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-4 h-4 text-[#1D1E23] shrink-0 mt-0.5" />
                   <span>{cms.guideStep3}</span>
                 </li>
               </ol>
             </div>
 
             {onNavigate && (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => onNavigate('document_scanner')}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/10 px-2.5 py-2 text-xs font-semibold text-[#1A1B20] cursor-pointer transition-colors"
-                >
-                  <ScanLine className="w-3.5 h-3.5 shrink-0" />
-                  <span>Scan Docs</span>
-                </button>
+              <div className="mt-3">
                 <button
                   type="button"
                   onClick={() => onNavigate('document_library')}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/10 px-2.5 py-2 text-xs font-semibold text-[#1A1B20] cursor-pointer transition-colors"
+                  className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#F6F7F9] hover:bg-[#ECEEF3] border border-[#1A1B20]/10 px-2.5 py-2 text-xs font-semibold text-[#1A1B20] cursor-pointer transition-colors"
                 >
                   <FolderOpen className="w-3.5 h-3.5 shrink-0" />
                   <span>Doc Library</span>
                 </button>
               </div>
-            )}
-
-            {aiUnlocked ? (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => onNavigate?.('ai_assistant')}
-                  className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-[#1D1E23] px-3.5 py-2.5 text-left text-white transition-colors hover:bg-[#2B2D35]"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <PqGuideAiIcon size="xs" className="text-white shrink-0" />
-                    <span className="text-xs font-semibold truncate">
-                      Open PQGuide AI Assistant
-                    </span>
-                  </span>
-                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-[#C3C7D2]" />
-                </button>
-              </div>
-            ) : (
-              onOpenPaywall && (
-                <button
-                  type="button"
-                  aria-disabled="true"
-                  onClick={() =>
-                    onOpenPaywall({
-                      highlightTier: 'pro_ai',
-                      featureLabel: 'AI Study Assistant',
-                      reason:
-                        'Standard unlocks everything the core webapp can do. Tier 3 (AI Scholar) adds an AI Study Assistant for instant question breakdowns and smart topic predictions.',
-                    })
-                  }
-                  className="mt-3 flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-dashed border-[#1A1B20]/15 bg-[#F6F7F9] px-3.5 py-2.5 text-left transition-colors hover:bg-[#ECEEF3]"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <PqGuideAiIcon size="xs" className="text-[#505460] shrink-0" />
-                    <span className="text-xs font-semibold text-[#3A3D47] truncate">
-                      PQGuide AI Assistant (Tier 3)
-                    </span>
-                  </span>
-                  <Lock className="h-3.5 w-3.5 shrink-0 text-[#686C78]" />
-                </button>
-              )
             )}
           </SurfaceCard>
         </div>

@@ -14,7 +14,6 @@ import {
 import { TactileButton } from '../components/ui/TactileButton';
 import { BrandLogo } from '../components/ui/BrandLogo';
 import { ScanToPdfShowcase } from '../components/onboarding/ScanToPdfShowcase';
-import { AiAssistantShowcase } from '../components/onboarding/AiAssistantShowcase';
 
 interface OnboardingScreenProps {
   step?: number;
@@ -138,16 +137,9 @@ const SLIDES: OnboardingSlide[] = [
   },
   {
     id: 'scan',
-    title: 'Clear Scans & Typed Past Questions',
+    title: 'Clear Scans, Verified Before You See Them',
     subtitle:
-      'Photo uploads convert into crisp Scan-to-PDF sheets while typed past questions are indexed for instant keyword search.',
-    ctaLabel: 'Next',
-  },
-  {
-    id: 'ai',
-    title: 'Smart AI Study Companion',
-    subtitle:
-      'Pick any course to predict likely questions, research core topics, or practice full past questions by year.',
+      'School admins scan papers into crisp PDFs and every upload is verified by a Super Admin, so what you read is clean and searchable.',
     ctaLabel: 'Continue',
   },
 ];
@@ -446,9 +438,6 @@ export const OnboardingScreen: React.FC<OnboardingScreenProps> = ({
 
             {/* Slide 2: Interactive Photo Upload -> Scan -> Verify -> PDF -> Dark Card Reveal */}
             {step === 1 && <ScanToPdfShowcase />}
-
-            {/* Slide 3: Interactive AI Study Companion Showcase */}
-            {step === 2 && <AiAssistantShowcase />}
           </div>
 
           {/* Desktop full-width top darker blurred fade spanning both columns seamlessly */}
