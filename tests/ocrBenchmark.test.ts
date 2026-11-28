@@ -5,7 +5,7 @@ import { after, describe, test } from 'node:test';
 import sharp from 'sharp';
 import { jsPDF } from 'jspdf';
 import { scanSingleAcademicInput } from '../src/services/intelligence/documentScannerEngine.ts';
-import { shutdownOcrWorkerPool, recognizeWithTesseractPool } from '../src/services/intelligence/ocrEngine.ts';
+import { shutdownOcrWorkerPool, recognizeWithTesseractPool, detectMathUncertainty } from '../src/services/intelligence/ocrEngine.ts';
 import { computeCerAndWer } from '../src/services/intelligence/ocrBenchmark.ts';
 import { validateScannedDocument } from '../src/services/intelligence/validationEngine.ts';
 import { createDocumentEngine } from '../server/documentService.ts';
@@ -415,6 +415,39 @@ describe('PQGuide OCR benchmark (generated pages with known text + optional real
           `(${m.refCharCount} reference chars, local OCR only)`
       );
       assert.ok(Number.isFinite(m.cer) && Number.isFinite(m.wer));
+    }
+  });
+  test('8. Lost superscripts are flagged for review, never silently accepted or rewritten', () => {
+    const flagged = detectMathUncertainty('1. Solve x2 + 3x - 4 = 0 and state the roots.');
+    assert.equal(flagged.length, 1);
+    assert.equal(flagged[0].text, 'x2');
+    assert.match(flagged[0].reason, /superscript/i);
+    assert.equal(detectMathUncertainty('CSC 304 first semester 2024/2025').length, 0, 'plain prose is not flagged');
+    assert.equal(detectMathUncertainty('Q2 total = 40 marks').length, 0, 'capital + digit labels are not flagged');
+  });
+
+  test('9. Harder generated pages (rotation, blur + heavy JPEG, small font, tiny image) stay readable', async () => {
+    const lines = [
+      'CSC 304 OPERATING SYSTEMS FIRST SEMESTER 2024/2025',
+      '1. Which scheduling algorithm can cause starvation?',
+      'A. Round robin  B. Shortest job first  C. FCFS  D. Multilevel feedback',
+      '2. Calculate the average waiting time for burst times 5, 8 and 12 milliseconds.',
+    ];
+    const truth = lines.join(' ');
+    const base = await sharp(renderSvgTextPage(lines, 1500, 560, 30, 70)).png().toBuffer();
+    const variants: Array<{ name: string; type: string; bytes: Buffer }> = [
+      { name: 'rotated12.png', type: 'image/png', bytes: await sharp(base).rotate(12, { background: '#fff' }).png().toBuffer() },
+      { name: 'blur_jpeg35.jpg', type: 'image/jpeg', bytes: await sharp(base).blur(1.6).jpeg({ quality: 35 }).toBuffer() },
+      { name: 'tiny480.png', type: 'image/png', bytes: await sharp(base).resize({ width: 480 }).png().toBuffer() },
+    ];
+    for (const v of variants) {
+      const out = await scanSingleAcademicInput(
+        { name: v.name, type: v.type, size: v.bytes.byteLength, bytes: new Uint8Array(v.bytes) },
+        { bypassCache: true, visionFallback: 'off' }
+      );
+      const m = computeCerAndWer(truth, out.extractedText);
+      console.info(`[OCR Benchmark] ${v.name}: CER=${(m.cer * 100).toFixed(2)}% WER=${(m.wer * 100).toFixed(2)}%`);
+      assert.ok(m.cer < 0.08, `${v.name}: expected CER < 8%, got ${m.cer}`);
     }
   });
 });

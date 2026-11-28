@@ -485,6 +485,31 @@ function toWorkerSource(
   return preprocessed?.ocrDataUrl ?? rawDataUrl ?? '';
 }
 
+/**
+ * OCR engines routinely drop superscripts and subscripts (x^2 comes back as "x2"), which
+ * silently changes the maths. This cannot be fixed reliably, so lines that look like they
+ * lost one are flagged for a human. The text itself is never altered. The 50 here is a
+ * placeholder for "unverified", not a measured confidence.
+ */
+export function detectMathUncertainty(text: string): UncertainSpan[] {
+  const spans: UncertainSpan[] = [];
+  for (const rawLine of text.split('\n')) {
+    if (spans.length >= 8) break;
+    const line = rawLine.trim();
+    // Maths-looking line: has an operator/equation and a lowercase variable glued to a digit.
+    if (!/[=+\-*/<>]|\bintegral\b|\bdifferentiate\b|\bsolve\b/i.test(line)) continue;
+    const m = line.match(/(?:^|[\s(+\-*/=])([a-z]\d{1,2})(?=$|[\s).,;+\-*/=])/);
+    if (m) {
+      spans.push({
+        text: m[1],
+        confidence: 50,
+        reason: 'Possible lost superscript/subscript (for example x\u00B2 read as x2). Check against the original.',
+      });
+    }
+  }
+  return spans;
+}
+
 /** A Vision model's self-reported confidence is capped here; it is never treated as measured accuracy. */
 const VISION_CONFIDENCE_CEILING = 70;
 
@@ -765,6 +790,13 @@ export async function recognizeWithTesseractPool(
       } else if (visionMode === 'always' && vRes.error) {
         visionFallbackError = vRes.error;
       }
+    }
+  }
+
+  {
+    const known = new Set(uncertainSpans.map((u) => u.text));
+    for (const span of detectMathUncertainty(best.text)) {
+      if (!known.has(span.text)) uncertainSpans.push(span);
     }
   }
 
