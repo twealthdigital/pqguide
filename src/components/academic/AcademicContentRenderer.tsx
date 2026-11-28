@@ -35,12 +35,15 @@ import type {
   FormExtractionResult,
   HandwritingAnalysisResult,
   LanguageAnalysisResult,
+  MergedTableCellSpan,
   OmrScanResult,
   QrCodeMatch,
+  ReconstructedBlock,
   ScannerModuleRunReport,
   SignatureDetection,
   StampDetection,
 } from '../../core/types';
+import { buildBlocksFromStructuredText } from '../../services/intelligence/layoutReconstructor';
 
 export const KatexFormula: React.FC<{
   latex: string;
@@ -350,6 +353,8 @@ type TableCardInput = Pick<ExtractedTable, 'caption' | 'headers' | 'rows'> &
       ExtractedTable,
       | 'borderStyle'
       | 'hasMergedCells'
+      | 'mergedCells'
+      | 'columnAlignments'
       | 'continuedFromPage'
       | 'continuesOnPage'
       | 'uncertainStructure'
@@ -384,7 +389,16 @@ function buildFallbackJson(table: TableCardInput): Array<Record<string, string>>
   });
 }
 
-export const ExtractedTableCard: React.FC<{ table: TableCardInput }> = ({ table }) => {
+function alignClass(align?: 'left' | 'center' | 'right'): string {
+  if (align === 'center') return 'text-center';
+  if (align === 'right') return 'text-right';
+  return 'text-left';
+}
+
+export const ExtractedTableCard: React.FC<{
+  table: TableCardInput;
+  variant?: 'admin' | 'student';
+}> = ({ table, variant = 'admin' }) => {
   const [copiedMode, setCopiedMode] = useState<'md' | 'json' | null>(null);
   const [exportPreview, setExportPreview] = useState<'none' | 'md' | 'json'>('none');
 
@@ -402,66 +416,89 @@ export const ExtractedTableCard: React.FC<{ table: TableCardInput }> = ({ table 
     }
   };
 
-  return (
-    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white overflow-hidden">
-      <div className="px-3.5 py-2 bg-[#F6F7F9] border-b border-[#1A1B20]/[0.07] flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="font-bold text-[#1A1B20]">
-            {table.caption || 'Extracted Table'}
-          </span>
-          {table.borderStyle && (
-            <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#505460]">
-              {table.borderStyle}
-            </span>
-          )}
-          {table.hasMergedCells && (
-            <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#505460]">
-              Merged cells
-            </span>
-          )}
-          {table.continuedFromPage && (
-            <span className="rounded bg-[#EFF6FF] text-[#1D4ED8] px-1.5 py-0.5 text-[10px] font-semibold">
-              Continued from p.{table.continuedFromPage}
-            </span>
-          )}
-          {table.continuesOnPage && (
-            <span className="rounded bg-[#EFF6FF] text-[#1D4ED8] px-1.5 py-0.5 text-[10px] font-semibold">
-              Continues on p.{table.continuesOnPage}
-            </span>
-          )}
-          {table.uncertainStructure && (
-            <span
-              title={table.uncertaintyReason}
-              className="rounded bg-[#FEF3C7] text-[#92400E] px-1.5 py-0.5 text-[10px] font-bold"
-            >
-              Uncertain structure
-            </span>
-          )}
-        </div>
+  // Precompute merged-cell map (0-based row: 0 = header row, 1..N = body rows)
+  const spanAt = new Map<string, MergedTableCellSpan>();
+  const coveredSlots = new Set<string>();
+  for (const span of table.mergedCells ?? []) {
+    const rSpan = Math.max(1, span.rowSpan);
+    const cSpan = Math.max(1, span.colSpan);
+    if (rSpan === 1 && cSpan === 1) continue;
+    spanAt.set(`${span.row},${span.col}`, { ...span, rowSpan: rSpan, colSpan: cSpan });
+    for (let dr = 0; dr < rSpan; dr += 1) {
+      for (let dc = 0; dc < cSpan; dc += 1) {
+        if (dr === 0 && dc === 0) continue;
+        coveredSlots.add(`${span.row + dr},${span.col + dc}`);
+      }
+    }
+  }
 
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold">
-          <button
-            type="button"
-            onClick={() => void handleCopy('md')}
-            className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
-          >
-            {copiedMode === 'md' ? 'Copied MD' : 'Copy MD'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleCopy('json')}
-            className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
-          >
-            {copiedMode === 'json' ? 'Copied JSON' : 'Copy JSON'}
-          </button>
+  return (
+    <div className="rounded-xl border border-[#1A1B20]/12 bg-white overflow-hidden">
+      {variant === 'admin' ? (
+        <div className="px-3.5 py-2 bg-[#F6F7F9] border-b border-[#1A1B20]/[0.07] flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="font-bold text-[#1A1B20]">
+              {table.caption || 'Table'}
+            </span>
+            {table.borderStyle && (
+              <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#505460]">
+                {table.borderStyle}
+              </span>
+            )}
+            {table.hasMergedCells && (
+              <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#505460]">
+                Merged cells
+              </span>
+            )}
+            {table.continuedFromPage && (
+              <span className="rounded bg-[#EFF6FF] text-[#1D4ED8] px-1.5 py-0.5 text-[10px] font-semibold">
+                Continued from p.{table.continuedFromPage}
+              </span>
+            )}
+            {table.continuesOnPage && (
+              <span className="rounded bg-[#EFF6FF] text-[#1D4ED8] px-1.5 py-0.5 text-[10px] font-semibold">
+                Continues on p.{table.continuesOnPage}
+              </span>
+            )}
+            {table.uncertainStructure && (
+              <span
+                title={table.uncertaintyReason}
+                className="rounded bg-[#FEF3C7] text-[#92400E] px-1.5 py-0.5 text-[10px] font-bold"
+              >
+                Uncertain structure
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold">
+            <button
+              type="button"
+              onClick={() => void handleCopy('md')}
+              className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+            >
+              {copiedMode === 'md' ? 'Copied MD' : 'Copy MD'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCopy('json')}
+              className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+            >
+              {copiedMode === 'json' ? 'Copied JSON' : 'Copy JSON'}
+            </button>
+          </div>
         </div>
-      </div>
-      {table.uncertainStructure && table.uncertaintyReason && (
+      ) : table.caption ? (
+        <div className="px-3.5 py-2 bg-[#F6F7F9] border-b border-[#1A1B20]/[0.07]">
+          <p className="text-xs font-bold text-[#1A1B20]">{table.caption}</p>
+        </div>
+      ) : null}
+
+      {variant === 'admin' && table.uncertainStructure && table.uncertaintyReason && (
         <div className="px-3.5 py-1.5 bg-[#FEF3C7]/45 border-b border-[#FDE68A] text-[11px] text-[#92400E]">
           {table.uncertaintyReason}
         </div>
       )}
-      {exportPreview !== 'none' && (
+      {variant === 'admin' && exportPreview !== 'none' && (
         <pre className="p-3 bg-[#1D1E23] text-[#F6F7F9] text-[11px] overflow-x-auto max-h-44">
           {exportPreview === 'md'
             ? buildFallbackMarkdown(table)
@@ -469,25 +506,53 @@ export const ExtractedTableCard: React.FC<{ table: TableCardInput }> = ({ table 
         </pre>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse text-xs sm:text-sm">
-          <thead>
-            <tr className="bg-[#1D1E23] text-white">
-              {table.headers.map((h, i) => (
-                <th key={i} className="px-3 py-2 font-semibold whitespace-nowrap">
-                  {h || <span className="opacity-50 italic">blank</span>}
-                </th>
-              ))}
-            </tr>
-          </thead>
+        <table className="w-full border-collapse text-xs sm:text-sm">
+          {table.headers.length > 0 && (
+            <thead>
+              <tr className="bg-[#1D1E23] text-white">
+                {table.headers.map((h, cIdx) => {
+                  const slotKey = `0,${cIdx}`;
+                  if (coveredSlots.has(slotKey)) return null;
+                  const span = spanAt.get(slotKey);
+                  const colAlign = alignClass(table.columnAlignments?.[cIdx]);
+                  return (
+                    <th
+                      key={cIdx}
+                      colSpan={span?.colSpan}
+                      rowSpan={span?.rowSpan}
+                      className={`px-3 py-2 font-semibold border-r border-white/10 last:border-r-0 ${colAlign}`}
+                    >
+                      {h ? (
+                        <RichInlineText text={h} className="text-xs sm:text-sm text-white" />
+                      ) : (
+                        <span className="opacity-40">—</span>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+          )}
           <tbody>
             {table.rows.map((row, rIdx) => (
-              <tr key={rIdx} className="border-t border-[#1A1B20]/[0.06] odd:bg-white even:bg-[#F6F7F9]/60">
+              <tr
+                key={rIdx}
+                className="border-t border-[#1A1B20]/[0.08] odd:bg-white even:bg-[#F6F7F9]/60"
+              >
                 {row.map((cell, cIdx) => {
+                  const slotKey = `${rIdx + 1},${cIdx}`;
+                  if (coveredSlots.has(slotKey)) return null;
+                  const span = spanAt.get(slotKey);
                   const isRowHeader = cIdx === 0 && Boolean(table.rowHeaders?.length);
+                  const colAlign = alignClass(table.columnAlignments?.[cIdx]);
                   return (
                     <td
                       key={cIdx}
-                      className={`px-3 py-2 ${isRowHeader ? 'font-semibold text-[#1A1B20] bg-[#F6F7F9]/50' : 'text-[#3A3D47]'}`}
+                      colSpan={span?.colSpan}
+                      rowSpan={span?.rowSpan}
+                      className={`px-3 py-2 border-r border-[#1A1B20]/[0.06] last:border-r-0 align-top ${colAlign} ${
+                        isRowHeader ? 'font-semibold text-[#1A1B20] bg-[#F6F7F9]/50' : 'text-[#3A3D47]'
+                      }`}
                     >
                       {cell ? (
                         <RichInlineText text={cell} className="text-xs sm:text-sm" />
@@ -521,45 +586,51 @@ const DIAGRAM_TYPE_LABELS: Record<string, string> = {
   general_diagram: 'Diagram',
 };
 
-const DiagramGalleryCard: React.FC<{ diag: ExtractedDiagramAsset }> = ({ diag }) => {
+export const DiagramFigureBlock: React.FC<{
+  diag: ExtractedDiagramAsset;
+  variant?: 'admin' | 'student';
+}> = ({ diag, variant = 'admin' }) => {
   const [showOriginalCrop, setShowOriginalCrop] = useState(false);
   const safeUrl = sanitizeSafeUrl(diag.dataUrl);
   const safeOriginalCrop = sanitizeSafeUrl(diag.originalCropDataUrl);
   const hasVector = Boolean(diag.vectorScene && diag.vectorScene.polylines.length > 0);
-  const hasOriginalRef = Boolean(safeOriginalCrop && (hasVector || safeOriginalCrop !== safeUrl));
+  const hasOriginalRef =
+    variant === 'admin' && Boolean(safeOriginalCrop && (hasVector || safeOriginalCrop !== safeUrl));
 
   return (
-    <figure className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {diag.diagramType && (
-            <span className="rounded bg-[#1D1E23] text-white px-2 py-0.5 text-[10px] font-bold">
-              {DIAGRAM_TYPE_LABELS[diag.diagramType] ?? diag.diagramType}
-            </span>
-          )}
-          {diag.extractedNodes && diag.extractedNodes.length > 0 && (
-            <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] text-[#505460] font-mono-tabular">
-              {diag.extractedNodes.length} nodes · {diag.extractedEdges?.length ?? 0} edges
-            </span>
+    <figure className="rounded-xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2 my-1">
+      {variant === 'admin' && (diag.diagramType || (diag.extractedNodes && diag.extractedNodes.length > 0) || hasOriginalRef) && (
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {diag.diagramType && (
+              <span className="rounded bg-[#1D1E23] text-white px-2 py-0.5 text-[10px] font-bold">
+                {DIAGRAM_TYPE_LABELS[diag.diagramType] ?? diag.diagramType}
+              </span>
+            )}
+            {diag.extractedNodes && diag.extractedNodes.length > 0 && (
+              <span className="rounded bg-white border border-[#1A1B20]/10 px-1.5 py-0.5 text-[10px] text-[#505460] font-mono-tabular">
+                {diag.extractedNodes.length} nodes · {diag.extractedEdges?.length ?? 0} edges
+              </span>
+            )}
+          </div>
+          {hasOriginalRef && (
+            <button
+              type="button"
+              onClick={() => setShowOriginalCrop((prev) => !prev)}
+              className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[10px] font-semibold text-[#1A1B20] cursor-pointer"
+            >
+              {showOriginalCrop ? 'View Extracted' : 'Original Crop'}
+            </button>
           )}
         </div>
-        {hasOriginalRef && (
-          <button
-            type="button"
-            onClick={() => setShowOriginalCrop((prev) => !prev)}
-            className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[10px] font-semibold text-[#1A1B20] cursor-pointer"
-          >
-            {showOriginalCrop ? 'View Extracted' : 'Original Crop'}
-          </button>
-        )}
-      </div>
+      )}
 
       {showOriginalCrop && safeOriginalCrop ? (
         <img
           src={safeOriginalCrop}
           alt={`Original unedited crop: ${diag.caption}`}
           referrerPolicy="no-referrer"
-          className="w-full max-h-56 object-contain rounded-xl bg-white"
+          className="w-full max-h-64 object-contain rounded-lg bg-white"
         />
       ) : hasVector && diag.vectorScene ? (
         <VectorSceneSvg scene={diag.vectorScene} caption={diag.caption} />
@@ -568,14 +639,16 @@ const DiagramGalleryCard: React.FC<{ diag: ExtractedDiagramAsset }> = ({ diag })
           src={safeUrl}
           alt={diag.caption}
           referrerPolicy="no-referrer"
-          className="w-full max-h-56 object-contain rounded-xl bg-white"
+          className="w-full max-h-64 object-contain rounded-lg bg-white"
         />
       ) : null}
 
-      <figcaption className="text-xs text-[#505460] font-medium">
-        Page {diag.pageNumber} · {diag.caption}
-      </figcaption>
-      {(diag.extractedMeasurements?.length || diag.extractedLabels?.length) ? (
+      {diag.caption && (
+        <figcaption className="text-xs text-[#3A3D47] font-medium text-center">
+          {diag.caption}
+        </figcaption>
+      )}
+      {variant === 'admin' && (diag.extractedMeasurements?.length || diag.extractedLabels?.length) ? (
         <p className="text-[11px] text-[#686C78] break-words">
           {diag.extractedMeasurements && diag.extractedMeasurements.length > 0
             ? `Measurements: ${diag.extractedMeasurements.slice(0, 6).join(', ')}`
@@ -601,7 +674,7 @@ export const ExtractedDiagramsGallery: React.FC<{
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       {visible.map((diag) => (
-        <DiagramGalleryCard key={diag.id} diag={diag} />
+        <DiagramFigureBlock key={diag.id} diag={diag} variant="admin" />
       ))}
     </div>
   );
@@ -1019,6 +1092,327 @@ export const OrganizedPageText: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
+function blockAlignClass(alignment?: ReconstructedBlock['alignment']): string {
+  if (alignment === 'center') return 'text-center';
+  if (alignment === 'right') return 'text-right';
+  return 'text-left';
+}
+
+function blockIndentClass(indentLevel?: number): string {
+  if (!indentLevel || indentLevel <= 0) return '';
+  if (indentLevel === 1) return 'pl-4 sm:pl-6';
+  return 'pl-8 sm:pl-10';
+}
+
+export const ReconstructedPageFlow: React.FC<{
+  page: ExtractedPageContent;
+  variant?: 'admin' | 'student';
+  searchQuery?: string;
+  renderQuestionAction?: (
+    questionText: string,
+    questionLabel: string | undefined,
+    blockIndex: number
+  ) => React.ReactNode;
+  showPageHeaderFooter?: boolean;
+}> = ({
+  page,
+  variant = 'student',
+  searchQuery = '',
+  renderQuestionAction,
+  showPageHeaderFooter = true,
+}) => {
+  const blocks: ReconstructedBlock[] =
+    page.blocks && page.blocks.length > 0
+      ? page.blocks
+      : buildBlocksFromStructuredText({
+          pageNumber: page.pageNumber,
+          text: page.text,
+          tables: page.tables,
+          formulas: page.formulas,
+          diagrams: page.diagrams,
+          headerLines: page.headerLines,
+          footerLines: page.footerLines,
+        });
+
+  if (blocks.length === 0) {
+    return (
+      <p className="text-xs sm:text-sm text-[#686C78]">
+        No readable content was extracted from this page.
+      </p>
+    );
+  }
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  return (
+    <div className="space-y-3 text-sm leading-relaxed text-[#2D303A]">
+      {blocks.map((block, idx) => {
+        const isSearchHit =
+          Boolean(normalizedQuery) &&
+          Boolean(
+            (block.text && block.text.toLowerCase().includes(normalizedQuery)) ||
+              (block.latex && block.latex.toLowerCase().includes(normalizedQuery)) ||
+              (block.table &&
+                (block.table.caption?.toLowerCase().includes(normalizedQuery) ||
+                  block.table.headers.some((h) => h.toLowerCase().includes(normalizedQuery)) ||
+                  block.table.rows.some((r) => r.some((c) => c.toLowerCase().includes(normalizedQuery)))))
+          );
+
+        const searchRingCls = isSearchHit
+          ? 'ring-2 ring-[#F59E0B]/40 bg-[#FEF3C7]/25 rounded-lg px-2 py-1 -mx-2'
+          : '';
+
+        if (block.kind === 'header') {
+          if (!showPageHeaderFooter || !block.text) return null;
+          return (
+            <div
+              key={block.id || idx}
+              className={`border-b border-[#1A1B20]/[0.08] pb-1.5 text-[11px] font-semibold tracking-wide text-[#686C78] ${blockAlignClass(
+                block.alignment ?? 'center'
+              )}`}
+            >
+              {block.text}
+            </div>
+          );
+        }
+
+        if (block.kind === 'footer') {
+          if (!showPageHeaderFooter || !block.text) return null;
+          return (
+            <div
+              key={block.id || idx}
+              className={`border-t border-[#1A1B20]/[0.08] pt-1.5 text-[11px] text-[#686C78] ${blockAlignClass(
+                block.alignment ?? 'center'
+              )}`}
+            >
+              {block.text}
+            </div>
+          );
+        }
+
+        if (block.kind === 'heading' && block.text) {
+          const level = block.headingLevel ?? 2;
+          return (
+            <h3
+              key={block.id || idx}
+              className={`font-display text-[#1A1B20] pt-1.5 ${blockAlignClass(block.alignment)} ${
+                level === 1
+                  ? 'text-base sm:text-lg font-extrabold tracking-tight'
+                  : 'text-sm sm:text-base font-bold'
+              } ${searchRingCls}`}
+            >
+              <RichInlineText
+                text={block.text}
+                className={
+                  level === 1
+                    ? 'text-base sm:text-lg font-extrabold text-[#1A1B20]'
+                    : 'text-sm sm:text-base font-bold text-[#1A1B20]'
+                }
+              />
+            </h3>
+          );
+        }
+
+        if (block.kind === 'subheading' && block.text) {
+          return (
+            <h4
+              key={block.id || idx}
+              className={`font-display text-xs sm:text-sm font-bold text-[#1A1B20] pt-1 ${blockAlignClass(
+                block.alignment
+              )} ${blockIndentClass(block.indentLevel)} ${searchRingCls}`}
+            >
+              <RichInlineText text={block.text} className="text-xs sm:text-sm font-bold text-[#1A1B20]" />
+            </h4>
+          );
+        }
+
+        if (block.kind === 'table' && block.table) {
+          return (
+            <div key={block.id || idx} className={`my-2 ${searchRingCls}`}>
+              <ExtractedTableCard table={block.table} variant={variant} />
+            </div>
+          );
+        }
+
+        if (block.kind === 'formula' && (block.latex || block.text)) {
+          return (
+            <div
+              key={block.id || idx}
+              className={`my-2 rounded-xl bg-[#F6F7F9] border border-[#1A1B20]/[0.08] px-3.5 py-2.5 overflow-x-auto ${searchRingCls}`}
+            >
+              <KatexFormula
+                latex={block.latex || block.text || ''}
+                displayMode={block.displayMode ?? true}
+              />
+              {variant === 'admin' && block.uncertain && block.uncertainReason && (
+                <p className="mt-1 text-[10px] text-[#92400E] font-medium">
+                  {block.uncertainReason}
+                </p>
+              )}
+            </div>
+          );
+        }
+
+        if (block.kind === 'diagram' && block.diagram) {
+          return (
+            <div key={block.id || idx} className={`my-2 ${searchRingCls}`}>
+              <DiagramFigureBlock diag={block.diagram} variant={variant} />
+            </div>
+          );
+        }
+
+        if (block.kind === 'question' && block.text) {
+          const actionNode = renderQuestionAction?.(block.text, block.label, idx);
+          return (
+            <div
+              key={block.id || idx}
+              className={`pt-1.5 ${blockIndentClass(block.indentLevel)} ${searchRingCls}`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                  {block.label && (
+                    <span className="font-mono-tabular font-bold text-[#1A1B20] shrink-0 text-sm leading-relaxed">
+                      {block.label}
+                    </span>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <RichInlineText
+                      text={block.text}
+                      className="text-sm font-medium text-[#1A1B20] leading-relaxed"
+                    />
+                    {variant === 'admin' && block.uncertain && block.uncertainReason && (
+                      <p className="mt-0.5 text-[10px] text-[#92400E]">{block.uncertainReason}</p>
+                    )}
+                  </div>
+                </div>
+                {actionNode && <div className="shrink-0">{actionNode}</div>}
+              </div>
+            </div>
+          );
+        }
+
+        if (block.kind === 'subquestion' && block.text) {
+          return (
+            <div
+              key={block.id || idx}
+              className={`flex items-start gap-2 ${blockIndentClass(
+                block.indentLevel ?? 1
+              )} text-[#3A3D47] ${searchRingCls}`}
+            >
+              {block.label && (
+                <span className="font-mono-tabular font-semibold text-[#505460] shrink-0 text-xs sm:text-sm leading-relaxed">
+                  {block.label}
+                </span>
+              )}
+              <div className="flex-1 min-w-0">
+                <RichInlineText text={block.text} className="text-xs sm:text-sm text-[#3A3D47] leading-relaxed" />
+              </div>
+            </div>
+          );
+        }
+
+        if (block.kind === 'uncertain' && block.text) {
+          if (variant === 'student') {
+            return (
+              <div
+                key={block.id || idx}
+                className={`${blockIndentClass(block.indentLevel)} ${blockAlignClass(
+                  block.alignment
+                )} ${searchRingCls}`}
+              >
+                <RichInlineText text={block.text} className="text-sm leading-relaxed text-[#3A3D47]" />
+              </div>
+            );
+          }
+          return (
+            <div
+              key={block.id || idx}
+              className={`rounded-lg border border-[#FDE68A] bg-[#FEF3C7]/40 px-2.5 py-1.5 ${blockIndentClass(
+                block.indentLevel
+              )} ${searchRingCls}`}
+            >
+              <RichInlineText text={block.text} className="text-sm leading-relaxed text-[#1A1B20]" />
+              {block.uncertainReason && (
+                <p className="mt-0.5 text-[10px] font-semibold text-[#92400E]">
+                  {block.uncertainReason}
+                </p>
+              )}
+            </div>
+          );
+        }
+
+        if (block.text) {
+          return (
+            <div
+              key={block.id || idx}
+              className={`${blockIndentClass(block.indentLevel)} ${blockAlignClass(
+                block.alignment
+              )} ${searchRingCls}`}
+            >
+              <RichInlineText
+                text={block.text}
+                className="text-sm leading-relaxed text-[#2D303A]"
+              />
+              {variant === 'admin' && block.uncertain && block.uncertainReason && (
+                <p className="mt-0.5 text-[10px] text-[#92400E]">{block.uncertainReason}</p>
+              )}
+            </div>
+          );
+        }
+
+        return null;
+      })}
+    </div>
+  );
+};
+
+export const ReconstructedDocumentRenderer: React.FC<{
+  pages: ExtractedPageContent[];
+  variant?: 'admin' | 'student';
+  searchQuery?: string;
+  renderQuestionAction?: (
+    questionText: string,
+    questionLabel: string | undefined,
+    blockIndex: number,
+    pageNumber: number
+  ) => React.ReactNode;
+}> = ({ pages, variant = 'student', searchQuery = '', renderQuestionAction }) => {
+  const orderedPages = [...pages].sort((a, b) => a.pageNumber - b.pageNumber);
+  if (orderedPages.length === 0) return null;
+
+  return (
+    <div className="space-y-6">
+      {orderedPages.map((pg, idx) => (
+        <section
+          key={pg.pageNumber}
+          className={
+            idx > 0
+              ? 'pt-5 border-t-2 border-dashed border-[#1A1B20]/12 space-y-3'
+              : 'space-y-3'
+          }
+        >
+          {orderedPages.length > 1 && (
+            <div className="flex items-center justify-between text-[11px] font-mono-tabular font-semibold uppercase tracking-wider text-[#686C78]">
+              <span>Page {pg.pageNumber} of {orderedPages.length}</span>
+            </div>
+          )}
+          <ReconstructedPageFlow
+            page={pg}
+            variant={variant}
+            searchQuery={searchQuery}
+            renderQuestionAction={
+              renderQuestionAction
+                ? (qText, qLabel, blockIdx) =>
+                    renderQuestionAction(qText, qLabel, blockIdx, pg.pageNumber)
+                : undefined
+            }
+          />
+        </section>
+      ))}
+    </div>
+  );
+};
+
 /** The scanned page image for a page, if there is one. */
 export function pageImageUrl(page: ExtractedPageContent, fallback?: string): string | undefined {
   const fromDiagram = page.diagrams.find((d) => d.id.startsWith('scan-sheet'))?.dataUrl;
@@ -1026,25 +1420,28 @@ export function pageImageUrl(page: ExtractedPageContent, fallback?: string): str
 }
 
 /**
- * One page: the scanned image on the left, everything that was read from it on the
- * right (stacked on small screens). Pages with no image use the full width.
+ * One page: the original scanned page on the left, the reconstructed document in
+ * original reading order on the right (stacked on small screens).
  */
 export const ScannedPageSideBySide: React.FC<{
   page: ExtractedPageContent;
   imageUrl?: string;
+  fallbackImageUrl?: string;
   totalPages?: number;
   /** Engine, perspective and uncertain-span details. Super Admin only. */
   showTechnical?: boolean;
-}> = ({ page, imageUrl, totalPages, showTechnical = false }) => {
-  // The image is shown only when the caller passes one (the Extracted view is text only).
-  const resolvedImageUrl = imageUrl;
+  onOpenOriginalFile?: () => void;
+}> = ({
+  page,
+  imageUrl,
+  fallbackImageUrl,
+  totalPages,
+  showTechnical = false,
+  onOpenOriginalFile,
+}) => {
+  const resolvedImageUrl = imageUrl ?? pageImageUrl(page, fallbackImageUrl);
   const text = page.text.trim();
   const charCount = page.charCount ?? text.replace(/\s+/g, '').length;
-  const pageExtractedDiagrams = page.diagrams.filter(
-    (d) =>
-      !d.id.startsWith('scan-sheet') &&
-      (Boolean(d.vectorScene && d.vectorScene.polylines.length > 0) || Boolean(sanitizeSafeUrl(d.dataUrl)))
-  );
   const methodLabel =
     page.extractionMethod === 'hybrid_native_plus_ocr'
       ? 'Native + OCR'
@@ -1057,8 +1454,7 @@ export const ScannedPageSideBySide: React.FC<{
             : 'Native PDF';
   const engineBadge = !showTechnical
     ? null
-    :
-    page.ocrEngineUsed === 'hybrid_tesseract_vision'
+    : page.ocrEngineUsed === 'hybrid_tesseract_vision'
       ? 'Hybrid Tesseract + Vision'
       : page.ocrEngineUsed === 'vision'
         ? 'Vision OCR'
@@ -1089,42 +1485,65 @@ export const ScannedPageSideBySide: React.FC<{
         <figure className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2 md:sticky md:top-0">
           <img
             src={resolvedImageUrl}
-            alt={`Scanned page ${page.pageNumber}`}
+            alt={`Original page ${page.pageNumber}`}
             referrerPolicy="no-referrer"
             className="w-full max-h-[560px] object-contain rounded-xl bg-white"
           />
-          <figcaption className="text-xs text-[#505460] font-medium">
-            Page {page.pageNumber}
-            {totalPages && totalPages > 1 ? ` of ${totalPages}` : ''} · {showTechnical ? methodLabel : 'Scanned page'}
-            {showTechnical && page.perspectiveCorrected ? ' · Perspective rectified' : ''}
+          <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#505460] font-medium">
+            <span>
+              Original · Page {page.pageNumber}
+              {totalPages && totalPages > 1 ? ` of ${totalPages}` : ''}
+              {showTechnical ? ` · ${methodLabel}` : ''}
+              {showTechnical && page.perspectiveCorrected ? ' · Perspective rectified' : ''}
+            </span>
+            {onOpenOriginalFile && (
+              <button
+                type="button"
+                onClick={onOpenOriginalFile}
+                className="rounded-lg bg-white border border-[#1A1B20]/10 px-2 py-0.5 text-[11px] font-semibold text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+              >
+                Download Original
+              </button>
+            )}
           </figcaption>
         </figure>
       )}
-      <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-3 min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
-            Extracted content · Page {page.pageNumber}
-          </p>
-          {showTechnical && (
-          <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
-            <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460]">
-              {methodLabel}
-            </span>
-            {engineBadge && (
-              <span className="rounded-md bg-[#1D1E23] px-2 py-0.5 text-white">
-                {engineBadge}
-              </span>
+      <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-3 min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1A1B20]/[0.06] pb-2">
+          <div className="flex items-center gap-2">
+            <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
+              Reconstructed Document · Page {page.pageNumber}
+            </p>
+            {!resolvedImageUrl && onOpenOriginalFile && (
+              <button
+                type="button"
+                onClick={onOpenOriginalFile}
+                className="rounded-lg bg-[#F6F7F9] border border-[#1A1B20]/10 px-2 py-0.5 text-[10px] font-semibold text-[#1A1B20] hover:bg-[#ECEEF3] cursor-pointer"
+              >
+                Download Original
+              </button>
             )}
-            {showTechnical && page.perspectiveCorrected && (
-              <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#1A1B20]">
-                4-pt Rectified
-              </span>
-            )}
-            <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460] font-mono-tabular">
-              {page.wordCount}w · {charCount}c
-            </span>
-            <span className={`rounded-md px-2 py-0.5 ${statusBadge}`}>{statusText}</span>
           </div>
+          {showTechnical && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+              <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460]">
+                {methodLabel}
+              </span>
+              {engineBadge && (
+                <span className="rounded-md bg-[#1D1E23] px-2 py-0.5 text-white">
+                  {engineBadge}
+                </span>
+              )}
+              {page.perspectiveCorrected && (
+                <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#1A1B20]">
+                  4-pt Rectified
+                </span>
+              )}
+              <span className="rounded-md bg-[#F6F7F9] px-2 py-0.5 text-[#505460] font-mono-tabular">
+                {page.wordCount}w · {charCount}c
+              </span>
+              <span className={`rounded-md px-2 py-0.5 ${statusBadge}`}>{statusText}</span>
+            </div>
           )}
         </div>
         {showTechnical && page.warnings.length > 0 && (
@@ -1160,23 +1579,9 @@ export const ScannedPageSideBySide: React.FC<{
             ))}
           </div>
         )}
-        {text ? (
-          <div className="break-words">
-            <OrganizedPageText text={text} />
-          </div>
-        ) : (
-          <p className="text-xs sm:text-sm text-[#686C78]">
-            No text could be read from this page.
-          </p>
-        )}
-        {pageExtractedDiagrams.length > 0 && (
-          <div className="pt-2 border-t border-[#1A1B20]/[0.07] space-y-2">
-            <p className="font-bold text-[11px] uppercase tracking-wider text-[#686C78]">
-              Drawn Figures &amp; Diagrams · Page {page.pageNumber}
-            </p>
-            <ExtractedDiagramsGallery diagrams={pageExtractedDiagrams} />
-          </div>
-        )}
+        <div className="break-words">
+          <ReconstructedPageFlow page={page} variant="admin" />
+        </div>
       </div>
     </div>
   );

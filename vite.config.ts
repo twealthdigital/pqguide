@@ -8,18 +8,6 @@ export default defineConfig(() => {
   return {
     plugins: [
       react(),
-      // Social crawlers need an absolute og:image URL. On Vercel this is filled
-      // automatically from the production domain; set VITE_SITE_URL to override.
-      {
-        name: 'site-url-html',
-        transformIndexHtml(html: string): string {
-          const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-          const url = (
-            process.env.VITE_SITE_URL || (vercel ? `https://${vercel}` : '')
-          ).replace(/\/$/, '');
-          return html.split('__SITE_URL__').join(url);
-        },
-      },
       tailwindcss(),
       // Copies src/assets into dist/ so root-relative URLs like
       // "/src/assets/images/..." (e.g. generate_image output) still resolve
@@ -31,8 +19,8 @@ export default defineConfig(() => {
           if (error) {
             return;
           }
-          const distDir = path.resolve(import.meta.dirname, 'dist');
-          const srcAssets = path.resolve(import.meta.dirname, 'src/assets');
+          const distDir = path.resolve(__dirname, 'dist');
+          const srcAssets = path.resolve(__dirname, 'src/assets');
           const distAssets = path.resolve(distDir, 'src/assets');
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
@@ -42,13 +30,10 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(import.meta.dirname, '.'),
+        '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
-      host: '0.0.0.0',
-      port: 3000,
-      allowedHosts: true as const,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

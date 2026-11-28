@@ -42,13 +42,11 @@ import {
 } from '../services/intelligence/documentScannerEngine';
 import { validateScannedDocument } from '../services/intelligence/validationEngine';
 import { mapDetailedToLegacyCategory } from '../services/intelligence/documentClassifier';
+import { downloadOriginalDocumentFile } from '../services/intelligence/storageAdapter';
 import {
   AcademicBlocksRenderer,
-  ExtractedDiagramsGallery,
+  ReconstructedDocumentRenderer,
   ScannedPageSideBySide,
-  ExtractedFormulasList,
-  ExtractedTableCard,
-  RichInlineText,
   SuperAdminIntelligenceSuite,
 } from '../components/academic/AcademicContentRenderer';
 import {
@@ -1328,56 +1326,49 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                     className="w-full rounded-2xl border border-[#1A1B20]/15 bg-white p-3.5 font-mono-tabular text-xs leading-relaxed text-[#1A1B20]"
                   />
                 )}
-                {previewRecord.summary && (
-                  <div className="rounded-2xl bg-[#F6F7F9] p-3.5 text-xs sm:text-sm text-[#1A1B20]">
-                    <p className="font-bold text-xs uppercase tracking-wider text-[#686C78] mb-1">
-                      Summary
-                    </p>
-                    <RichInlineText text={previewRecord.summary} />
-                  </div>
-                )}
-
-                {previewRecord.formulas.length > 0 && (
-                  <ExtractedFormulasList formulas={previewRecord.formulas} />
-                )}
-
-                {previewRecord.tables.length > 0 && (
-                  <div className="space-y-2">
-                    {previewRecord.tables.map((t) => (
-                      <ExtractedTableCard key={t.id} table={t} />
-                    ))}
-                  </div>
-                )}
-
                 {previewRecord.pages.length > 0 ? (
                   <div className="space-y-3">
                     {previewRecord.pages.map((pg) => (
                       <ScannedPageSideBySide
                         key={pg.pageNumber}
                         page={pg}
+                        fallbackImageUrl={previewRecord.optimizedPreviewUrl}
                         showTechnical={isSuperAdmin}
                         totalPages={previewRecord.pages.length}
+                        onOpenOriginalFile={() =>
+                          void downloadOriginalDocumentFile({
+                            originalFileRefKey: previewRecord.originalFileRef?.key,
+                            originalFileName: previewRecord.originalFileName,
+                            mimeType: previewRecord.mimeType,
+                            fallbackPreviewUrl: sanitizeSafeUrl(
+                              pg.renderedPreviewUrl ?? previewRecord.optimizedPreviewUrl
+                            ),
+                          })
+                        }
                       />
                     ))}
                   </div>
                 ) : (
                   previewRecord.extractedText && (
-                    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5">
-                      <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
-                        Extracted text
-                      </p>
-                      <RichInlineText
-                        text={previewRecord.extractedText}
-                        className="text-xs sm:text-sm text-[#3A3D47]"
+                    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4">
+                      <ReconstructedDocumentRenderer
+                        variant="admin"
+                        pages={[
+                          {
+                            pageNumber: 1,
+                            text: previewRecord.extractedText,
+                            wordCount: previewRecord.extractedText.split(/\s+/).filter(Boolean).length,
+                            ocrApplied: false,
+                            ocrConfidence: null,
+                            diagrams: previewRecord.diagrams,
+                            tables: previewRecord.tables,
+                            formulas: previewRecord.formulas,
+                            warnings: [],
+                          },
+                        ]}
                       />
                     </div>
                   )
-                )}
-
-                {previewRecord.diagrams.some((d) => !d.id.startsWith('scan-sheet')) && (
-                  <ExtractedDiagramsGallery
-                    diagrams={previewRecord.diagrams.filter((d) => !d.id.startsWith('scan-sheet'))}
-                  />
                 )}
 
                 {isSuperAdmin && (

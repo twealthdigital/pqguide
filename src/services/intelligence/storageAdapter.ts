@@ -184,3 +184,54 @@ export function setCachedExtractionByHash(entry: CachedExtractionEntry): void {
   }
   extractionCache.set(entry.sha256, entry);
 }
+
+/**
+ * Triggers a browser download of the retained original uploaded file (or preview fallback)
+ * so School Admins and Super Admins can always inspect or compare against the original upload.
+ */
+export async function downloadOriginalDocumentFile(params: {
+  originalFileRefKey?: string;
+  originalFileName: string;
+  mimeType?: string;
+  fallbackPreviewUrl?: string;
+}): Promise<boolean> {
+  if (typeof document === 'undefined') return false;
+  try {
+    const stored = params.originalFileRefKey
+      ? await documentStorageAdapter.getBinary(params.originalFileRefKey)
+      : null;
+
+    let downloadHref: string | undefined;
+    let shouldRevoke = false;
+
+    if (stored?.bytes && stored.bytes.byteLength > 0) {
+      const copy = new Uint8Array(stored.bytes.byteLength);
+      copy.set(stored.bytes);
+      const blob = new Blob([copy.buffer], {
+        type: stored.mimeType || params.mimeType || 'application/octet-stream',
+      });
+      downloadHref = URL.createObjectURL(blob);
+      shouldRevoke = true;
+    } else if (stored?.dataUrl) {
+      downloadHref = stored.dataUrl;
+    } else if (params.fallbackPreviewUrl) {
+      downloadHref = params.fallbackPreviewUrl;
+    }
+
+    if (!downloadHref) return false;
+    const anchor = document.createElement('a');
+    anchor.href = downloadHref;
+    anchor.download = params.originalFileName || 'document';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    if (shouldRevoke) {
+      window.setTimeout(() => URL.revokeObjectURL(downloadHref!), 2000);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+

@@ -75,6 +75,15 @@ export interface OcrWordBox {
   lineY1: number;
 }
 
+export interface OcrLineBox {
+  text: string;
+  confidence: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface OcrExecutionResult {
   text: string;
   confidence: number; // 0..100
@@ -88,6 +97,7 @@ export interface OcrExecutionResult {
   visionFallbackError?: string;
   uncertainSpans: UncertainSpan[];
   wordBoxes?: OcrWordBox[];
+  lineBoxes?: OcrLineBox[];
   perspectiveCorrected?: boolean;
 }
 
@@ -394,23 +404,40 @@ function isPureBorderToken(tok: string): boolean {
 function analyzeBlocksAndOrder(
   blocks: TesseractBlockNode[] | null | undefined,
   fallbackText: string
-): { orderedText: string; uncertainSpans: UncertainSpan[]; wordBoxes: OcrWordBox[] } {
+): {
+  orderedText: string;
+  uncertainSpans: UncertainSpan[];
+  wordBoxes: OcrWordBox[];
+  lineBoxes: OcrLineBox[];
+} {
   if (!Array.isArray(blocks) || blocks.length === 0) {
-    return { orderedText: fallbackText, uncertainSpans: [], wordBoxes: [] };
+    return { orderedText: fallbackText, uncertainSpans: [], wordBoxes: [], lineBoxes: [] };
   }
 
   const lines: TesseractLineNode[] = [];
   const allWords: BboxWordNode[] = [];
   const wordBoxes: OcrWordBox[] = [];
+  const lineBoxes: OcrLineBox[] = [];
   let maxX = 0;
 
   for (const blk of blocks) {
     if (blk.bbox?.x1 && blk.bbox.x1 > maxX) maxX = blk.bbox.x1;
     for (const para of blk.paragraphs ?? []) {
       for (const ln of para.lines ?? []) {
-        if ((ln.text ?? '').trim()) {
+        const cleanLn = (ln.text ?? '').trim();
+        if (cleanLn) {
           lines.push(ln);
           if (ln.bbox?.x1 && ln.bbox.x1 > maxX) maxX = ln.bbox.x1;
+          if (ln.bbox) {
+            lineBoxes.push({
+              text: cleanLn,
+              confidence: Number.isFinite(ln.confidence) ? Math.round(ln.confidence!) : 85,
+              x0: ln.bbox.x0,
+              y0: ln.bbox.y0,
+              x1: ln.bbox.x1,
+              y1: ln.bbox.y1,
+            });
+          }
         }
         const lineY0 = ln.bbox?.y0 ?? 0;
         const lineY1 = ln.bbox?.y1 ?? 0;
@@ -524,7 +551,25 @@ function analyzeBlocksAndOrder(
           .filter(Boolean)
           .join('\n');
 
-      const rebuilt = [sortByY(fullLines), sortByY(leftLines), sortByY(rightLines)]
+      const colTopY = Math.min(
+        ...leftLines.map((l) => l.bbox?.y0 ?? Infinity),
+        ...rightLines.map((l) => l.bbox?.y0 ?? Infinity)
+      );
+      const colBottomY = Math.max(
+        ...leftLines.map((l) => l.bbox?.y1 ?? 0),
+        ...rightLines.map((l) => l.bbox?.y1 ?? 0)
+      );
+      const topFull = fullLines.filter((l) => (l.bbox?.y1 ?? 0) <= colTopY + 8);
+      const bottomFull = fullLines.filter((l) => (l.bbox?.y0 ?? 0) >= colBottomY - 8);
+      const midFull = fullLines.filter((l) => !topFull.includes(l) && !bottomFull.includes(l));
+
+      const rebuilt = [
+        sortByY(topFull),
+        sortByY(leftLines),
+        sortByY(midFull),
+        sortByY(rightLines),
+        sortByY(bottomFull),
+      ]
         .filter(Boolean)
         .join('\n\n');
       if (rebuilt.trim().length > fallbackText.trim().length * 0.8) {
@@ -729,7 +774,7 @@ function analyzeBlocksAndOrder(
     }
   }
 
-  return { orderedText, uncertainSpans, wordBoxes };
+  return { orderedText, uncertainSpans, wordBoxes, lineBoxes };
 }
 
 async function runPooledRecognition(params: {
@@ -738,7 +783,13 @@ async function runPooledRecognition(params: {
   signal?: AbortSignal;
   timeoutMs: number;
   onProgress?: (pct: number, statusText: string) => void;
-}): Promise<{ text: string; confidence: number; uncertainSpans: UncertainSpan[]; wordBoxes: OcrWordBox[] }> {
+}): Promise<{
+  text: string;
+  confidence: number;
+  uncertainSpans: UncertainSpan[];
+  wordBoxes: OcrWordBox[];
+  lineBoxes: OcrLineBox[];
+}> {
   throwIfAborted(params.signal);
   const slot = await acquireWorkerSlot();
   try {
@@ -788,14 +839,14 @@ async function runPooledRecognition(params: {
       const rawConf = Number.isFinite(res.data?.confidence)
         ? Math.max(0, Math.min(100, Math.round(res.data.confidence)))
         : 0;
-      const { orderedText, uncertainSpans, wordBoxes } = analyzeBlocksAndOrder(
+      const { orderedText, uncertainSpans, wordBoxes, lineBoxes } = analyzeBlocksAndOrder(
         res.data?.blocks as unknown as TesseractBlockNode[] | null | undefined,
         rawText
       );
       const cleaned = cleanOcrOutputText(orderedText);
       const metrics = scoreOcrCandidate(cleaned, rawConf);
       const effectiveConf = metrics.alnumChars < 6 ? 0 : rawConf;
-      return { text: cleaned, confidence: effectiveConf, uncertainSpans, wordBoxes };
+      return { text: cleaned, confidence: effectiveConf, uncertainSpans, wordBoxes, lineBoxes };
     } catch (err) {
       if ((err as { name?: string })?.name !== 'AbortError') {
         await terminateSlotWorker(slot);
@@ -1111,6 +1162,7 @@ export async function recognizeWithTesseractPool(
             confidence: visionConf,
             uncertainSpans: vRes.uncertainSpans ?? [],
             wordBoxes: best.wordBoxes,
+            lineBoxes: best.lineBoxes,
           };
           bestScore = visionScore;
           uncertainSpans = vRes.uncertainSpans ?? [];
@@ -1170,6 +1222,7 @@ export async function recognizeWithTesseractPool(
     visionFallbackError,
     uncertainSpans,
     wordBoxes: best.wordBoxes,
+    lineBoxes: best.lineBoxes,
     perspectiveCorrected: basePrep?.perspectiveCorrected,
   };
 }

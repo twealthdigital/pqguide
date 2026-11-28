@@ -102,6 +102,7 @@ export interface StudyMaterial {
   originalFileName?: string;
   extractedText?: string;
   attachmentPreviewUrl?: string;
+  reconstructedPages?: ExtractedPageContent[];
   status?: 'published' | 'draft';
   uploadedBy?: string;
   uploadedAt?: string;
@@ -134,6 +135,7 @@ export interface PastQuestionDoc {
   questions: string[];
   /** Optional worked answers, index-aligned with `questions` (null = not added yet). */
   solutions?: Array<QuestionSolution | null>;
+  reconstructedPages?: ExtractedPageContent[];
   uploadedBy: string;
   uploadedById?: string;
   uploadedAt: string; // ISO string
@@ -666,6 +668,7 @@ export interface ExtractedTable {
   rows: string[][];
   rowHeaders?: string[];
   columnHeaderCount?: number;
+  columnAlignments?: Array<'left' | 'center' | 'right'>;
   borderStyle?: 'bordered' | 'borderless' | 'mixed';
   hasMergedCells?: boolean;
   mergedCells?: MergedTableCellSpan[];
@@ -673,6 +676,7 @@ export interface ExtractedTable {
   continuesOnPage?: number;
   uncertainStructure?: boolean;
   uncertaintyReason?: string;
+  bbox?: { x: number; y: number; width: number; height: number };
   markdown?: string;
   jsonRows?: Array<Record<string, string>>;
 }
@@ -943,6 +947,37 @@ export interface UncertainSpan {
   bbox?: { x0: number; y0: number; x1: number; y1: number };
 }
 
+export type ReconstructedBlockKind =
+  | 'header'
+  | 'footer'
+  | 'heading'
+  | 'subheading'
+  | 'paragraph'
+  | 'question'
+  | 'subquestion'
+  | 'table'
+  | 'formula'
+  | 'diagram'
+  | 'uncertain';
+
+export interface ReconstructedBlock {
+  id: string;
+  kind: ReconstructedBlockKind;
+  pageNumber: number;
+  text?: string;
+  label?: string;
+  headingLevel?: 1 | 2 | 3;
+  alignment?: 'left' | 'center' | 'right';
+  indentLevel?: number;
+  latex?: string;
+  displayMode?: boolean;
+  table?: ExtractedTable;
+  diagram?: ExtractedDiagramAsset;
+  uncertain?: boolean;
+  uncertainReason?: string;
+  bbox?: { x: number; y: number; width: number; height: number };
+}
+
 export interface ExtractedPageContent {
   pageNumber: number;
   text: string;
@@ -971,6 +1006,9 @@ export interface ExtractedPageContent {
   diagrams: ExtractedDiagramAsset[];
   tables: ExtractedTable[];
   formulas: ExtractedFormula[];
+  headerLines?: string[];
+  footerLines?: string[];
+  blocks?: ReconstructedBlock[];
   warnings: string[];
 }
 

@@ -19,6 +19,7 @@ import type {
   OmrTemplateConfig,
   PageExtractionMethod,
   QrCodeMatch,
+  ReconstructedBlock,
   ScannerModuleName,
   ScannerModuleRunReport,
   SignatureDetection,
@@ -47,6 +48,7 @@ import {
 } from './diagramExtractor';
 import {
   recognizeWithTesseractPool,
+  type OcrLineBox,
   type OcrWordBox,
   type VisionFallbackMode,
   type VisionOcrRunner,
@@ -73,6 +75,7 @@ import { detectSignaturesAndStamps } from './signatureStampDetector';
 import { analyzeDocumentLanguages } from './languageDetector';
 import {
   extractMathFormulasAdvanced,
+  injectInlineLatexIntoText,
   type MathOcrAdapter,
 } from './mathFormulaEngine';
 import {
@@ -83,6 +86,10 @@ import {
 import { classifyAcademicDocument } from './documentClassifier';
 import { inspectDocumentIntegrity } from './documentIntegrityChecker';
 import { extractAcademicMetadata } from './academicMetadataExtractor';
+import {
+  buildBlocksFromStructuredText,
+  reconstructPageBlocks,
+} from './layoutReconstructor';
 
 export type ScanStageId =
   | 'queued'
@@ -120,6 +127,7 @@ export interface OcrRunnerResult {
   visionFallbackError?: string;
   uncertainSpans?: UncertainSpan[];
   wordBoxes?: OcrWordBox[];
+  lineBoxes?: OcrLineBox[];
   perspectiveCorrected?: boolean;
 }
 
@@ -284,6 +292,7 @@ export async function defaultBrowserOcrRunner(input: {
     visionFallbackError: res.visionFallbackError,
     uncertainSpans: res.uncertainSpans,
     wordBoxes: res.wordBoxes,
+    lineBoxes: res.lineBoxes,
     perspectiveCorrected: res.perspectiveCorrected,
   };
 }
@@ -324,6 +333,7 @@ async function parseDocxArchive(
   tables: ExtractedTable[];
   formulas: ExtractedFormula[];
   diagrams: ExtractedDiagramAsset[];
+  blocks: ReconstructedBlock[];
   hasMacros: boolean;
   wasTruncated: boolean;
 }> {
@@ -337,118 +347,31 @@ async function parseDocxArchive(
   }
   const xml = await documentEntry.async('string');
 
-  const headings: string[] = [];
-  const tables: ExtractedTable[] = [];
-  const formulas: ExtractedFormula[] = [];
-  const paragraphLines: string[] = [];
-
-  // Parse OMML math (<m:oMath>...</m:oMath>)
-  const mathRegex = /<m:oMath[^>]*>([\s\S]*?)<\/m:oMath>/g;
-  let mathMatch: RegExpExecArray | null;
-  while ((mathMatch = mathRegex.exec(xml)) !== null && formulas.length < 32) {
-    const mathText = extractXmlTagsText(mathMatch[1]).replace(/\s+/g, ' ').trim();
-    if (mathText) {
-      formulas.push({
-        id: `omml-${formulas.length + 1}`,
-        pageNumber: 1,
-        rawText: mathText,
-        latex: mathText,
-        displayMode: true,
-      });
-    }
-  }
-
-  // Parse tables (<w:tbl>...</w:tbl>) with <w:gridSpan> & <w:vMerge> support
-  const tblRegex = /<w:tbl\b[^>]*>([\s\S]*?)<\/w:tbl>/g;
-  let tblMatch: RegExpExecArray | null;
-  while ((tblMatch = tblRegex.exec(xml)) !== null && tables.length < 12) {
-    const rows: string[][] = [];
-    const mergedCells: MergedTableCellSpan[] = [];
-    const trRegex = /<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g;
-    let trMatch: RegExpExecArray | null;
-    let rIdx = 0;
-
-    while ((trMatch = trRegex.exec(tblMatch[1])) !== null) {
-      const rowCells: string[] = [];
-      const tcRegex = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
-      let tcMatch: RegExpExecArray | null;
-      let cIdx = 0;
-
-      while ((tcMatch = tcRegex.exec(trMatch[1])) !== null) {
-        const tcXml = tcMatch[1];
-        const cellVal = sanitizeSingleLine(extractXmlTagsText(tcXml), 140);
-        const spanMatch = tcXml.match(/<w:gridSpan\b[^>]*w:val="(\d+)"/i);
-        const colSpan = spanMatch ? Math.max(1, Number(spanMatch[1])) : 1;
-        const hasVMergeRestart = /<w:vMerge\b[^>]*w:val="restart"/i.test(tcXml);
-        const hasVMergeCont =
-          /<w:vMerge\b(?![^>]*w:val="restart")/i.test(tcXml) ||
-          /<w:vMerge\b[^>]*w:val="continue"/i.test(tcXml);
-
-        if (colSpan > 1 || hasVMergeRestart) {
-          mergedCells.push({
-            row: rIdx,
-            col: cIdx,
-            rowSpan: hasVMergeRestart ? 2 : 1,
-            colSpan,
-            value: cellVal,
-          });
+  // Map DOCX relationship IDs -> word/media/... entries so embedded images render at exact DOM spot
+  const relIdToMediaPath = new Map<string, string>();
+  const relsEntry = zip.file('word/_rels/document.xml.rels');
+  if (relsEntry) {
+    try {
+      const relsXml = await relsEntry.async('string');
+      const relRegex = /<Relationship\b([^>]+)\/?>/gi;
+      let relMatch: RegExpExecArray | null;
+      while ((relMatch = relRegex.exec(relsXml)) !== null) {
+        const attrs = relMatch[1];
+        const idM = attrs.match(/\bId="([^"]+)"/i);
+        const targetM = attrs.match(/\bTarget="([^"]+)"/i);
+        if (idM && targetM) {
+          const cleanTarget = targetM[1].replace(/^\/+/, '');
+          const fullPath = cleanTarget.startsWith('word/') ? cleanTarget : `word/${cleanTarget}`;
+          relIdToMediaPath.set(idM[1], fullPath);
         }
-        if (hasVMergeCont) {
-          const prevRowSpan = mergedCells.find(
-            (m) => m.col === cIdx && m.row < rIdx && m.row + m.rowSpan >= rIdx
-          );
-          if (prevRowSpan) prevRowSpan.rowSpan += 1;
-        }
-
-        rowCells.push(cellVal);
-        for (let k = 1; k < colSpan; k += 1) {
-          rowCells.push('');
-        }
-        cIdx += colSpan;
       }
-
-      if (rowCells.length > 0) {
-        rows.push(rowCells);
-        rIdx += 1;
-      }
-    }
-    if (rows.length >= 2 && rows[0].length >= 2) {
-      const colCount = Math.max(...rows.map((r) => r.length));
-      tables.push(
-        enrichExtractedTable(
-          {
-            id: `docx-tbl-${tables.length + 1}`,
-            pageNumber: 1,
-            headers: Array.from({ length: colCount }, (_, i) => rows[0][i] ?? ''),
-            rows: rows
-              .slice(1)
-              .map((r) => Array.from({ length: colCount }, (_, i) => r[i] ?? '')),
-          },
-          {
-            borderStyle: 'bordered',
-            mergedCells: mergedCells.length > 0 ? mergedCells : undefined,
-          }
-        )
-      );
+    } catch {
+      // Non-fatal
     }
   }
 
-  // Parse paragraphs & styled headings
-  const pRegex = /<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g;
-  let pMatch: RegExpExecArray | null;
-  while ((pMatch = pRegex.exec(xml)) !== null) {
-    const pXml = pMatch[1];
-    const isHeading = /<w:pStyle\b[^>]*w:val="(Heading\d|Title|Subtitle)"/i.test(pXml);
-    const text = extractXmlTagsText(pXml);
-    if (!text) continue;
-    if (isHeading && headings.length < 24) {
-      headings.push(sanitizeSingleLine(text, 120));
-      paragraphLines.push(`## ${text}`);
-    } else {
-      paragraphLines.push(text);
-    }
-  }
-
+  // Load embedded images first so inline DOM blocks can reference them directly
+  const diagramByMediaPath = new Map<string, ExtractedDiagramAsset>();
   const diagrams: ExtractedDiagramAsset[] = [];
   const mediaEntries = entryNames.filter(
     (name) => /^word\/media\/.+\.(png|jpg|jpeg|webp)$/i.test(name) && !zip.files[name].dir
@@ -469,18 +392,287 @@ async function parseDocxArchive(
       bytes: mediaBytes,
       dataUrl,
     });
-    diagrams.push({
+    const asset: ExtractedDiagramAsset = {
       id: `docx-fig-${i + 1}`,
       pageNumber: 1,
-      caption: `Embedded figure ${i + 1} (${entryName.split('/').pop() ?? 'diagram'})`,
+      caption: `Figure ${i + 1} (${entryName.split('/').pop() ?? 'diagram'})`,
       kind: 'diagram',
       mimeType,
       dataUrl,
       storageRef: ref,
-    });
+    };
+    diagrams.push(asset);
+    diagramByMediaPath.set(entryName, asset);
   }
 
-  const joined = paragraphLines.join('\n');
+  const headings: string[] = [];
+  const tables: ExtractedTable[] = [];
+  const formulas: ExtractedFormula[] = [];
+  const blocks: ReconstructedBlock[] = [];
+  const textStreamLines: string[] = [];
+  const placedDiagramIds = new Set<string>();
+  let blockSeq = 1;
+
+  // Walk <w:body> top-level <w:p> and <w:tbl> nodes in true DOM sequence without duplicating nested table <w:p> cells
+  const bodyMatch = xml.match(/<w:body\b[^>]*>([\s\S]*)<\/w:body>/i);
+  const bodyXml = bodyMatch ? bodyMatch[1] : xml;
+
+  const extractTopLevelNodes = (source: string): Array<{ kind: 'p' | 'tbl'; xml: string }> => {
+    const out: Array<{ kind: 'p' | 'tbl'; xml: string }> = [];
+    let cursor = 0;
+    const tagRe = /<(?:(\/)?w:(tbl|p))\b[^>]*(\/?)>/g;
+    let tblDepth = 0;
+    let pDepth = 0;
+    let curKind: 'p' | 'tbl' | null = null;
+    let curStart = 0;
+    let m: RegExpExecArray | null;
+
+    while ((m = tagRe.exec(source)) !== null) {
+      const isClose = Boolean(m[1]);
+      const tagType = m[2] as 'p' | 'tbl';
+      const selfClose = Boolean(m[3]);
+      if (selfClose) continue;
+
+      if (tagType === 'tbl') {
+        if (!isClose) {
+          if (tblDepth === 0 && pDepth === 0) {
+            curKind = 'tbl';
+            curStart = m.index;
+          }
+          tblDepth += 1;
+        } else {
+          tblDepth = Math.max(0, tblDepth - 1);
+          if (tblDepth === 0 && curKind === 'tbl') {
+            out.push({ kind: 'tbl', xml: source.slice(curStart, tagRe.lastIndex) });
+            curKind = null;
+            cursor = tagRe.lastIndex;
+          }
+        }
+      } else if (tagType === 'p') {
+        if (tblDepth > 0) continue; // Ignore nested <w:p> inside table cells
+        if (!isClose) {
+          if (pDepth === 0) {
+            curKind = 'p';
+            curStart = m.index;
+          }
+          pDepth += 1;
+        } else {
+          pDepth = Math.max(0, pDepth - 1);
+          if (pDepth === 0 && curKind === 'p') {
+            out.push({ kind: 'p', xml: source.slice(curStart, tagRe.lastIndex) });
+            curKind = null;
+            cursor = tagRe.lastIndex;
+          }
+        }
+      }
+    }
+    void cursor;
+    return out;
+  };
+
+  const nodes = extractTopLevelNodes(bodyXml);
+
+  for (const node of nodes) {
+    if (node.kind === 'tbl') {
+      if (tables.length >= 16) continue;
+      const rows: string[][] = [];
+      const mergedCells: MergedTableCellSpan[] = [];
+      const trRegex = /<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g;
+      let trMatch: RegExpExecArray | null;
+      let rIdx = 0;
+
+      while ((trMatch = trRegex.exec(node.xml)) !== null) {
+        const rowCells: string[] = [];
+        const tcRegex = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
+        let tcMatch: RegExpExecArray | null;
+        let cIdx = 0;
+
+        while ((tcMatch = tcRegex.exec(trMatch[1])) !== null) {
+          const tcXml = tcMatch[1];
+          const cellVal = sanitizeSingleLine(extractXmlTagsText(tcXml), 140);
+          const spanMatch = tcXml.match(/<w:gridSpan\b[^>]*w:val="(\d+)"/i);
+          const colSpan = spanMatch ? Math.max(1, Number(spanMatch[1])) : 1;
+          const hasVMergeRestart = /<w:vMerge\b[^>]*w:val="restart"/i.test(tcXml);
+          const hasVMergeCont =
+            /<w:vMerge\b(?![^>]*w:val="restart")/i.test(tcXml) ||
+            /<w:vMerge\b[^>]*w:val="continue"/i.test(tcXml);
+
+          if (colSpan > 1 || hasVMergeRestart) {
+            mergedCells.push({
+              row: rIdx,
+              col: cIdx,
+              rowSpan: hasVMergeRestart ? 2 : 1,
+              colSpan,
+              value: cellVal,
+            });
+          }
+          if (hasVMergeCont) {
+            const prevRowSpan = mergedCells.find(
+              (m) => m.col === cIdx && m.row < rIdx && m.row + m.rowSpan >= rIdx
+            );
+            if (prevRowSpan) prevRowSpan.rowSpan += 1;
+          }
+
+          rowCells.push(cellVal);
+          for (let k = 1; k < colSpan; k += 1) {
+            rowCells.push('');
+          }
+          cIdx += colSpan;
+        }
+
+        if (rowCells.length > 0) {
+          rows.push(rowCells);
+          rIdx += 1;
+        }
+      }
+
+      if (rows.length >= 2 && rows[0].length >= 2) {
+        const colCount = Math.max(...rows.map((r) => r.length));
+        const headers = Array.from({ length: colCount }, (_, i) => rows[0][i] ?? '');
+        const bodyRows = rows.slice(1).map((r) => Array.from({ length: colCount }, (_, i) => r[i] ?? ''));
+        const tblObj = enrichExtractedTable(
+          {
+            id: `docx-tbl-${tables.length + 1}`,
+            pageNumber: 1,
+            headers,
+            rows: bodyRows,
+          },
+          {
+            borderStyle: 'bordered',
+            mergedCells: mergedCells.length > 0 ? mergedCells : undefined,
+          }
+        );
+        tables.push(tblObj);
+        blocks.push({
+          id: `docx-blk-${blockSeq++}`,
+          kind: 'table',
+          pageNumber: 1,
+          table: tblObj,
+        });
+        if (tblObj.markdown) {
+          textStreamLines.push(tblObj.markdown);
+        }
+      }
+      continue;
+    }
+
+    // Paragraph <w:p> node: inspect OMML math, drawings, style, alignment, and text
+    const pXml = node.xml;
+    const styleMatch = pXml.match(/<w:pStyle\b[^>]*w:val="([^"]+)"/i);
+    const styleVal = styleMatch?.[1] ?? '';
+    const isTitleStyle = /^Title$/i.test(styleVal);
+    const isHeadingStyle = /^(Heading\d|Subtitle)$/i.test(styleVal);
+    const jcMatch = pXml.match(/<w:jc\b[^>]*w:val="(center|right|left)"/i);
+    const alignment = (jcMatch?.[1]?.toLowerCase() as 'center' | 'right' | 'left' | undefined) ?? 'left';
+
+    // Check embedded OMML formulas inside this paragraph
+    const pMathRegex = /<m:oMath[^>]*>([\s\S]*?)<\/m:oMath>/g;
+    let pMathMatch: RegExpExecArray | null;
+    while ((pMathMatch = pMathRegex.exec(pXml)) !== null && formulas.length < 32) {
+      const mathText = extractXmlTagsText(pMathMatch[1]).replace(/\s+/g, ' ').trim();
+      if (mathText) {
+        formulas.push({
+          id: `omml-${formulas.length + 1}`,
+          pageNumber: 1,
+          rawText: mathText,
+          latex: mathText,
+          displayMode: true,
+          sourceMethod: 'omml_xml',
+        });
+      }
+    }
+
+    const text = extractXmlTagsText(pXml);
+    if (text) {
+      if (isTitleStyle || isHeadingStyle) {
+        if (headings.length < 24) headings.push(sanitizeSingleLine(text, 120));
+        const hLevel: 1 | 2 | 3 = isTitleStyle || /Heading1/i.test(styleVal) ? 1 : /Heading2/i.test(styleVal) ? 2 : 3;
+        textStreamLines.push(`${'#'.repeat(hLevel)} ${text}`);
+        blocks.push({
+          id: `docx-blk-${blockSeq++}`,
+          kind: hLevel === 3 ? 'subheading' : 'heading',
+          headingLevel: hLevel,
+          pageNumber: 1,
+          text,
+          alignment: isTitleStyle ? 'center' : alignment,
+        });
+      } else {
+        textStreamLines.push(text);
+        const qMatch = text.match(/^((?:Q(?:uestion)?\s*)?\d+[.)]|Question\s+(?:One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|\d+)[:.)]?)\s+(.+)$/i);
+        const subMatch = text.match(/^(\([a-z0-9]{1,4}\)|[A-Ea-e][.)]|[ivxlcdm]{1,4}[.)])\s+(.+)$/);
+        if (qMatch) {
+          blocks.push({
+            id: `docx-blk-${blockSeq++}`,
+            kind: 'question',
+            pageNumber: 1,
+            label: qMatch[1],
+            text: injectInlineLatexIntoText(qMatch[2]),
+            alignment,
+          });
+        } else if (subMatch) {
+          blocks.push({
+            id: `docx-blk-${blockSeq++}`,
+            kind: 'subquestion',
+            pageNumber: 1,
+            label: subMatch[1],
+            text: injectInlineLatexIntoText(subMatch[2]),
+            indentLevel: 1,
+            alignment,
+          });
+        } else if (/<m:oMathPara/i.test(pXml) || (/^<m:oMath/i.test(pXml.trim()) && text.length < 100)) {
+          blocks.push({
+            id: `docx-blk-${blockSeq++}`,
+            kind: 'formula',
+            pageNumber: 1,
+            latex: text,
+            text,
+            displayMode: true,
+            alignment: 'center',
+          });
+        } else {
+          blocks.push({
+            id: `docx-blk-${blockSeq++}`,
+            kind: 'paragraph',
+            pageNumber: 1,
+            text: injectInlineLatexIntoText(text),
+            alignment,
+          });
+        }
+      }
+    }
+
+    // Emit any embedded images referenced inside this <w:p> right at its DOM position
+    const blipRegex = /r:embed="(rId\d+)"/gi;
+    let blipMatch: RegExpExecArray | null;
+    while ((blipMatch = blipRegex.exec(pXml)) !== null) {
+      const targetPath = relIdToMediaPath.get(blipMatch[1]);
+      const diagAsset = targetPath ? diagramByMediaPath.get(targetPath) : undefined;
+      if (diagAsset && !placedDiagramIds.has(diagAsset.id)) {
+        placedDiagramIds.add(diagAsset.id);
+        blocks.push({
+          id: `docx-blk-${blockSeq++}`,
+          kind: 'diagram',
+          pageNumber: 1,
+          diagram: diagAsset,
+          text: diagAsset.caption,
+        });
+      }
+    }
+  }
+
+  for (const diagAsset of diagrams) {
+    if (!placedDiagramIds.has(diagAsset.id)) {
+      blocks.push({
+        id: `docx-blk-${blockSeq++}`,
+        kind: 'diagram',
+        pageNumber: 1,
+        diagram: diagAsset,
+        text: diagAsset.caption,
+      });
+    }
+  }
+
+  const joined = textStreamLines.join('\n');
   const sanitized = sanitizePlainText(joined, MAX_PAGE_TEXT_CHARS);
   return {
     text: sanitized,
@@ -488,6 +680,7 @@ async function parseDocxArchive(
     tables,
     formulas,
     diagrams,
+    blocks,
     hasMacros,
     wasTruncated: joined.trim().length > MAX_PAGE_TEXT_CHARS,
   };
@@ -558,34 +751,62 @@ export function extractPdfPageStructuredText(
     };
   }
 
-  // Detect 2-column reading layout: significant prose tokens strictly left/right of central gutter
+  // Detect 2-column reading layout: significant prose/question tokens strictly left/right of central gutter
   const midX = pageWidth * 0.5;
   const gutterHalf = Math.max(12, pageWidth * 0.035);
-  let leftOnly = 0;
-  let rightOnly = 0;
-  let crossingMid = 0;
+  const leftTokensOnly: PlacedToken[] = [];
+  const rightTokensOnly: PlacedToken[] = [];
+  const crossingTokens: PlacedToken[] = [];
   let leftWordSum = 0;
   let rightWordSum = 0;
+  let leftQOrProse = 0;
+  let rightQOrProse = 0;
+  const qPrefixRe = /^((?:Q(?:uestion)?\s*)?\d+[.)]|\([a-z0-9]{1,3}\))\s+[A-Za-z]/i;
+
   for (const t of tokens) {
     const endX = t.x + t.w;
     const words = t.str.trim().split(/\s+/).filter(Boolean).length;
     if (endX <= midX - gutterHalf) {
-      leftOnly += 1;
+      leftTokensOnly.push(t);
       leftWordSum += words;
+      if (words >= 4 || qPrefixRe.test(t.str.trim())) leftQOrProse += 1;
     } else if (t.x >= midX + gutterHalf) {
-      rightOnly += 1;
+      rightTokensOnly.push(t);
       rightWordSum += words;
+      if (words >= 4 || qPrefixRe.test(t.str.trim())) rightQOrProse += 1;
     } else if (t.w > gutterHalf * 2.5) {
-      crossingMid += 1;
+      crossingTokens.push(t);
     }
   }
+  const leftOnly = leftTokensOnly.length;
+  const rightOnly = rightTokensOnly.length;
+  const colYMax = Math.min(
+    leftOnly > 0 ? Math.max(...leftTokensOnly.map((t) => t.y + t.h)) : -Infinity,
+    rightOnly > 0 ? Math.max(...rightTokensOnly.map((t) => t.y + t.h)) : -Infinity
+  );
+  const colYMin = Math.max(
+    leftOnly > 0 ? Math.min(...leftTokensOnly.map((t) => t.y)) : Infinity,
+    rightOnly > 0 ? Math.min(...rightTokensOnly.map((t) => t.y)) : Infinity
+  );
+  const innerCrossingMid =
+    leftOnly > 0 && rightOnly > 0
+      ? crossingTokens.filter((t) => t.y <= colYMax + 6 && t.y + t.h >= colYMin - 6).length
+      : crossingTokens.length;
   const avgLeftTokWords = leftWordSum / Math.max(1, leftOnly);
   const avgRightTokWords = rightWordSum / Math.max(1, rightOnly);
-  const isMultiColumn =
+  const isDenseTwoCol =
     leftOnly >= 8 &&
     rightOnly >= 8 &&
-    crossingMid <= Math.min(leftOnly, rightOnly) * 0.25 &&
+    innerCrossingMid <= Math.min(leftOnly, rightOnly) * 0.25 &&
     (avgLeftTokWords >= 2.2 || avgRightTokWords >= 2.2 || leftOnly + rightOnly >= 24);
+  const isCompactProseTwoCol =
+    leftOnly >= 2 &&
+    rightOnly >= 2 &&
+    colYMax >= colYMin - 12 &&
+    innerCrossingMid <= Math.floor(Math.min(leftOnly, rightOnly) * 0.25) &&
+    ((avgLeftTokWords >= 3.2 && avgRightTokWords >= 3.2) ||
+      (leftQOrProse >= 2 && rightQOrProse >= 2));
+  const isMultiColumn = isDenseTwoCol || isCompactProseTwoCol;
 
   const rebuildStream = (stream: PlacedToken[], allowInlineTables: boolean): string => {
     if (stream.length === 0) return '';
@@ -670,6 +891,13 @@ export function extractPdfPageStructuredText(
       const avgWords =
         r.cells.reduce((s, c) => s + c.text.split(/\s+/).filter(Boolean).length, 0) / r.cells.length;
       if (avgWords > 6) return false;
+      if (
+        r.cells.length === 2 &&
+        (/^((?:Q(?:uestion)?\s*)?\d+[.)])\s+[A-Za-z]/i.test(r.cells[0].text) ||
+          /^((?:Q(?:uestion)?\s*)?\d+[.)])\s+[A-Za-z]/i.test(r.cells[1].text))
+      ) {
+        return false;
+      }
       if (
         r.cells.length === 2 &&
         /^[A-D][.)]\s/i.test(r.cells[0].text) &&
@@ -776,10 +1004,26 @@ export function extractPdfPageStructuredText(
         rightCol.push(t);
       }
     }
+    const colTopY = Math.max(
+      ...leftCol.map((t) => t.y + t.h),
+      ...rightCol.map((t) => t.y + t.h),
+      -Infinity
+    );
+    const colBottomY = Math.min(
+      ...leftCol.map((t) => t.y),
+      ...rightCol.map((t) => t.y),
+      Infinity
+    );
+    const topFull = headerOrFull.filter((t) => t.y >= colTopY - 8);
+    const bottomFull = headerOrFull.filter((t) => t.y + t.h <= colBottomY + 8);
+    const midFull = headerOrFull.filter((t) => !topFull.includes(t) && !bottomFull.includes(t));
+
     rawText = [
-      rebuildStream(headerOrFull, true),
+      rebuildStream(topFull, true),
       rebuildStream(leftCol, false),
+      rebuildStream(midFull, true),
       rebuildStream(rightCol, false),
+      rebuildStream(bottomFull, true),
     ]
       .filter((s) => s.trim().length > 0)
       .join('\n\n');
@@ -807,7 +1051,7 @@ export function extractPdfPageStructuredText(
   };
 }
 
-/** Merges OCR lines from embedded graphics/scans into native PDF text without duplicating native lines. */
+/** Merges OCR lines from embedded graphics/scans into native PDF text without duplicating native lines or appending diagnostic headers. */
 function mergeNativeAndOcrText(nativeText: string, ocrText: string): {
   merged: string;
   addedLines: number;
@@ -859,7 +1103,7 @@ function mergeNativeAndOcrText(nativeText: string, ocrText: string): {
   }
 
   return {
-    merged: `${nativeText.trim()}\n\n[Extracted Embedded Graphic Text]\n${uniqueOcrLines.join('\n')}`,
+    merged: `${nativeText.trim()}\n\n${uniqueOcrLines.join('\n')}`,
     addedLines: uniqueOcrLines.length,
   };
 }
@@ -1261,6 +1505,7 @@ async function processPdfBuffer(params: {
     let visionFallbackError: string | undefined;
     let uncertainSpans: UncertainSpan[] = [];
     let perspectiveCorrected = false;
+    let pageLineBoxes: OcrLineBox[] | undefined;
     let pageWordBoxes: OcrWordBox[] | undefined;
     let pagePrep: PreprocessedImageResult | undefined;
 
@@ -1304,6 +1549,7 @@ async function processPdfBuffer(params: {
         visionFallbackUsed = Boolean(ocrRes.visionFallbackUsed);
         visionFallbackError = ocrRes.visionFallbackError;
         uncertainSpans = ocrRes.uncertainSpans ?? [];
+        pageLineBoxes = ocrRes.lineBoxes;
         pageWordBoxes = ocrRes.wordBoxes;
         pagePrep = ocrRes.preprocessed;
         perspectiveCorrected = Boolean(ocrRes.perspectiveCorrected);
@@ -1333,25 +1579,7 @@ async function processPdfBuffer(params: {
             if (merged.merged.length > MAX_PAGE_TEXT_CHARS) wasTruncated = true;
           }
         }
-        if (ocrRes.preprocessed?.ocrGray && !hasVectorDrawings) {
-          try {
-            const rasterFigs = await extractRasterDiagramsFromGrayscale({
-              gray: ocrRes.preprocessed.ocrGray,
-              width: ocrRes.preprocessed.width,
-              height: ocrRes.preprocessed.height,
-              pageNumber: pageNo,
-              wordBoxes: pageWordBoxes,
-              ocrText: cleanedPageText,
-            });
-            if (rasterFigs.length > 0) {
-              const nonFullPage = pageDiagrams.filter((d) => !d.id.startsWith('pdf-diag-'));
-              pageDiagrams.length = 0;
-              pageDiagrams.push(...nonFullPage, ...rasterFigs);
-            }
-          } catch {
-            // Non-fatal figure isolation failure
-          }
-        }
+        // Raster diagram pass runs below after bordered tables are identified so grid tables are excluded.
       } catch (err) {
         if ((err as { name?: string })?.name === 'AbortError') throw err;
         errors.push(
@@ -1388,22 +1616,6 @@ async function processPdfBuffer(params: {
       }
     }
 
-    if (pageDiagrams.length === 0 && !hasVectorDrawings && visualGray && visualW > 0 && visualH > 0) {
-      try {
-        const rasterFigs = await extractRasterDiagramsFromGrayscale({
-          gray: visualGray,
-          width: visualW,
-          height: visualH,
-          pageNumber: pageNo,
-          wordBoxes: pageWordBoxes,
-          ocrText: cleanedPageText,
-        });
-        if (rasterFigs.length > 0) pageDiagrams.push(...rasterFigs);
-      } catch {
-        // Non-fatal
-      }
-    }
-
     const visualTables =
       visualGray && visualW > 0 && visualH > 0
         ? extractBorderedTablesFromGrayscale({
@@ -1421,6 +1633,29 @@ async function processPdfBuffer(params: {
         : visualTables.length > 0
           ? [...visualTables, ...textTables.filter((tt) => tt.rows.length > 0)]
           : textTables;
+
+    if (!hasVectorDrawings && visualGray && visualW > 0 && visualH > 0) {
+      try {
+        const rasterFigs = await extractRasterDiagramsFromGrayscale({
+          gray: visualGray,
+          width: visualW,
+          height: visualH,
+          pageNumber: pageNo,
+          wordBoxes: pageWordBoxes,
+          ocrText: cleanedPageText,
+          excludeBboxes: visualTables
+            .map((t) => t.bbox)
+            .filter((b): b is NonNullable<typeof b> => Boolean(b)),
+        });
+        if (rasterFigs.length > 0) {
+          const nonFullPage = pageDiagrams.filter((d) => !d.id.startsWith('pdf-diag-'));
+          pageDiagrams.length = 0;
+          pageDiagrams.push(...nonFullPage, ...rasterFigs);
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
 
     const pageFormulas = await extractMathFormulasAdvanced({
       text: cleanedPageText,
@@ -1518,6 +1753,22 @@ async function processPdfBuffer(params: {
       errors,
     });
 
+    const pageBlocks = reconstructPageBlocks({
+      pageNumber: pageNo,
+      text: cleanedPageText,
+      tables: pageTables,
+      formulas: pageFormulas,
+      diagrams: pageDiagrams,
+      lineBoxes: pageLineBoxes,
+      wordBoxes: pageWordBoxes,
+      pdfPlacedTokens: !needsFullOcr ? nativeInspection.placedTokens : undefined,
+      pdfPageWidth: baseViewport.width || 612,
+      pdfPageHeight: baseViewport.height || 792,
+      pageWidth: visualW || baseViewport.width || 612,
+      pageHeight: visualH || baseViewport.height || 792,
+      uncertainSpans,
+    });
+
     pages.push({
       pageNumber: pageNo,
       text: cleanedPageText,
@@ -1547,6 +1798,7 @@ async function processPdfBuffer(params: {
       diagrams: pageDiagrams,
       tables: pageTables,
       formulas: pageFormulas,
+      blocks: pageBlocks,
       warnings: Array.from(new Set(warnings)),
     });
   }
@@ -1934,6 +2186,7 @@ export async function scanSingleAcademicInput(
     let visionFallbackUsed = false;
     let visionFallbackError: string | undefined;
     let uncertainSpans: UncertainSpan[] = [];
+    let pageLineBoxes: OcrLineBox[] | undefined;
     let pageWordBoxes: OcrWordBox[] | undefined;
     let perspectiveCorrected = Boolean(prep?.perspectiveCorrected);
 
@@ -1964,6 +2217,7 @@ export async function scanSingleAcademicInput(
       visionFallbackUsed = Boolean(ocrRes.visionFallbackUsed);
       visionFallbackError = ocrRes.visionFallbackError;
       uncertainSpans = ocrRes.uncertainSpans ?? [];
+      pageLineBoxes = ocrRes.lineBoxes;
       pageWordBoxes = ocrRes.wordBoxes;
       if (ocrRes.preprocessed) {
         finalPrep = ocrRes.preprocessed;
@@ -2115,6 +2369,9 @@ export async function scanSingleAcademicInput(
     const extractedShapeDiagrams: ExtractedDiagramAsset[] = [];
     try {
       if (visualGray && visualW > 0 && visualH > 0) {
+        const tableExcludeBoxes = tables
+          .map((t) => t.bbox)
+          .filter((b): b is NonNullable<typeof b> => Boolean(b));
         const isolated = await extractRasterDiagramsFromGrayscale({
           gray: visualGray,
           width: visualW,
@@ -2122,6 +2379,7 @@ export async function scanSingleAcademicInput(
           pageNumber: 1,
           wordBoxes: pageWordBoxes,
           ocrText,
+          excludeBboxes: tableExcludeBoxes,
         });
         for (const fig of isolated) {
           const ref = await documentStorageAdapter.putBinary({
@@ -2333,6 +2591,19 @@ export async function scanSingleAcademicInput(
       errors: pageErrors,
     });
 
+    const pageBlocks = reconstructPageBlocks({
+      pageNumber: 1,
+      text: ocrText,
+      tables,
+      formulas,
+      diagrams: pageDiagrams,
+      lineBoxes: pageLineBoxes,
+      wordBoxes: pageWordBoxes,
+      pageWidth: visualW || finalPrep?.width,
+      pageHeight: visualH || finalPrep?.height,
+      uncertainSpans,
+    });
+
     pages = [
       {
         pageNumber: 1,
@@ -2362,6 +2633,7 @@ export async function scanSingleAcademicInput(
         diagrams: pageDiagrams,
         tables,
         formulas,
+        blocks: pageBlocks,
         warnings: dedupWarnings,
       },
     ];
@@ -2487,6 +2759,7 @@ export async function scanSingleAcademicInput(
         diagrams: docxOut.diagrams,
         tables,
         formulas,
+        blocks: docxOut.blocks,
         warnings: pageWarnings,
       },
     ];
@@ -2525,6 +2798,13 @@ export async function scanSingleAcademicInput(
       warnings: pageWarnings,
       errors: [],
     });
+    const textBlocks = buildBlocksFromStructuredText({
+      pageNumber: 1,
+      text: decoded,
+      tables,
+      formulas,
+      diagrams: [],
+    });
     pages = [
       {
         pageNumber: 1,
@@ -2540,6 +2820,7 @@ export async function scanSingleAcademicInput(
         diagrams: [],
         tables,
         formulas,
+        blocks: textBlocks,
         warnings: pageWarnings,
       },
     ];
@@ -2549,16 +2830,81 @@ export async function scanSingleAcademicInput(
     );
   }
 
-  // Strip/normalize repeated multi-page running headers/footers before final structure assembly
+  // Strip/normalize repeated multi-page running headers/footers before final structure assembly,
+  // while preserving authentic per-page header/footer metadata & blocks in reading order.
   const layoutStart = Date.now();
   const headerClean = detectRepeatedHeadersFooters(pages.map((p) => p.text));
   if (headerClean.cleanedPages.length === pages.length && pages.length > 1) {
-    pages = pages.map((pg, idx) => ({
-      ...pg,
-      text: headerClean.cleanedPages[idx],
-      charCount: headerClean.cleanedPages[idx].replace(/\s+/g, '').length,
-      wordCount: headerClean.cleanedPages[idx].split(/\s+/).filter(Boolean).length,
-    }));
+    pages = pages.map((pg, idx) => {
+      const cleanedText = headerClean.cleanedPages[idx];
+      const rawLines = pg.text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const cleanLines = cleanedText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+
+      const detectedHeaders: string[] = [];
+      const detectedFooters: string[] = [];
+      if (rawLines.length >= 4 && cleanLines.length < rawLines.length) {
+        // Check leading edge lines removed by detectRepeatedHeadersFooters
+        let cleanStart = 0;
+        for (let li = 0; li < Math.min(2, rawLines.length); li += 1) {
+          if (cleanLines[cleanStart] === rawLines[li]) {
+            cleanStart += 1;
+          } else {
+            detectedHeaders.push(rawLines[li]);
+          }
+        }
+        // Check trailing edge lines removed by detectRepeatedHeadersFooters
+        let cleanEnd = cleanLines.length - 1;
+        for (let li = rawLines.length - 1; li >= Math.max(2, rawLines.length - 2); li -= 1) {
+          if (cleanEnd >= 0 && cleanLines[cleanEnd] === rawLines[li]) {
+            cleanEnd -= 1;
+          } else {
+            detectedFooters.unshift(rawLines[li]);
+          }
+        }
+      }
+
+      const headerSet = new Set(detectedHeaders.map((h) => h.toLowerCase()));
+      const footerSet = new Set(detectedFooters.map((f) => f.toLowerCase()));
+      let updatedBlocks: ReconstructedBlock[] | undefined = pg.blocks;
+      if (pg.blocks && (headerSet.size > 0 || footerSet.size > 0)) {
+        updatedBlocks = pg.blocks.map((blk): ReconstructedBlock => {
+          const tLower = (blk.text ?? '').trim().toLowerCase();
+          if (tLower && headerSet.has(tLower)) {
+            return {
+              ...blk,
+              kind: 'header',
+              headingLevel: undefined,
+              alignment: 'center',
+            };
+          }
+          if (tLower && footerSet.has(tLower)) {
+            return {
+              ...blk,
+              kind: 'footer',
+              headingLevel: undefined,
+              alignment: 'center',
+            };
+          }
+          return blk;
+        });
+      }
+
+      return {
+        ...pg,
+        text: cleanedText,
+        headerLines: detectedHeaders.length > 0 ? detectedHeaders : pg.headerLines,
+        footerLines: detectedFooters.length > 0 ? detectedFooters : pg.footerLines,
+        blocks: updatedBlocks,
+        charCount: cleanedText.replace(/\s+/g, '').length,
+        wordCount: cleanedText.split(/\s+/).filter(Boolean).length,
+      };
+    });
   }
 
   const formattedText = formatMultiPageStructuredText(

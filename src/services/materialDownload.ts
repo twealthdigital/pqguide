@@ -78,43 +78,107 @@ export async function downloadMaterialPdf(material: StudyMaterial): Promise<void
   doc.line(PAGE.margin, y, PAGE.width - PAGE.margin, y);
   y += 7;
 
-  writeLines(material.summary, { size: 11, lineHeight: 6 });
-  y += 5;
-
-  // Sections
-  material.sections.forEach((section, index) => {
-    ensureSpace(22);
-    writeLines(`${index + 1}. ${section.heading}`, {
-      size: 13,
-      lineHeight: 6.5,
-      style: 'bold',
-      tone: INK,
+  // Reconstructed layout-preserving document pages when available; otherwise fallback to sections
+  if (material.reconstructedPages && material.reconstructedPages.length > 0) {
+    const orderedPages = [...material.reconstructedPages].sort(
+      (a, b) => a.pageNumber - b.pageNumber
+    );
+    orderedPages.forEach((pg, pgIdx) => {
+      if (pgIdx > 0) {
+        doc.addPage();
+        y = PAGE.margin;
+      }
+      const blocks = pg.blocks ?? [];
+      if (blocks.length === 0 && pg.text.trim()) {
+        writeLines(pg.text, { size: 10.5, lineHeight: 5.6 });
+        y += 3;
+        return;
+      }
+      for (const blk of blocks) {
+        if (blk.kind === 'header' || blk.kind === 'footer') continue;
+        if (blk.kind === 'heading' && blk.text) {
+          ensureSpace(14);
+          writeLines(blk.text, { size: 13, lineHeight: 6.5, style: 'bold', tone: INK });
+          y += 1.5;
+        } else if (blk.kind === 'subheading' && blk.text) {
+          ensureSpace(10);
+          writeLines(blk.text, { size: 11.5, lineHeight: 6, style: 'bold', tone: INK });
+          y += 1;
+        } else if (blk.kind === 'table' && blk.table) {
+          ensureSpace(16);
+          if (blk.table.caption) {
+            writeLines(blk.table.caption, { size: 10, lineHeight: 5, style: 'bold', tone: INK });
+          }
+          if (blk.table.headers.length > 0) {
+            writeLines(blk.table.headers.join(' | '), { size: 9.5, lineHeight: 5, style: 'bold' });
+          }
+          for (const row of blk.table.rows) {
+            writeLines(row.join(' | '), { size: 9.5, lineHeight: 5 });
+          }
+          y += 2;
+        } else if (blk.kind === 'formula' && (blk.latex || blk.text)) {
+          writeLines(blk.text || blk.latex || '', { size: 10.5, lineHeight: 5.6, indent: 6 });
+          y += 1.5;
+        } else if (blk.kind === 'diagram' && blk.diagram?.caption) {
+          writeLines(`[Figure: ${blk.diagram.caption}]`, { size: 9.5, lineHeight: 5, tone: MUTED });
+          y += 1.5;
+        } else if (blk.kind === 'question' && blk.text) {
+          const lineText = `${blk.label ? `${blk.label} ` : ''}${blk.text.replace(/\$/g, '')}`;
+          writeLines(lineText, { size: 10.5, lineHeight: 5.6, style: 'bold', tone: INK });
+          y += 1.5;
+        } else if (blk.kind === 'subquestion' && blk.text) {
+          const lineText = `${blk.label ? `${blk.label} ` : ''}${blk.text.replace(/\$/g, '')}`;
+          writeLines(lineText, { size: 10, lineHeight: 5.4, indent: 6 });
+          y += 1;
+        } else if (blk.text) {
+          writeLines(blk.text.replace(/\$/g, ''), {
+            size: 10.5,
+            lineHeight: 5.6,
+            indent: (blk.indentLevel ?? 0) * 4,
+          });
+          y += 2;
+        }
+      }
     });
-    y += 1.5;
-
-    section.paragraphs?.forEach((p) => {
-      writeLines(p, { size: 10.5, lineHeight: 5.6 });
-      y += 2;
-    });
-
-    section.points?.forEach((point) => {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10.5);
-      const lines = doc.splitTextToSize(clean(point), contentWidth - 7) as string[];
-      ensureSpace(5.6);
-      doc.setFillColor(INK[0], INK[1], INK[2]);
-      doc.circle(PAGE.margin + 1.6, y - 1.3, 0.7, 'F');
-      color(BODY);
-      lines.forEach((line) => {
-        ensureSpace(5.6);
-        doc.text(line, PAGE.margin + 6, y);
-        y += 5.6;
-      });
-      y += 1.4;
-    });
-
+  } else {
+    writeLines(material.summary, { size: 11, lineHeight: 6 });
     y += 5;
-  });
+
+    // Sections
+    material.sections.forEach((section, index) => {
+      ensureSpace(22);
+      writeLines(`${index + 1}. ${section.heading}`, {
+        size: 13,
+        lineHeight: 6.5,
+        style: 'bold',
+        tone: INK,
+      });
+      y += 1.5;
+
+      section.paragraphs?.forEach((p) => {
+        writeLines(p, { size: 10.5, lineHeight: 5.6 });
+        y += 2;
+      });
+
+      section.points?.forEach((point) => {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10.5);
+        const lines = doc.splitTextToSize(clean(point), contentWidth - 7) as string[];
+        ensureSpace(5.6);
+        doc.setFillColor(INK[0], INK[1], INK[2]);
+        doc.circle(PAGE.margin + 1.6, y - 1.3, 0.7, 'F');
+        color(BODY);
+        lines.forEach((line) => {
+          ensureSpace(5.6);
+          doc.text(line, PAGE.margin + 6, y);
+          y += 5.6;
+        });
+        y += 1.4;
+      });
+
+      y += 5;
+    });
+  }
 
   // Footer on every page
   const pageCount = doc.getNumberOfPages();

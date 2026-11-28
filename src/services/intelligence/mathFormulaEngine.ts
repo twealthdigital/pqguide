@@ -358,6 +358,10 @@ function extract2DMathFromWordBoxes(
     if (detectedScript) {
       const cleaned = built.trim();
       const latex = convertRawEquationToLatex(cleaned);
+      const minX = Math.min(...ordered.map((w) => w.x0));
+      const minY = Math.min(...ordered.map((w) => w.y0));
+      const maxX = Math.max(...ordered.map((w) => w.x1));
+      const maxY = Math.max(...ordered.map((w) => w.y1));
       formulas.push({
         id: `p${pageNumber}-2d-script-${seq++}`,
         pageNumber,
@@ -372,6 +376,12 @@ function extract2DMathFromWordBoxes(
             : undefined,
         sourceMethod: '2d_layout_ocr',
         confidence: Number((lowestConf / 100).toFixed(2)),
+        bbox: {
+          x: minX,
+          y: minY,
+          width: Math.max(1, maxX - minX),
+          height: Math.max(1, maxY - minY),
+        },
       });
     }
   }
@@ -504,4 +514,56 @@ export async function extractMathFormulasAdvanced(
   }
 
   return results;
+}
+
+/**
+ * Formats mathematical sub-expressions inside prose/questions as inline KaTeX (`$...$`)
+ * without altering course codes, years, or already delimited `$...$` / `$$...$$` spans.
+ */
+export function injectInlineLatexIntoText(line: string): string {
+  if (!line || /\$[^$]+\$/.test(line)) return line;
+
+  // Preserve whole-line standalone pure equations vs inline expressions
+  const trimmed = line.trim();
+  if (/^\[\[[^\]]+\]\]$/.test(trimmed)) {
+    return `$${convertRawEquationToLatex(trimmed)}$`;
+  }
+
+  // Split around math-rich tokens/segments and wrap cleanly
+  let out = line;
+
+  // 1) Convert Unicode sup/sub tokens like x², H₂O, 10⁻³ or caret tokens like x^2, a^(n+1), H_2O
+  out = out.replace(
+    /\b([A-Za-z0-9()]+(?:\^(?:\{[^}]+\}|\([^)]+\)|[A-Za-z0-9+-]+)|_\{[^}]+\}|_[A-Za-z0-9]+|[⁰¹²³⁴⁵⁶⁷⁸⁹ⁿ⁺⁻₀₁₂₃₄₅₆₇₈₉ᵢₙ]+)+)(?=\s|$|[.,;?!:=+\-*/)])/g,
+    (match) => `$${convertRawEquationToLatex(match)}$`
+  );
+
+  // 2) If a short inline equation exists outside $...$, e.g. "where F = ma and v = u + at" or "(a + b) / (c + d)"
+  const segments = out.split(/(\$[^$\n]+?\$)/g);
+  const rewritten = segments
+    .map((seg, idx) => {
+      if (idx % 2 === 1) return seg; // already inside $...$
+      let s = seg;
+      // sqrt(...) or √(...)
+      s = s.replace(/\b(sqrt\s*\([^)]+\))/gi, (m) => `$${convertRawEquationToLatex(m)}$`);
+      s = s.replace(/(√\([^)]+\)|√[A-Za-z0-9]+)/g, (m) => `$${convertRawEquationToLatex(m)}$`);
+      // Explicit algebraic fraction (num)/(den)
+      s = s.replace(/\(([^()]{1,32})\)\s*\/\s*\(([^()]{1,32})\)/g, (m) => `$${convertRawEquationToLatex(m)}$`);
+      // Integrals / summations / Greek math symbols with adjacent variables
+      s = s.replace(
+        /([∑∫∂∇±×÷≤≥≠≈α-ωΑ-Ω](?:\s*[A-Za-z0-9_^{}()+\-*/=,.]+){0,4})/g,
+        (m) => {
+          const clean = m.trim();
+          if (!clean) return m;
+          const lead = m.startsWith(' ') ? ' ' : '';
+          const trail = m.endsWith(' ') ? ' ' : '';
+          return `${lead}$${convertRawEquationToLatex(clean)}$${trail}`;
+        }
+      );
+      return s;
+    })
+    .join('');
+
+  // Merge adjacent $a$ = $b$ or $a$ + $b$ when separated only by math operator so KaTeX renders one cohesive expression
+  return rewritten.replace(/\$\s*([=+\-*/<>≤≥≠≈])\s*\$/g, ' $1 ');
 }

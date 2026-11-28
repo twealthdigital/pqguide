@@ -30,10 +30,12 @@ import type {
   ContentStatus,
   DocumentDestination,
   DocumentPublishOptions,
+  ExtractedPageContent,
   HeaderMarqueeConfig,
   ManagedAccount,
   PastQuestionDoc,
   PaymentTransaction,
+  ReconstructedBlock,
   School,
   SemesterType,
   SiteCmsConfig,
@@ -54,6 +56,7 @@ import {
   SEED_SCHOOLS,
   SEED_SESSIONS,
 } from '../data/seedCatalog';
+import { rebuildPagesFromEditedText } from './intelligence/layoutReconstructor';
 import { extractQuestionsFromText } from './intelligence/structuredParser';
 import { localStore } from './storage/localStore';
 
@@ -2839,6 +2842,87 @@ class ArchiveRepository {
     return destination;
   }
 
+  private sanitizePageForStudent(page: ExtractedPageContent): ExtractedPageContent {
+    const sanitizeTable = (t: ExtractedPageContent['tables'][number]) => ({
+      id: t.id,
+      pageNumber: t.pageNumber,
+      caption: t.caption,
+      headers: t.headers,
+      rows: t.rows,
+      rowHeaders: t.rowHeaders,
+      columnAlignments: t.columnAlignments,
+      mergedCells: t.mergedCells,
+      hasMergedCells: t.hasMergedCells,
+      bbox: t.bbox,
+    });
+
+    const cleanTables = (page.tables ?? []).map(sanitizeTable);
+
+    const sanitizeDiagram = (d: ExtractedPageContent['diagrams'][number]) => ({
+      id: d.id,
+      pageNumber: d.pageNumber,
+      caption: d.caption,
+      kind: d.kind,
+      mimeType: d.mimeType,
+      dataUrl: sanitizeSafeUrl(d.dataUrl),
+      vectorScene: d.vectorScene,
+      width: d.width,
+      height: d.height,
+      bbox: d.bbox,
+    });
+
+    const cleanDiagrams = (page.diagrams ?? [])
+      .filter((d) => !d.id.startsWith('scan-sheet') && !d.id.startsWith('pdf-diag-'))
+      .map(sanitizeDiagram);
+
+    const cleanFormulas = (page.formulas ?? []).map((f) => ({
+      id: f.id,
+      pageNumber: f.pageNumber,
+      rawText: f.rawText,
+      latex: f.latex,
+      displayMode: f.displayMode,
+      bbox: f.bbox,
+    }));
+
+    const sanitizeBlock = (blk: ReconstructedBlock): ReconstructedBlock => {
+      const cleanKind = blk.kind === 'uncertain' ? 'paragraph' : blk.kind;
+      const matchedTable = blk.table ? sanitizeTable(blk.table) : undefined;
+      const matchedDiagram = blk.diagram ? sanitizeDiagram(blk.diagram) : undefined;
+
+      return {
+        id: blk.id,
+        kind: cleanKind,
+        pageNumber: blk.pageNumber,
+        text: blk.text,
+        label: blk.label,
+        headingLevel: blk.headingLevel,
+        alignment: blk.alignment,
+        indentLevel: blk.indentLevel,
+        latex: blk.latex,
+        displayMode: blk.displayMode,
+        table: matchedTable,
+        diagram: matchedDiagram,
+        bbox: blk.bbox,
+      };
+    };
+
+    return {
+      pageNumber: page.pageNumber,
+      text: sanitizePlainText(page.text, 40_000),
+      wordCount: page.wordCount,
+      charCount: page.charCount,
+      ocrApplied: false,
+      ocrConfidence: null,
+      headerLines: page.headerLines,
+      footerLines: page.footerLines,
+      diagrams: cleanDiagrams,
+      tables: cleanTables,
+      formulas: cleanFormulas,
+      blocks: (page.blocks ?? []).map(sanitizeBlock),
+      warnings: [],
+    };
+  }
+
   private syncPastQuestionEntry(doc: AcademicDocumentRecord, shouldPublish: boolean): void {
     const catalogId = `pqdoc-${doc.id}`;
     const questions = shouldPublish ? extractQuestionsFromText(doc.extractedText) : [];
@@ -2847,6 +2931,11 @@ class ArchiveRepository {
 
     const school = this.state.schools.find((s) => s.id === doc.schoolId);
     const year = parseInt(doc.session.split('/')[1] ?? '', 10) || new Date().getFullYear();
+    const reconstructedPages =
+      shouldPublish && doc.pages.length > 0
+        ? doc.pages.map((pg) => this.sanitizePageForStudent(pg))
+        : undefined;
+
     const entry: PastQuestionDoc = {
       id: catalogId,
       schoolId: doc.schoolId,
@@ -2862,8 +2951,10 @@ class ArchiveRepository {
       sourceType: doc.detectedFormat === 'image' ? 'scanned_image' : 'typed_document',
       originalFileName: doc.originalFileName,
       scannedPagePreviewUrl: doc.optimizedPreviewUrl,
-      extractedText: sanitizePlainText(doc.extractedText, 8000),
+      extractedText: sanitizePlainText(doc.extractedText, 40_000),
       questions: questions.map((q) => sanitizeSingleLine(q, 1000)).filter(Boolean),
+      reconstructedPages,
+      solutions: existing?.solutions,
       uploadedBy: doc.submittedByName,
       uploadedById: doc.submittedById,
       uploadedAt: doc.submittedAt,
@@ -2930,6 +3021,10 @@ class ArchiveRepository {
             },
           ];
     const wordCount = doc.extractedText.split(/\s+/).filter(Boolean).length;
+    const reconstructedPages =
+      doc.pages.length > 0
+        ? doc.pages.map((pg) => this.sanitizePageForStudent(pg))
+        : undefined;
 
     const entry: StudyMaterial = {
       id: materialId,
@@ -2944,9 +3039,10 @@ class ArchiveRepository {
       summary: doc.summary,
       readMinutes: Math.max(1, Math.min(120, Math.round(wordCount / 200))),
       sections,
+      reconstructedPages,
       sourceType: doc.detectedFormat === 'image' ? 'scanned_image' : 'typed_document',
       originalFileName: doc.originalFileName,
-      extractedText: sanitizePlainText(doc.extractedText, 8000),
+      extractedText: sanitizePlainText(doc.extractedText, 40_000),
       attachmentPreviewUrl: doc.optimizedPreviewUrl,
       status: 'published',
       uploadedBy: doc.submittedByName,
@@ -3024,15 +3120,8 @@ class ArchiveRepository {
           ? sanitizePlainText(patch.extractedText, 120_000)
           : existing.extractedText,
       pages:
-        patch.extractedText !== undefined && existing.pages.length === 1
-          ? [
-              {
-                ...existing.pages[0],
-                text: sanitizePlainText(patch.extractedText, 40_000),
-                wordCount: patch.extractedText.trim().split(/\s+/).filter(Boolean).length,
-                charCount: patch.extractedText.replace(/\s+/g, '').length,
-              },
-            ]
+        patch.extractedText !== undefined
+          ? rebuildPagesFromEditedText(existing.pages, patch.extractedText)
           : existing.pages,
       updatedAt: now,
       processingHistory: [

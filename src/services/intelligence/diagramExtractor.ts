@@ -613,12 +613,19 @@ export function extractPdfVectorDiagrams(params: {
       .map((l) => l.str)
       .join(', ');
 
+    const detectedCaption = detectFigureCaptionFromTokens(
+      topDownTokens.map((t) => ({ text: t.str, x0: t.x, y0: t.y - t.h, x1: t.x + t.w, y1: t.y })),
+      { x: Math.max(0, Math.round(originX)), y: Math.max(0, Math.round(originY)), width: sceneWidth, height: sceneHeight }
+    );
+
     diagrams.push({
       id: `vec-fig-${pageNumber}-${diagrams.length + 1}`,
       pageNumber,
-      caption: labelSummary
-        ? `Drawn figure ${diagrams.length + 1} (${labelSummary}) · Page ${pageNumber}`
-        : `Drawn geometric figure ${diagrams.length + 1} · Page ${pageNumber}`,
+      caption:
+        detectedCaption ||
+        (labelSummary
+          ? `Diagram (${labelSummary})`
+          : `Diagram ${diagrams.length + 1}`),
       kind: structured.diagramType === 'math_graph' ? 'chart' : 'diagram',
       diagramType: structured.diagramType,
       width: sceneWidth,
@@ -939,9 +946,25 @@ export async function extractRasterDiagramsFromGrayscale(params: {
   maxFigures?: number;
   wordBoxes?: Array<{ text: string; x0: number; y0: number; x1: number; y1: number }>;
   ocrText?: string;
+  excludeBboxes?: Array<{ x: number; y: number; width: number; height: number }>;
 }): Promise<ExtractedDiagramAsset[]> {
-  const { gray, width, height, pageNumber, maxFigures = 4, wordBoxes, ocrText } = params;
+  const { gray, width, height, pageNumber, maxFigures = 4, wordBoxes, ocrText, excludeBboxes } = params;
   if (width < 120 || height < 120 || gray.length < width * height) return [];
+
+  const overlapsExcluded = (bx: number, by: number, bw: number, bh: number): boolean => {
+    if (!excludeBboxes || excludeBboxes.length === 0) return false;
+    for (const ex of excludeBboxes) {
+      const ix0 = Math.max(bx, ex.x);
+      const iy0 = Math.max(by, ex.y);
+      const ix1 = Math.min(bx + bw, ex.x + ex.width);
+      const iy1 = Math.min(by + bh, ex.y + ex.height);
+      if (ix1 <= ix0 || iy1 <= iy0) continue;
+      const inter = (ix1 - ix0) * (iy1 - iy0);
+      const minArea = Math.max(1, Math.min(bw * bh, ex.width * ex.height));
+      if (inter / minArea >= 0.4) return true;
+    }
+    return false;
+  };
 
   const scale = Math.min(1, 420 / width);
   const aw = Math.max(40, Math.round(width * scale));
@@ -1066,6 +1089,9 @@ export async function extractRasterDiagramsFromGrayscale(params: {
     const fillRatio = c.area / (cw * ch);
     // Line drawings / geometric diagrams have 0.015..0.68 ink occupancy inside bounding box
     if (fillRatio < 0.015 || fillRatio > 0.68) continue;
+    const fullW = (c.maxX - c.minX + 1) / scale;
+    const fullH = (c.maxY - c.minY + 1) / scale;
+    if (overlapsExcluded(c.minX / scale, c.minY / scale, fullW, fullH)) continue;
     figureBoxes.push({ ...c });
   }
 
@@ -1124,7 +1150,8 @@ export async function extractRasterDiagramsFromGrayscale(params: {
   figureBoxes.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
   const outDiagrams: ExtractedDiagramAsset[] = [];
 
-  for (const box of figureBoxes.slice(0, maxFigures)) {
+  for (const box of figureBoxes) {
+    if (outDiagrams.length >= maxFigures) break;
     const padPx = Math.max(16, Math.round(width * 0.015));
     const rx0 = Math.max(0, Math.floor(box.minX / scale) - padPx);
     const ry0 = Math.max(0, Math.floor(box.minY / scale) - padPx);
@@ -1133,6 +1160,7 @@ export async function extractRasterDiagramsFromGrayscale(params: {
     const cropW = rx1 - rx0 + 1;
     const cropH = ry1 - ry0 + 1;
     if (cropW < 40 || cropH < 32) continue;
+    if (overlapsExcluded(rx0, ry0, cropW, cropH)) continue;
 
     // Preserve unedited original crop reference
     const rawCrop = new Uint8Array(cropW * cropH);
@@ -1173,10 +1201,15 @@ export async function extractRasterDiagramsFromGrayscale(params: {
       totalPaths: 4,
     });
 
+    const diagBbox = { x: rx0, y: ry0, width: cropW, height: cropH };
+    const detectedCaption = wordBoxes
+      ? detectFigureCaptionFromTokens(wordBoxes, diagBbox)
+      : undefined;
+
     outDiagrams.push({
       id: `fig-${pageNumber}-${outDiagrams.length + 1}`,
       pageNumber,
-      caption: `Drawn figure / diagram ${outDiagrams.length + 1} · Page ${pageNumber}`,
+      caption: detectedCaption || `Diagram ${outDiagrams.length + 1}`,
       kind: diagramType === 'math_graph' ? 'chart' : 'diagram',
       diagramType,
       mimeType: 'image/png',
@@ -1184,7 +1217,7 @@ export async function extractRasterDiagramsFromGrayscale(params: {
       originalCropDataUrl: origEncoded.dataUrl,
       width: cropW,
       height: cropH,
-      bbox: { x: rx0, y: ry0, width: cropW, height: cropH },
+      bbox: diagBbox,
       extractedMeasurements:
         extractedMeasurements.length > 0 ? extractedMeasurements : undefined,
       extractedLabels: insideLabels.length > 0 ? insideLabels.slice(0, 30) : undefined,
@@ -1192,5 +1225,47 @@ export async function extractRasterDiagramsFromGrayscale(params: {
   }
 
   return outDiagrams;
+}
+
+export function detectFigureCaptionFromTokens(
+  tokens: Array<{ text: string; x0: number; y0: number; x1: number; y1: number }>,
+  bbox: { x: number; y: number; width: number; height: number }
+): string | undefined {
+  if (!tokens || tokens.length === 0) return undefined;
+  const figBottom = bbox.y + bbox.height;
+  const figTop = bbox.y;
+  const figLeft = bbox.x - Math.max(40, bbox.width * 0.25);
+  const figRight = bbox.x + bbox.width + Math.max(40, bbox.width * 0.25);
+
+  const nearby = tokens.filter(
+    (t) =>
+      t.x1 >= figLeft &&
+      t.x0 <= figRight &&
+      ((t.y0 >= figBottom - 16 && t.y0 <= figBottom + 56) ||
+        (t.y1 >= figTop - 42 && t.y1 <= figTop + 12))
+  );
+  if (nearby.length === 0) return undefined;
+
+  // Group into horizontal caption lines
+  const sorted = [...nearby].sort((a, b) => (a.y0 + a.y1) * 0.5 - (b.y0 + b.y1) * 0.5 || a.x0 - b.x0);
+  const lines: Array<{ y0: number; y1: number; tokens: Array<{ text: string; x0: number }> }> = [];
+  for (const tok of sorted) {
+    const midY = (tok.y0 + tok.y1) * 0.5;
+    const prev = lines[lines.length - 1];
+    if (prev && Math.abs(midY - (prev.y0 + prev.y1) * 0.5) <= Math.max(10, (tok.y1 - tok.y0) * 0.9)) {
+      prev.y0 = Math.min(prev.y0, tok.y0);
+      prev.y1 = Math.max(prev.y1, tok.y1);
+      prev.tokens.push({ text: tok.text.trim(), x0: tok.x0 });
+    } else {
+      lines.push({ y0: tok.y0, y1: tok.y1, tokens: [{ text: tok.text.trim(), x0: tok.x0 }] });
+    }
+  }
+
+  const captionLine = lines
+    .map((ln) => ln.tokens.sort((a, b) => a.x0 - b.x0).map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim())
+    .find((text) =>
+      /^(?:figure|fig\.?|diagram|chart|graph|illustration)\s*(?:\d+[a-z]?|[A-Z])?\s*[:.\-–]/i.test(text)
+    );
+  return captionLine;
 }
 

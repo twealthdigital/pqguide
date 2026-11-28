@@ -19,11 +19,9 @@ import type {
 import { sanitizeSafeUrl } from '../../../core/security';
 import { mapDetailedToLegacyCategory } from '../../../services/intelligence/documentClassifier';
 import { archiveRepository, type AppStoreState } from '../../../services/archiveRepository';
+import { downloadOriginalDocumentFile } from '../../../services/intelligence/storageAdapter';
 import {
-  ExtractedDiagramsGallery,
-  ExtractedFormulasList,
-  ExtractedTableCard,
-  RichInlineText,
+  ReconstructedDocumentRenderer,
   ScannedPageSideBySide,
   SuperAdminIntelligenceSuite,
 } from '../../../components/academic/AcademicContentRenderer';
@@ -406,14 +404,52 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
                   </div>
                 </div>
 
-                {selectedDoc.formulas.length > 0 && (
-                  <ExtractedFormulasList formulas={selectedDoc.formulas} />
+                {selectedDoc.unprocessedPages && selectedDoc.unprocessedPages.length > 0 && (
+                  <div className="rounded-xl bg-[#FEF3C7] border border-[#FDE68A] px-3 py-2 text-xs font-semibold text-[#92400E]">
+                    Pages {selectedDoc.unprocessedPages[0]}–{selectedDoc.unprocessedPages[selectedDoc.unprocessedPages.length - 1]} were beyond the safety page limit and were not scanned.
+                  </div>
                 )}
-                {selectedDoc.tables.map((t) => (
-                  <ExtractedTableCard key={t.id} table={t} />
-                ))}
-                {selectedDoc.diagrams.length > 0 && (
-                  <ExtractedDiagramsGallery diagrams={selectedDoc.diagrams} />
+                {selectedDoc.pages.length > 0 ? (
+                  <div className="space-y-3">
+                    {selectedDoc.pages.map((pg) => (
+                      <ScannedPageSideBySide
+                        key={pg.pageNumber}
+                        page={pg}
+                        fallbackImageUrl={selectedDoc.optimizedPreviewUrl}
+                        showTechnical
+                        totalPages={selectedDoc.pages.length}
+                        onOpenOriginalFile={() =>
+                          void downloadOriginalDocumentFile({
+                            originalFileRefKey: selectedDoc.originalFileRef?.key,
+                            originalFileName: selectedDoc.originalFileName,
+                            mimeType: selectedDoc.mimeType,
+                            fallbackPreviewUrl: sanitizeSafeUrl(
+                              pg.renderedPreviewUrl ?? selectedDoc.optimizedPreviewUrl
+                            ),
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4">
+                    <ReconstructedDocumentRenderer
+                      variant="admin"
+                      pages={[
+                        {
+                          pageNumber: 1,
+                          text: selectedDoc.extractedText || '',
+                          wordCount: (selectedDoc.extractedText || '').split(/\s+/).filter(Boolean).length,
+                          ocrApplied: false,
+                          ocrConfidence: null,
+                          diagrams: selectedDoc.diagrams,
+                          tables: selectedDoc.tables,
+                          formulas: selectedDoc.formulas,
+                          warnings: [],
+                        },
+                      ]}
+                    />
+                  </div>
                 )}
 
                 <SuperAdminIntelligenceSuite
@@ -440,30 +476,6 @@ export const DocumentReviewTab: React.FC<DocumentReviewTabProps> = ({
                     }
                   }}
                 />
-
-                {selectedDoc.unprocessedPages && selectedDoc.unprocessedPages.length > 0 && (
-                  <div className="rounded-xl bg-[#FEF3C7] border border-[#FDE68A] px-3 py-2 text-xs font-semibold text-[#92400E]">
-                    Pages {selectedDoc.unprocessedPages[0]}–{selectedDoc.unprocessedPages[selectedDoc.unprocessedPages.length - 1]} were beyond the safety page limit and were not scanned.
-                  </div>
-                )}
-                {selectedDoc.pages.length > 0 ? (
-                  <div className="space-y-3">
-                    {selectedDoc.pages.map((pg) => (
-                      <ScannedPageSideBySide
-                        key={pg.pageNumber}
-                        page={pg}
-                        totalPages={selectedDoc.pages.length}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5">
-                    <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
-                      Extracted Text
-                    </p>
-                    <RichInlineText text={selectedDoc.extractedText || 'None'} />
-                  </div>
-                )}
               </div>
             )}
 

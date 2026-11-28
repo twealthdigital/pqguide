@@ -162,7 +162,7 @@ export function extractBorderedTablesFromGrayscale(input: {
   }
   const threshold = Math.max(95, Math.min(200, Math.round((sum / Math.max(1, sampleCount)) * 0.78)));
 
-  // Find candidate long horizontal ink runs (continuous >= 35% of page width)
+  // Find candidate long horizontal ink runs (continuous >= 30% of page width)
   const hLinesRaw: Array<{ y: number; x0: number; x1: number }> = [];
   const minHRun = Math.max(90, Math.round(width * 0.3));
 
@@ -194,114 +194,286 @@ export function extractBorderedTablesFromGrayscale(input: {
 
   if (hLinesRaw.length < 3) return [];
 
-  const hYs = clusterLinePositions(
+  const hYsAll = clusterLinePositions(
     hLinesRaw.map((l) => l.y),
     5
   );
-  if (hYs.length < 3) return [];
+  if (hYsAll.length < 3) return [];
 
-  // Group horizontal rules into table Y-bands (rows spaced reasonably within a table)
-  const bandMinY = hYs[0];
-  const bandMaxY = hYs[hYs.length - 1];
-  const bandHeight = bandMaxY - bandMinY;
-  if (bandHeight < 40) return [];
+  // Partition horizontal rule clusters into separate tables if separated by clear blank/prose gaps
+  // where vertical borders do not continue across the gap.
+  const hIntervals = hYsAll.slice(1).map((y, idx) => y - hYsAll[idx]).sort((a, b) => a - b);
+  const medianRowGap = hIntervals[Math.floor(hIntervals.length / 2)] || 36;
+  const splitGapThresh = Math.max(70, Math.round(medianRowGap * 2.5));
 
-  const minX = Math.min(...hLinesRaw.map((l) => l.x0));
-  const maxX = Math.max(...hLinesRaw.map((l) => l.x1));
-  const tableWidth = maxX - minX + 1;
-  if (tableWidth < 90) return [];
-
-  // Detect vertical column dividers spanning >= 45% of the table height
-  const vXsRaw: number[] = [];
-  const minVHits = Math.max(25, Math.round(bandHeight * 0.45));
-
-  for (let x = Math.max(0, minX - 4); x <= Math.min(width - 1, maxX + 4); x += 1) {
-    let dark = 0;
-    for (let y = bandMinY; y <= bandMaxY; y += 1) {
-      if (gray[y * width + x] < threshold) dark += 1;
+  const tableBandGroups: number[][] = [];
+  let currentGroup: number[] = [hYsAll[0]];
+  for (let i = 1; i < hYsAll.length; i += 1) {
+    const prevY = hYsAll[i - 1];
+    const nextY = hYsAll[i];
+    const gap = nextY - prevY;
+    let hasBridgeVLine = false;
+    if (gap > splitGapThresh) {
+      // Check if any vertical column border spans across the gap
+      const midSpanCheckX = hLinesRaw
+        .filter((l) => Math.abs(l.y - prevY) <= 6)
+        .flatMap((l) => [l.x0, Math.round((l.x0 + l.x1) / 2), l.x1]);
+      for (const cx of midSpanCheckX) {
+        let darkHits = 0;
+        for (let yy = prevY + 2; yy < nextY - 2; yy += 2) {
+          if (gray[yy * width + Math.min(width - 1, Math.max(0, cx))] < threshold) {
+            darkHits += 1;
+          }
+        }
+        if (darkHits >= Math.max(10, (gap / 2) * 0.6)) {
+          hasBridgeVLine = true;
+          break;
+        }
+      }
     }
-    if (dark >= minVHits) {
-      vXsRaw.push(x);
+    if (gap > splitGapThresh && !hasBridgeVLine && currentGroup.length >= 3) {
+      tableBandGroups.push(currentGroup);
+      currentGroup = [nextY];
+    } else {
+      currentGroup.push(nextY);
     }
   }
-
-  const vXs = clusterLinePositions(vXsRaw, 5);
-  if (vXs.length < 3) return [];
-
-  const rowCount = hYs.length - 1;
-  const colCount = vXs.length - 1;
-  if (rowCount < 2 || colCount < 2 || rowCount > 45 || colCount > 15) {
-    return [];
+  if (currentGroup.length >= 3) {
+    tableBandGroups.push(currentGroup);
   }
 
-  // Build cell matrix & check interior line breaks for merged cells
-  const grid: string[][] = Array.from({ length: rowCount }, () =>
-    Array(colCount).fill('')
-  );
-  const mergedCells: MergedTableCellSpan[] = [];
+  const extractedTables: ExtractedTable[] = [];
 
-  for (let r = 0; r < rowCount; r += 1) {
-    const yTop = hYs[r];
-    const yBot = hYs[r + 1];
-    for (let c = 0; c < colCount; c += 1) {
+  for (const hYs of tableBandGroups) {
+    const bandMinY = hYs[0];
+    const bandMaxY = hYs[hYs.length - 1];
+    const bandHeight = bandMaxY - bandMinY;
+    if (bandHeight < 40) continue;
+
+    const bandHLines = hLinesRaw.filter((l) => l.y >= bandMinY - 6 && l.y <= bandMaxY + 6);
+    if (bandHLines.length < 3) continue;
+
+    const minX = Math.min(...bandHLines.map((l) => l.x0));
+    const maxX = Math.max(...bandHLines.map((l) => l.x1));
+    const tableWidth = maxX - minX + 1;
+    if (tableWidth < 90) continue;
+
+    // Detect vertical column dividers spanning >= 45% of this table's height
+    const vXsRaw: number[] = [];
+    const minVHits = Math.max(25, Math.round(bandHeight * 0.45));
+
+    for (let x = Math.max(0, minX - 4); x <= Math.min(width - 1, maxX + 4); x += 1) {
+      let dark = 0;
+      for (let y = bandMinY; y <= bandMaxY; y += 1) {
+        if (gray[y * width + x] < threshold) dark += 1;
+      }
+      if (dark >= minVHits) {
+        vXsRaw.push(x);
+      }
+    }
+
+    const vXs = clusterLinePositions(vXsRaw, 5);
+    if (vXs.length < 3) continue;
+
+    const rowCount = hYs.length - 1;
+    const colCount = vXs.length - 1;
+    if (rowCount < 2 || colCount < 2 || rowCount > 45 || colCount > 15) {
+      continue;
+    }
+
+    const hasMissingVSegment = (r: number, divColIdx: number): boolean => {
+      const yTop = hYs[r];
+      const yBot = hYs[r + 1];
+      const divX = vXs[divColIdx];
+      let vSegDark = 0;
+      const segH = Math.max(1, yBot - yTop - 4);
+      for (let yy = yTop + 2; yy < yBot - 2; yy += 1) {
+        if (
+          gray[yy * width + divX] < threshold ||
+          gray[yy * width + Math.max(0, divX - 1)] < threshold ||
+          gray[yy * width + Math.min(width - 1, divX + 1)] < threshold
+        ) {
+          vSegDark += 1;
+        }
+      }
+      return vSegDark / segH < 0.25;
+    };
+
+    const hasMissingHSegment = (divRowIdx: number, c: number): boolean => {
       const xLeft = vXs[c];
       const xRight = vXs[c + 1];
+      const divY = hYs[divRowIdx];
+      let hSegDark = 0;
+      const segW = Math.max(1, xRight - xLeft - 4);
+      for (let xx = xLeft + 2; xx < xRight - 2; xx += 1) {
+        if (
+          gray[divY * width + xx] < threshold ||
+          gray[Math.max(0, divY - 1) * width + xx] < threshold ||
+          gray[Math.min(height - 1, divY + 1) * width + xx] < threshold
+        ) {
+          hSegDark += 1;
+        }
+      }
+      return hSegDark / segW < 0.25;
+    };
 
-      const cellWords = (wordBoxes ?? [])
-        .filter((w) => {
+    // Build cell matrix & detect multi-column / multi-row merged cells
+    const grid: string[][] = Array.from({ length: rowCount }, () =>
+      Array(colCount).fill('')
+    );
+    const mergedCells: MergedTableCellSpan[] = [];
+    const covered = Array.from({ length: rowCount }, () => Array<boolean>(colCount).fill(false));
+    const colOffsets: Array<'left' | 'center' | 'right'>[] = Array.from(
+      { length: colCount },
+      () => []
+    );
+
+    for (let r = 0; r < rowCount; r += 1) {
+      for (let c = 0; c < colCount; c += 1) {
+        if (covered[r][c]) continue;
+
+        let cSpan = 1;
+        while (c + cSpan < colCount && hasMissingVSegment(r, c + cSpan)) {
+          cSpan += 1;
+        }
+
+        let rSpan = 1;
+        while (r + rSpan < rowCount) {
+          let allColsMissingH = true;
+          for (let cc = c; cc < c + cSpan; cc += 1) {
+            if (!hasMissingHSegment(r + rSpan, cc)) {
+              allColsMissingH = false;
+              break;
+            }
+          }
+          if (!allColsMissingH) break;
+          rSpan += 1;
+        }
+
+        const yTop = hYs[r];
+        const yBot = hYs[r + rSpan];
+        const xLeft = vXs[c];
+        const xRight = vXs[c + cSpan];
+
+        const cellWordsRaw = (wordBoxes ?? []).filter((w) => {
           const cx = (w.x0 + w.x1) / 2;
           const cy = (w.y0 + w.y1) / 2;
           return cx >= xLeft + 1 && cx <= xRight - 1 && cy >= yTop + 1 && cy <= yBot - 1;
-        })
-        .sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
-
-      grid[r][c] = cellWords.map((w) => w.text).join(' ').trim();
-
-      // Detect horizontal colSpan: right vertical divider missing inside this row band
-      if (c + 1 < colCount) {
-        const divX = vXs[c + 1];
-        let vSegDark = 0;
-        const segH = Math.max(1, yBot - yTop - 4);
-        for (let yy = yTop + 2; yy < yBot - 2; yy += 1) {
-          if (
-            gray[yy * width + divX] < threshold ||
-            gray[yy * width + Math.max(0, divX - 1)] < threshold ||
-            gray[yy * width + Math.min(width - 1, divX + 1)] < threshold
-          ) {
-            vSegDark += 1;
+        });
+        const cellLines: Array<{ midY: number; words: typeof cellWordsRaw }> = [];
+        for (const w of [...cellWordsRaw].sort(
+          (a, b) => (a.y0 + a.y1) * 0.5 - (b.y0 + b.y1) * 0.5 || a.x0 - b.x0
+        )) {
+          const mY = (w.y0 + w.y1) * 0.5;
+          const line = cellLines.find(
+            (ln) => Math.abs(ln.midY - mY) <= Math.max(8, (w.y1 - w.y0) * 0.65)
+          );
+          if (line) {
+            line.words.push(w);
+          } else {
+            cellLines.push({ midY: mY, words: [w] });
           }
         }
-        if (vSegDark / segH < 0.25) {
+        const cellWords = cellLines
+          .sort((a, b) => a.midY - b.midY)
+          .flatMap((ln) => ln.words.sort((a, b) => a.x0 - b.x0));
+
+        const cellText = cellWords.map((w) => w.text).join(' ').trim();
+        grid[r][c] = cellText;
+
+        if (cSpan === 1 && r > 0 && cellWords.length > 0) {
+          const textMinX = Math.min(...cellWords.map((w) => w.x0));
+          const textMaxX = Math.max(...cellWords.map((w) => w.x1));
+          const leftSpace = textMinX - xLeft;
+          const rightSpace = xRight - textMaxX;
+          if (rightSpace > 8 && leftSpace > 8 && Math.abs(leftSpace - rightSpace) <= (xRight - xLeft) * 0.16) {
+            colOffsets[c].push('center');
+          } else if (leftSpace > rightSpace * 2.2 && leftSpace > 12) {
+            colOffsets[c].push('right');
+          } else {
+            colOffsets[c].push('left');
+          }
+        }
+
+        if (cSpan > 1 || rSpan > 1) {
           mergedCells.push({
             row: r,
             col: c,
-            rowSpan: 1,
-            colSpan: 2,
-            value: grid[r][c],
+            rowSpan: rSpan,
+            colSpan: cSpan,
+            value: cellText,
           });
+          for (let rr = r; rr < r + rSpan; rr += 1) {
+            for (let cc = c; cc < c + cSpan; cc += 1) {
+              if (rr !== r || cc !== c) {
+                covered[rr][cc] = true;
+              }
+            }
+          }
         }
       }
     }
+
+    const columnAlignments = colOffsets.map<'left' | 'center' | 'right'>((samples, cIdx) => {
+      if (samples.length === 0) {
+        const numericCells = grid.slice(1).filter((row) => /^[-+]?\d+(?:\.\d+)?%?$/.test((row[cIdx] ?? '').trim()));
+        return numericCells.length >= Math.max(2, Math.floor((rowCount - 1) * 0.7)) ? 'right' : 'left';
+      }
+      const counts = { left: 0, center: 0, right: 0 };
+      for (const s of samples) counts[s] += 1;
+      if (counts.center >= counts.left && counts.center > counts.right) return 'center';
+      if (counts.right > counts.left && counts.right >= counts.center) return 'right';
+      return 'left';
+    });
+
+    // Check for optional explicit caption directly above the table box (within 46px)
+    let caption: string | undefined;
+    if (wordBoxes && wordBoxes.length > 0) {
+      const aboveWords = wordBoxes
+        .filter((w) => w.y1 <= bandMinY && bandMinY - w.y1 <= 46 && w.x1 >= minX - 20 && w.x0 <= maxX + 20)
+        .sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+      if (aboveWords.length > 0) {
+        const lastY = Math.max(...aboveWords.map((w) => w.y0));
+        const captionLine = aboveWords
+          .filter((w) => Math.abs(w.y0 - lastY) <= 14)
+          .sort((a, b) => a.x0 - b.x0)
+          .map((w) => w.text)
+          .join(' ')
+          .trim();
+        if (/^(?:table|tab\.?)\s*\d*\s*[:.\-\s]/i.test(captionLine)) {
+          caption = captionLine;
+        }
+      }
+    }
+
+    const headers = grid[0].map((h, i) => h || `Column ${i + 1}`);
+    const rows = grid.slice(1);
+
+    extractedTables.push(
+      enrichExtractedTable(
+        {
+          id: `p${pageNumber}-bordered-tbl-${extractedTables.length + 1}`,
+          pageNumber,
+          caption,
+          headers,
+          rows,
+          columnAlignments,
+          bbox: {
+            x: minX,
+            y: bandMinY,
+            width: tableWidth,
+            height: bandHeight + 1,
+          },
+        },
+        {
+          borderStyle: 'bordered',
+          mergedCells: mergedCells.length > 0 ? mergedCells : undefined,
+        }
+      )
+    );
   }
 
-  const headers = grid[0].map((h, i) => h || `Column ${i + 1}`);
-  const rows = grid.slice(1);
-
-  return [
-    enrichExtractedTable(
-      {
-        id: `p${pageNumber}-bordered-tbl-1`,
-        pageNumber,
-        caption: `Bordered Table (Page ${pageNumber})`,
-        headers,
-        rows,
-      },
-      {
-        borderStyle: 'bordered',
-        mergedCells: mergedCells.length > 0 ? mergedCells : undefined,
-      }
-    ),
-  ];
+  return extractedTables;
 }
 
 /**

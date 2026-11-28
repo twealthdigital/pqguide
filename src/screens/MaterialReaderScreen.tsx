@@ -5,7 +5,10 @@ import type { PaywallContext } from '../core/subscription';
 import { DarkHeaderCard } from '../components/ui/DarkHeaderCard';
 import { SearchField } from '../components/ui/SearchField';
 import { TactileButton } from '../components/ui/TactileButton';
-import { RichInlineText } from '../components/academic/AcademicContentRenderer';
+import {
+  ReconstructedDocumentRenderer,
+  RichInlineText,
+} from '../components/academic/AcademicContentRenderer';
 import { sanitizeSafeUrl } from '../core/security';
 import { MaterialDownloadButton } from '../components/ui/MaterialDownloadButton';
 
@@ -18,7 +21,6 @@ interface MaterialReaderScreenProps {
 export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
   material,
   onBack,
-  onOpenPaywall,
 }) => {
   const [query, setQuery] = useState('');
   const [flashcardsOpen, setFlashcardsOpen] = useState(false);
@@ -50,6 +52,30 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
               .includes(needle)
           : true
       );
+  }, [material, query]);
+
+  const hasReconstructedPages = Boolean(
+    material?.reconstructedPages &&
+      material.reconstructedPages.some(
+        (pg) => (pg.blocks && pg.blocks.length > 0) || pg.text.trim()
+      )
+  );
+
+  const reconstructedHasSearchMatch = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle || !material?.reconstructedPages) return true;
+    return material.reconstructedPages.some((pg) => {
+      if (pg.text.toLowerCase().includes(needle)) return true;
+      return (pg.blocks ?? []).some(
+        (b) =>
+          (b.text && b.text.toLowerCase().includes(needle)) ||
+          (b.latex && b.latex.toLowerCase().includes(needle)) ||
+          (b.table &&
+            (b.table.caption?.toLowerCase().includes(needle) ||
+              b.table.headers.some((h) => h.toLowerCase().includes(needle)) ||
+              b.table.rows.some((r) => r.some((c) => c.toLowerCase().includes(needle)))))
+      );
+    });
   }, [material, query]);
 
   if (!material) {
@@ -97,20 +123,24 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
       </DarkHeaderCard>
 
       <article className="rounded-3xl border border-[#1A1B20]/[0.08] bg-white px-5 py-6 shadow-[0_2px_12px_-6px_rgba(24,25,30,0.1)] sm:px-8 sm:py-8">
-        <p className="text-[15px] leading-7 text-[#3A3D47]">{material.summary}</p>
-        {sanitizeSafeUrl(material.attachmentPreviewUrl) && (
-          <div className="mt-4 rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3">
-            <img
-              src={sanitizeSafeUrl(material.attachmentPreviewUrl)}
-              alt={`${material.courseCode} study sheet`}
-              referrerPolicy="no-referrer"
-              className="max-h-80 mx-auto rounded-lg bg-white"
-            />
-          </div>
+        {!hasReconstructedPages && (
+          <>
+            <p className="text-[15px] leading-7 text-[#3A3D47]">{material.summary}</p>
+            {sanitizeSafeUrl(material.attachmentPreviewUrl) && (
+              <div className="mt-4 rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3">
+                <img
+                  src={sanitizeSafeUrl(material.attachmentPreviewUrl)}
+                  alt={`${material.courseCode} study sheet`}
+                  referrerPolicy="no-referrer"
+                  className="max-h-80 mx-auto rounded-lg bg-white"
+                />
+              </div>
+            )}
+          </>
         )}
 
         {flashcards.length > 0 && (
-          <div className="mt-4 space-y-3">
+          <div className={`${hasReconstructedPages ? 'mb-6' : 'mt-4'} space-y-3`}>
             <button
               type="button"
               onClick={() => setFlashcardsOpen((v) => !v)}
@@ -121,9 +151,7 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
                   <Layers className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-xs font-bold">
-                    Study Flashcards
-                  </p>
+                  <p className="text-xs font-bold">Study Flashcards</p>
                   <p className="text-[11px] text-[#C3C7D2] truncate">
                     {flashcards.length} topic flashcards built from this study guide
                   </p>
@@ -191,7 +219,19 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
           </div>
         )}
 
-        {sections.length === 0 ? (
+        {hasReconstructedPages && material.reconstructedPages ? (
+          !reconstructedHasSearchMatch ? (
+            <p className="py-8 text-center text-sm text-[#686C78]">
+              Nothing in this guide matches &ldquo;{query}&rdquo;.
+            </p>
+          ) : (
+            <ReconstructedDocumentRenderer
+              pages={material.reconstructedPages}
+              variant="student"
+              searchQuery={query}
+            />
+          )
+        ) : sections.length === 0 ? (
           <p className="py-8 text-center text-sm text-[#686C78]">
             Nothing in this guide matches &ldquo;{query}&rdquo;.
           </p>
@@ -235,3 +275,4 @@ export const MaterialReaderScreen: React.FC<MaterialReaderScreenProps> = ({
     </div>
   );
 };
+

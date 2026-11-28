@@ -21,11 +21,9 @@ import type {
 import { sanitizeSafeUrl } from '../core/security';
 import { archiveRepository } from '../services/archiveRepository';
 import { useArchiveStore } from '../hooks/useArchiveStore';
+import { downloadOriginalDocumentFile } from '../services/intelligence/storageAdapter';
 import {
-  ExtractedDiagramsGallery,
-  ExtractedFormulasList,
-  ExtractedTableCard,
-  RichInlineText,
+  ReconstructedDocumentRenderer,
   ScannedPageSideBySide,
 } from '../components/academic/AcademicContentRenderer';
 import {
@@ -423,38 +421,41 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
 
                     <ScannedPageSideBySide
                       page={activePage}
+                      fallbackImageUrl={selectedDoc.optimizedPreviewUrl}
                       showTechnical={showTechnical}
                       totalPages={selectedDoc.pages.length}
+                      onOpenOriginalFile={() =>
+                        void downloadOriginalDocumentFile({
+                          originalFileRefKey: selectedDoc.originalFileRef?.key,
+                          originalFileName: selectedDoc.originalFileName,
+                          mimeType: selectedDoc.mimeType,
+                          fallbackPreviewUrl: sanitizeSafeUrl(
+                            activePage.renderedPreviewUrl ?? selectedDoc.optimizedPreviewUrl
+                          ),
+                        })
+                      }
                     />
                   </div>
                 )}
 
-                {selectedDoc.formulas.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="font-display text-sm font-bold text-[#1A1B20]">
-                      Extracted Formulas
-                    </h4>
-                    <ExtractedFormulasList formulas={selectedDoc.formulas} />
-                  </div>
-                )}
-
-                {selectedDoc.tables.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="font-display text-sm font-bold text-[#1A1B20]">
-                      Extracted Tables
-                    </h4>
-                    {selectedDoc.tables.map((t) => (
-                      <ExtractedTableCard key={t.id} table={t} />
-                    ))}
-                  </div>
-                )}
-
-                {selectedDoc.diagrams.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="font-display text-sm font-bold text-[#1A1B20]">
-                      Preserved Diagrams &amp; Figures
-                    </h4>
-                    <ExtractedDiagramsGallery diagrams={selectedDoc.diagrams} />
+                {selectedDoc.pages.length === 0 && selectedDoc.extractedText && (
+                  <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4">
+                    <ReconstructedDocumentRenderer
+                      variant="admin"
+                      pages={[
+                        {
+                          pageNumber: 1,
+                          text: selectedDoc.extractedText,
+                          wordCount: selectedDoc.extractedText.split(/\s+/).filter(Boolean).length,
+                          ocrApplied: false,
+                          ocrConfidence: null,
+                          diagrams: selectedDoc.diagrams,
+                          tables: selectedDoc.tables,
+                          formulas: selectedDoc.formulas,
+                          warnings: [],
+                        },
+                      ]}
+                    />
                   </div>
                 )}
 
