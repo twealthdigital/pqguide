@@ -13,15 +13,30 @@
 
 import { PSM, createWorker } from 'tesseract.js';
 import { sanitizePlainText } from '../../core/security';
-import type { UncertainSpan } from '../../core/types';
+import type {
+  ExtractedFormula,
+  ExtractedTable,
+  ReconstructedBlock,
+  UncertainSpan,
+} from '../../core/types';
 import {
   preprocessImageForOcr,
   uint8ToBase64DataUrl,
   type PreprocessedImageResult,
   type PreprocessingStrategy,
 } from './imagePreprocessor';
+import { selectTesseractLanguageParam } from './languageDetector';
+import {
+  applyConservativeOcrRepairs,
+  defaultBrowserSuryaRunner,
+  queryServerOcrCapabilities,
+  selectOptimalOcrPlan,
+  type OcrEngineMode,
+  type SuryaOcrRunner,
+} from './ocrRouter';
 
 export type VisionFallbackMode = 'auto' | 'always' | 'off';
+export type { OcrEngineMode, SuryaOcrRunner };
 
 export interface VisionOcrRunnerInput {
   imageBase64: string;
@@ -62,6 +77,14 @@ export interface OcrExecutionInput {
   visionFallback?: VisionFallbackMode;
   /** Optional custom Vision OCR runner (defaults to browser `/api/documents/vision-ocr`). */
   visionOcrRunner?: VisionOcrRunner;
+  /** Automatic or explicit OCR engine selection mode (default 'auto'). */
+  engineMode?: OcrEngineMode;
+  /** Optional custom Surya OCR runner (defaults to browser `/api/documents/surya-ocr`). */
+  suryaRunner?: SuryaOcrRunner;
+  /** Explicit Tesseract language hint (e.g. 'eng', 'yor', 'eng+yor'). Default `'eng'`. */
+  language?: string;
+  /** Hint that page has dense 2-col/equation/table academic structure. */
+  denseLayoutExpected?: boolean;
 }
 
 export interface OcrWordBox {
@@ -92,13 +115,22 @@ export interface OcrExecutionResult {
   orientationCorrectedDeg: 0 | 90 | 180 | 270;
   psmUsed: string;
   passesRun: number;
-  ocrEngineUsed: 'tesseract' | 'vision' | 'hybrid_tesseract_vision';
+  ocrEngineUsed:
+    | 'surya'
+    | 'tesseract'
+    | 'vision'
+    | 'hybrid_tesseract_vision'
+    | 'hybrid_surya_tesseract';
   visionFallbackUsed: boolean;
   visionFallbackError?: string;
   uncertainSpans: UncertainSpan[];
   wordBoxes?: OcrWordBox[];
   lineBoxes?: OcrLineBox[];
   perspectiveCorrected?: boolean;
+  suryaBlocks?: ReconstructedBlock[];
+  suryaEquations?: ExtractedFormula[];
+  suryaTables?: ExtractedTable[];
+  engineRoutingReason?: string;
 }
 
 type TesseractWorker = Awaited<ReturnType<typeof createWorker>>;
@@ -106,6 +138,7 @@ type TesseractWorker = Awaited<ReturnType<typeof createWorker>>;
 interface PooledWorkerSlot {
   id: number;
   worker: TesseractWorker | null;
+  lang: string;
   initPromise: Promise<TesseractWorker> | null;
   busy: boolean;
   onProgress?: (pct: number, statusText: string) => void;
@@ -115,12 +148,13 @@ const OCR_POOL_SIZE = 2;
 const workerPool: PooledWorkerSlot[] = Array.from({ length: OCR_POOL_SIZE }, (_, idx) => ({
   id: idx,
   worker: null,
+  lang: 'eng',
   initPromise: null,
   busy: false,
 }));
 const waiterQueue: Array<(slot: PooledWorkerSlot) => void> = [];
 
-async function resolveNodeTesseractOptions(): Promise<Record<string, unknown>> {
+async function resolveNodeTesseractOptions(lang = 'eng'): Promise<Record<string, unknown>> {
   const isNodeRuntime =
     typeof process !== 'undefined' &&
     typeof process.versions?.node === 'string' &&
@@ -142,32 +176,69 @@ async function resolveNodeTesseractOptions(): Promise<Record<string, unknown>> {
     const os = osMod as typeof import('node:os');
     const { createRequire } = moduleMod as typeof import('node:module');
 
-    const candidateDirs: string[] = [];
-    try {
-      const req = createRequire(
-        typeof import.meta?.url === 'string'
-          ? import.meta.url
-          : path.resolve(process.cwd(), 'package.json')
-      );
-      const pkgDir = path.dirname(req.resolve('@tesseract.js-data/eng/package.json'));
-      candidateDirs.push(path.join(pkgDir, '4.0.0_best_int'), path.join(pkgDir, '4.0.0'));
-    } catch {
-      // Fallback to workspace node_modules
-    }
-    candidateDirs.push(
-      path.resolve(process.cwd(), 'node_modules/@tesseract.js-data/eng/4.0.0_best_int'),
-      path.resolve(process.cwd(), 'node_modules/@tesseract.js-data/eng/4.0.0')
+    const req = createRequire(
+      typeof import.meta?.url === 'string'
+        ? import.meta.url
+        : path.resolve(process.cwd(), 'package.json')
     );
 
-    const langPath = candidateDirs.find((dir) =>
-      fs.existsSync(path.join(dir, 'eng.traineddata.gz'))
-    );
+    const requestedLangs = lang
+      .split('+')
+      .map((l) => l.trim().toLowerCase())
+      .filter(Boolean);
     const cachePath = path.join(os.tmpdir(), 'pqguide-tesseract-cache');
     fs.mkdirSync(cachePath, { recursive: true });
 
-    if (langPath) {
+    const findTrainedDataFile = (code: string): string | null => {
+      const candidates: string[] = [];
+      try {
+        const pkgDir = path.dirname(req.resolve(`@tesseract.js-data/${code}/package.json`));
+        candidates.push(path.join(pkgDir, '4.0.0_best_int'), path.join(pkgDir, '4.0.0'));
+      } catch {
+        // Fallback to workspace node_modules
+      }
+      candidates.push(
+        path.resolve(process.cwd(), `node_modules/@tesseract.js-data/${code}/4.0.0_best_int`),
+        path.resolve(process.cwd(), `node_modules/@tesseract.js-data/${code}/4.0.0`)
+      );
+      for (const dir of candidates) {
+        const filePath = path.join(dir, `${code}.traineddata.gz`);
+        if (fs.existsSync(filePath)) return filePath;
+      }
+      return null;
+    };
+
+    if (requestedLangs.length === 1) {
+      const singleFile = findTrainedDataFile(requestedLangs[0]);
+      if (singleFile) {
+        return {
+          langPath: path.dirname(singleFile),
+          gzip: true,
+          cachePath,
+          cacheMethod: 'write',
+        };
+      }
+      return { cachePath };
+    }
+
+    // Multi-language (`eng+yor`): stage traineddata files in one shared temp directory so Tesseract loads offline
+    const combinedDir = path.join(os.tmpdir(), 'pqguide-tessdata-combined');
+    fs.mkdirSync(combinedDir, { recursive: true });
+    let allFound = true;
+    for (const code of requestedLangs) {
+      const src = findTrainedDataFile(code);
+      if (!src) {
+        allFound = false;
+        continue;
+      }
+      const dst = path.join(combinedDir, `${code}.traineddata.gz`);
+      if (!fs.existsSync(dst)) {
+        fs.copyFileSync(src, dst);
+      }
+    }
+    if (allFound) {
       return {
-        langPath,
+        langPath: combinedDir,
         gzip: true,
         cachePath,
         cacheMethod: 'write',
@@ -179,19 +250,27 @@ async function resolveNodeTesseractOptions(): Promise<Record<string, unknown>> {
   }
 }
 
-async function initSlotWorker(slot: PooledWorkerSlot): Promise<TesseractWorker> {
-  if (slot.worker) return slot.worker;
-  if (!slot.initPromise) {
-    slot.initPromise = resolveNodeTesseractOptions()
+async function initSlotWorker(
+  slot: PooledWorkerSlot,
+  lang = 'eng'
+): Promise<TesseractWorker> {
+  const targetLang = lang.trim() || 'eng';
+  if (slot.worker && slot.lang === targetLang) return slot.worker;
+  if (slot.worker && slot.lang !== targetLang) {
+    await terminateSlotWorker(slot);
+  }
+  if (!slot.initPromise || slot.lang !== targetLang) {
+    slot.lang = targetLang;
+    slot.initPromise = resolveNodeTesseractOptions(targetLang)
       .then((nodeOpts) =>
-        createWorker('eng', undefined, {
+        createWorker(targetLang, undefined, {
           ...nodeOpts,
           logger: (msg: { status?: string; progress?: number }) => {
             if (!slot.onProgress) return;
             if (msg.status === 'recognizing text' && typeof msg.progress === 'number') {
               slot.onProgress(
                 Math.max(0, Math.min(100, Math.round(msg.progress * 100))),
-                'Recognizing characters'
+                `Recognizing characters (${targetLang})`
               );
             } else if (msg.status && typeof msg.progress === 'number') {
               slot.onProgress(
@@ -332,7 +411,8 @@ export function scoreOcrCandidate(text: string, confidence: number): {
 }
 
 function cleanOcrOutputText(raw: string): string {
-  const normalized = raw
+  const { text: repaired } = applyConservativeOcrRepairs(raw);
+  const normalized = repaired
     .replace(/\r\n/g, '\n')
     .split('\n')
     .map((line) => line.replace(/[ \t]+/g, ' ').trimEnd())
@@ -424,7 +504,7 @@ function analyzeBlocksAndOrder(
     if (blk.bbox?.x1 && blk.bbox.x1 > maxX) maxX = blk.bbox.x1;
     for (const para of blk.paragraphs ?? []) {
       for (const ln of para.lines ?? []) {
-        const cleanLn = (ln.text ?? '').trim();
+        const cleanLn = applyConservativeOcrRepairs((ln.text ?? '').trim()).text;
         if (cleanLn) {
           lines.push(ln);
           if (ln.bbox?.x1 && ln.bbox.x1 > maxX) maxX = ln.bbox.x1;
@@ -780,6 +860,7 @@ function analyzeBlocksAndOrder(
 async function runPooledRecognition(params: {
   source: Buffer | string;
   psm: PSM;
+  lang?: string;
   signal?: AbortSignal;
   timeoutMs: number;
   onProgress?: (pct: number, statusText: string) => void;
@@ -794,7 +875,7 @@ async function runPooledRecognition(params: {
   const slot = await acquireWorkerSlot();
   try {
     throwIfAborted(params.signal);
-    const worker = await initSlotWorker(slot);
+    const worker = await initSlotWorker(slot, params.lang || 'eng');
     throwIfAborted(params.signal);
     await worker.setParameters({
       tessedit_pageseg_mode: params.psm,
@@ -987,17 +1068,161 @@ export async function recognizeWithTesseractPool(
   }
 
   throwIfAborted(input.signal);
+  const capabilities = input.suryaRunner ? null : await queryServerOcrCapabilities();
+  const routingPlan = selectOptimalOcrPlan({
+    engineMode: input.engineMode ?? 'auto',
+    capabilities,
+    hasCustomSuryaRunner: Boolean(input.suryaRunner),
+    quality: basePrep?.qualityMetrics,
+    languageHintText: input.language,
+    denseLayoutExpected: input.denseLayoutExpected,
+    allowVisionFallback: (input.visionFallback ?? 'auto') !== 'off',
+  });
+  const activeTessLang = input.language?.trim() || routingPlan.tesseractLang || 'eng';
+
+  // Tier 1 (Advanced Layout + Math + Table Engine): Try Surya OCR when configured/selected
+  let suryaBlocks: ReconstructedBlock[] | undefined;
+  let suryaEquations: ExtractedFormula[] | undefined;
+  let suryaTables: ExtractedTable[] | undefined;
+
+  if (routingPlan.trySuryaFirst) {
+    const suryaImageDataUrl =
+      basePrep?.ocrDataUrl ??
+      input.imageDataUrl ??
+      (input.bytes ? uint8ToBase64DataUrl(input.bytes, input.mimeType || 'image/png') : '');
+    const suryaMime = suryaImageDataUrl.startsWith('data:image/jpeg')
+      ? 'image/jpeg'
+      : suryaImageDataUrl.startsWith('data:image/webp')
+        ? 'image/webp'
+        : 'image/png';
+    if (suryaImageDataUrl) {
+      input.onOcrProgress?.(20, 'Running Surya layout & equation recognition');
+      const suryaRunner = input.suryaRunner ?? defaultBrowserSuryaRunner;
+      try {
+        const sRes = await suryaRunner({
+          imageBase64: suryaImageDataUrl,
+          mimeType: suryaMime,
+          pageNumber: input.pageNumber,
+          languages: activeTessLang.includes('yor') ? ['en', 'yo'] : ['en'],
+          signal: input.signal,
+        });
+        const suryaPage = sRes.page ?? sRes.pages?.[0];
+        if (sRes.ok && suryaPage && suryaPage.text.trim().length > 0) {
+          const cleanedSurya = cleanOcrOutputText(suryaPage.text);
+          const suryaScore = scoreOcrCandidate(cleanedSurya, suryaPage.confidence);
+          if (suryaPage.confidence >= 55 && suryaScore.alnumChars >= 8) {
+            suryaBlocks = suryaPage.blocks;
+            suryaEquations = suryaPage.equations;
+            suryaTables = suryaPage.tables;
+            const uncertain = (suryaPage.uncertainSpans ?? []).slice();
+            for (const sp of detectMathUncertainty(cleanedSurya)) {
+              if (!uncertain.some((u) => u.text === sp.text)) uncertain.push(sp);
+            }
+            if (suryaPage.warnings.length > 0) warnings.push(...suryaPage.warnings);
+
+            // If hybrid mode requested or Surya confidence is modest (< 74%), cross-verify with Tesseract
+            const needTesseractCrossCheck =
+              input.engineMode === 'hybrid' || suryaPage.confidence < 74;
+
+            if (!needTesseractCrossCheck) {
+              return {
+                text: cleanedSurya,
+                confidence: suryaPage.confidence,
+                warnings,
+                preprocessed: basePrep,
+                orientationCorrectedDeg: 0,
+                psmUsed: 'SURYA_LAYOUT_OCR',
+                passesRun: 1,
+                ocrEngineUsed: 'surya',
+                visionFallbackUsed: false,
+                uncertainSpans: uncertain,
+                wordBoxes: suryaPage.wordBoxes,
+                lineBoxes: suryaPage.lineBoxes,
+                perspectiveCorrected: basePrep?.perspectiveCorrected,
+                suryaBlocks,
+                suryaEquations,
+                suryaTables,
+                engineRoutingReason: routingPlan.reason,
+              };
+            }
+
+            // Hybrid Surya + Tesseract cross-check
+            const tessCross = await runPooledRecognition({
+              source: primarySource,
+              psm: PSM.AUTO,
+              lang: activeTessLang,
+              signal: input.signal,
+              timeoutMs,
+            });
+            const tessScore = scoreOcrCandidate(tessCross.text, tessCross.confidence);
+            const preferSurya = suryaScore.score >= tessScore.score - 4;
+            return {
+              text: preferSurya ? cleanedSurya : tessCross.text,
+              confidence: Math.round((suryaPage.confidence + tessCross.confidence) / 2),
+              warnings,
+              preprocessed: basePrep,
+              orientationCorrectedDeg: 0,
+              psmUsed: preferSurya ? 'SURYA+TESSERACT_HYBRID' : 'TESSERACT+SURYA_HYBRID',
+              passesRun: 2,
+              ocrEngineUsed: 'hybrid_surya_tesseract',
+              visionFallbackUsed: false,
+              uncertainSpans: uncertain,
+              wordBoxes: preferSurya ? suryaPage.wordBoxes : tessCross.wordBoxes,
+              lineBoxes: preferSurya ? suryaPage.lineBoxes : tessCross.lineBoxes,
+              perspectiveCorrected: basePrep?.perspectiveCorrected,
+              suryaBlocks,
+              suryaEquations,
+              suryaTables,
+              engineRoutingReason: `${routingPlan.reason} Cross-checked with Tesseract.`,
+            };
+          }
+        } else if (sRes.providerAvailable && sRes.error) {
+          warnings.push(`Surya OCR unavailable for this page (${sRes.error}); falling back to Tesseract pool.`);
+        }
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') throw err;
+        warnings.push('Surya OCR request failed; falling back to local Tesseract pool.');
+      }
+    }
+  }
+
   let passesRun = 1;
   let best = await runPooledRecognition({
     source: primarySource,
     psm: PSM.AUTO,
+    lang: activeTessLang,
     signal: input.signal,
     timeoutMs,
     onProgress: input.onOcrProgress,
   });
   let bestScore = scoreOcrCandidate(best.text, best.confidence);
-  let bestPsm = 'PSM.AUTO';
+  let bestPsm = `PSM.AUTO(${activeTessLang})`;
   let bestOrientation: 0 | 90 | 180 | 270 = 0;
+
+  // Auto-escalate to bilingual `eng+yor` Tesseract pass if initial English pass finds Yoruba diacritics
+  if (activeTessLang === 'eng') {
+    const autoLang = selectTesseractLanguageParam(best.text);
+    if (autoLang === 'eng+yor' && !input.signal?.aborted) {
+      try {
+        passesRun += 1;
+        const yorRes = await runPooledRecognition({
+          source: primarySource,
+          psm: PSM.AUTO,
+          lang: 'eng+yor',
+          signal: input.signal,
+          timeoutMs,
+        });
+        const yorScore = scoreOcrCandidate(yorRes.text, yorRes.confidence);
+        if (yorScore.score >= bestScore.score - 2) {
+          best = yorRes;
+          bestScore = yorScore;
+          bestPsm = 'PSM.AUTO(eng+yor)';
+        }
+      } catch {
+        // Keep base English read if bilingual pass errors
+      }
+    }
+  }
 
   // Pass 2: Try PSM.SINGLE_BLOCK when Pass 1 confidence or density is low
   const needsSecondPass =
@@ -1008,6 +1233,7 @@ export async function recognizeWithTesseractPool(
     const pass2 = await runPooledRecognition({
       source: primarySource,
       psm: PSM.SINGLE_BLOCK,
+      lang: activeTessLang,
       signal: input.signal,
       timeoutMs,
     });
@@ -1015,7 +1241,7 @@ export async function recognizeWithTesseractPool(
     if (pass2Score.score > bestScore.score + 2) {
       best = pass2;
       bestScore = pass2Score;
-      bestPsm = 'PSM.SINGLE_BLOCK';
+      bestPsm = `PSM.SINGLE_BLOCK(${activeTessLang})`;
     }
   }
 
@@ -1039,6 +1265,7 @@ export async function recognizeWithTesseractPool(
       const pass3 = await runPooledRecognition({
         source: toWorkerSource(altPrep),
         psm: PSM.AUTO,
+        lang: activeTessLang,
         signal: input.signal,
         timeoutMs,
       });
@@ -1075,6 +1302,7 @@ export async function recognizeWithTesseractPool(
         const rotRes = await runPooledRecognition({
           source: toWorkerSource(rotPrep),
           psm: PSM.AUTO,
+          lang: activeTessLang,
           signal: input.signal,
           timeoutMs,
         });
@@ -1147,9 +1375,6 @@ export async function recognizeWithTesseractPool(
 
       if (vRes.ok && vRes.text && vRes.text.trim().length > 0) {
         const cleanedVision = cleanOcrOutputText(vRes.text);
-        // The model's own confidence is a self-report, not a measured accuracy, and it may be
-        // missing. Never invent one: fall back to the local engine's measured value, and cap
-        // the result so a Vision read can never look more trustworthy than it is.
         const reportedConf =
           typeof vRes.confidenceEstimate === 'number' ? vRes.confidenceEstimate : best.confidence;
         const visionConf = Math.max(0, Math.min(VISION_CONFIDENCE_CEILING, reportedConf));
@@ -1224,5 +1449,9 @@ export async function recognizeWithTesseractPool(
     wordBoxes: best.wordBoxes,
     lineBoxes: best.lineBoxes,
     perspectiveCorrected: basePrep?.perspectiveCorrected,
+    suryaBlocks,
+    suryaEquations,
+    suryaTables,
+    engineRoutingReason: routingPlan.reason,
   };
 }

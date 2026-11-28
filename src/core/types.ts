@@ -564,7 +564,8 @@ export type ScannerModuleName =
   | 'language_detection'
   | 'document_classifier'
   | 'document_integrity'
-  | 'academic_metadata';
+  | 'academic_metadata'
+  | 'academic_question_parser';
 
 export type ModuleExecutionStatus =
   | 'executed'
@@ -920,6 +921,8 @@ export type ExtractionQualityStatus =
 export interface PageImageQualityMetrics {
   width?: number;
   height?: number;
+  qualityScore?: number; // 0..100 overall readability quality
+  isInvertedPolarity?: boolean;
   sharpnessScore?: number;
   contrastScore?: number;
   shadowVariance?: number;
@@ -993,7 +996,12 @@ export interface ExtractedPageContent {
   preprocessingApplied?: string[];
   errors?: string[];
   renderedPreviewUrl?: string;
-  ocrEngineUsed?: 'tesseract' | 'vision' | 'hybrid_tesseract_vision';
+  ocrEngineUsed?:
+    | 'surya'
+    | 'tesseract'
+    | 'vision'
+    | 'hybrid_tesseract_vision'
+    | 'hybrid_surya_tesseract';
   visionFallbackUsed?: boolean;
   visionFallbackError?: string;
   uncertainSpans?: UncertainSpan[];
@@ -1010,6 +1018,69 @@ export interface ExtractedPageContent {
   footerLines?: string[];
   blocks?: ReconstructedBlock[];
   warnings: string[];
+}
+
+export interface ParsedMcqOption {
+  label: string; // 'A' | 'B' | 'C' | 'D' | 'E'
+  text: string;
+  pageNumber: number;
+}
+
+export interface ParsedSubquestion {
+  id: string;
+  label: string; // '(a)' | '(i)' | 'b.'
+  parentQuestionNumber: string;
+  text: string;
+  marks?: string;
+  options: ParsedMcqOption[];
+  pageNumber: number;
+}
+
+export interface ParsedExamQuestion {
+  id: string;
+  questionNumber: string; // normalized number e.g. '1', '2'
+  rawLabel: string;
+  section?: string;
+  stem: string;
+  marks?: string;
+  options: ParsedMcqOption[];
+  subquestions: ParsedSubquestion[];
+  formulaIds: string[];
+  tableIds: string[];
+  diagramIds: string[];
+  pageNumbers: number[];
+  isContinuedAcrossPages: boolean;
+  isIncomplete: boolean;
+  incompleteReasons: string[];
+  isUncertain: boolean;
+  duplicateOfQuestionNumber?: string;
+}
+
+export interface ExamConsistencyIssue {
+  kind:
+    | 'duplicate_question'
+    | 'incomplete_question'
+    | 'missing_question_number'
+    | 'missing_mcq_option'
+    | 'page_continuation_stitched'
+    | 'conflicting_course_code';
+  severity: 'info' | 'warning';
+  questionNumber?: string;
+  pageNumbers: number[];
+  message: string;
+}
+
+export interface AcademicExamStructureReport {
+  examHeadings: string[];
+  instructions: string[];
+  sections: string[];
+  questions: ParsedExamQuestion[];
+  duplicateQuestions: Array<{ questionNumber: string; matchesQuestionNumber: string; similarity: number }>;
+  incompleteQuestions: Array<{ questionNumber: string; reasons: string[]; pageNumbers: number[] }>;
+  missingQuestionNumbers: number[];
+  continuedQuestionNumbers: string[];
+  issues: ExamConsistencyIssue[];
+  totalDetectedQuestions: number;
 }
 
 export interface QrCodeMatch {
@@ -1120,7 +1191,7 @@ export interface AcademicDocumentRecord {
   extractionWarnings?: string[];
   deterministicChecks: DeterministicCheckResult[];
   aiFindings?: AiCrossCheckFindings;
-  /** Which OCR engine(s) read this document, e.g. "tesseract" or "hybrid_tesseract_vision". */
+  /** Which OCR engine(s) read this document, e.g. "surya", "tesseract", or "hybrid_tesseract_vision". */
   ocrEngineSummary?: string;
   /** Pages with uncertain text that need a human to check them. */
   uncertainPageNumbers?: number[];
@@ -1140,6 +1211,7 @@ export interface AcademicDocumentRecord {
   classification?: DocumentClassificationResult;
   integrityReport?: DocumentIntegrityReport;
   languageAnalysis?: LanguageAnalysisResult;
+  academicStructure?: AcademicExamStructureReport;
   omrResults?: OmrScanResult;
   formResults?: FormExtractionResult;
   handwritingAnalysis?: HandwritingAnalysisResult;

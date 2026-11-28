@@ -105,6 +105,18 @@ export function createApiApp(deps?: OtpEngineDeps) {
     void superAdminHandlers.handleResetPassword(req, res);
   });
 
+  app.get('/api/documents/ocr-capabilities', (req: Request, res: Response) => {
+    void documentHandlers.handleOcrCapabilities(req, res);
+  });
+
+  app.post('/api/documents/surya-ocr', (req: Request, res: Response) => {
+    void documentHandlers.handleSuryaOcr(req, res);
+  });
+
+  app.post('/api/documents/handwriting-ocr', (req: Request, res: Response) => {
+    void documentHandlers.handleHandwritingOcr(req, res);
+  });
+
   app.post('/api/documents/vision-ocr', (req: Request, res: Response) => {
     void documentHandlers.handleVisionOcr(req, res);
   });

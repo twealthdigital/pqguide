@@ -34,7 +34,27 @@ export async function processUploadedDocument(
 ): Promise<ProcessedDocumentResult> {
   const input = await fileToScanInput(file);
   const artifact = await scanSingleAcademicInput(input);
-  const questionLines = extractQuestionsFromText(artifact.extractedText, 24);
+  const structuredQuestions = (artifact.academicStructure?.questions ?? [])
+    .slice(0, 24)
+    .map((q) => {
+      const subParts = q.subquestions
+        .slice(0, 6)
+        .map((s) => `${s.label} ${s.text}`)
+        .join(' ');
+      const optParts = q.options
+        .slice(0, 5)
+        .map((o) => `(${o.label}) ${o.text}`)
+        .join(' ');
+      return sanitizeSingleLine(
+        [`Q${q.questionNumber}. ${q.stem}`, subParts, optParts].filter(Boolean).join(' '),
+        420
+      );
+    })
+    .filter(Boolean);
+  const questionLines =
+    structuredQuestions.length > 0
+      ? structuredQuestions
+      : extractQuestionsFromText(artifact.extractedText, 24);
   const isImageBased =
     artifact.detectedFormat === 'image' ||
     artifact.pages.some((p) => p.ocrApplied);
@@ -59,7 +79,7 @@ export async function processUploadedDocument(
       artifact.averageOcrConfidence !== null
         ? ` · OCR ${artifact.averageOcrConfidence}%`
         : ''
-    }.`,
+    }${artifact.ocrEngineSummary ? ` · ${artifact.ocrEngineSummary}` : ''}.`,
   };
 }
 

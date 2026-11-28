@@ -2350,6 +2350,7 @@ class ArchiveRepository {
       classification?: AcademicDocumentRecord['classification'];
       integrityReport?: AcademicDocumentRecord['integrityReport'];
       languageAnalysis?: AcademicDocumentRecord['languageAnalysis'];
+      academicStructure?: AcademicDocumentRecord['academicStructure'];
       omrResults?: AcademicDocumentRecord['omrResults'];
       formResults?: AcademicDocumentRecord['formResults'];
       handwritingAnalysis?: AcademicDocumentRecord['handwritingAnalysis'];
@@ -2481,6 +2482,7 @@ class ArchiveRepository {
       classification: payload.classification,
       integrityReport: payload.integrityReport,
       languageAnalysis: payload.languageAnalysis,
+      academicStructure: payload.academicStructure,
       omrResults: payload.omrResults,
       formResults: payload.formResults,
       handwritingAnalysis: payload.handwritingAnalysis,

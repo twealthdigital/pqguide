@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { sanitizePlainText, sanitizeSingleLine } from '../../core/security';
 import type {
   AcademicDocFormat,
+  AcademicExamStructureReport,
   DeterministicCheckResult,
   DocumentClassificationResult,
   DocumentIntegrityReport,
@@ -90,6 +91,13 @@ import {
   buildBlocksFromStructuredText,
   reconstructPageBlocks,
 } from './layoutReconstructor';
+import { parseAcademicExamStructure } from './academicQuestionParser';
+import {
+  createBackendHandwritingAdapter,
+  queryServerOcrCapabilities,
+  type OcrEngineMode,
+  type SuryaOcrRunner,
+} from './ocrRouter';
 
 export type ScanStageId =
   | 'queued'
@@ -122,13 +130,17 @@ export interface OcrRunnerResult {
   warnings?: string[];
   preprocessed?: PreprocessedImageResult;
   orientationCorrectedDeg?: 0 | 90 | 180 | 270;
-  ocrEngineUsed?: 'tesseract' | 'vision' | 'hybrid_tesseract_vision';
+  ocrEngineUsed?: ExtractedPageContent['ocrEngineUsed'];
   visionFallbackUsed?: boolean;
   visionFallbackError?: string;
   uncertainSpans?: UncertainSpan[];
   wordBoxes?: OcrWordBox[];
   lineBoxes?: OcrLineBox[];
   perspectiveCorrected?: boolean;
+  suryaBlocks?: ReconstructedBlock[];
+  suryaEquations?: ExtractedFormula[];
+  suryaTables?: ExtractedTable[];
+  engineRoutingReason?: string;
 }
 
 export type OcrRunner = (input: {
@@ -140,6 +152,9 @@ export type OcrRunner = (input: {
   skipPreprocessing?: boolean;
   visionFallback?: VisionFallbackMode;
   visionOcrRunner?: VisionOcrRunner;
+  engineMode?: OcrEngineMode;
+  suryaRunner?: SuryaOcrRunner;
+  language?: string;
   onOcrProgress?: (pct: number, statusText: string) => void;
 }) => Promise<OcrRunnerResult>;
 
@@ -192,6 +207,8 @@ export interface ScannedArtifactOutput {
   classification?: DocumentClassificationResult;
   integrityReport?: DocumentIntegrityReport;
   languageAnalysis?: LanguageAnalysisResult;
+  academicStructure?: AcademicExamStructureReport;
+  ocrEngineSummary?: string;
   omrResults?: OmrScanResult;
   formResults?: FormExtractionResult;
   handwritingAnalysis?: HandwritingAnalysisResult;
@@ -267,6 +284,9 @@ export async function defaultBrowserOcrRunner(input: {
   skipPreprocessing?: boolean;
   visionFallback?: VisionFallbackMode;
   visionOcrRunner?: VisionOcrRunner;
+  engineMode?: OcrEngineMode;
+  suryaRunner?: SuryaOcrRunner;
+  language?: string;
   onOcrProgress?: (pct: number, statusText: string) => void;
 }): Promise<OcrRunnerResult> {
   throwIfAborted(input.signal);
@@ -279,6 +299,9 @@ export async function defaultBrowserOcrRunner(input: {
     skipPreprocessing: input.skipPreprocessing,
     visionFallback: input.visionFallback,
     visionOcrRunner: input.visionOcrRunner,
+    engineMode: input.engineMode,
+    suryaRunner: input.suryaRunner,
+    language: input.language,
     onOcrProgress: input.onOcrProgress,
   });
   return {
@@ -294,7 +317,28 @@ export async function defaultBrowserOcrRunner(input: {
     wordBoxes: res.wordBoxes,
     lineBoxes: res.lineBoxes,
     perspectiveCorrected: res.perspectiveCorrected,
+    suryaBlocks: res.suryaBlocks,
+    suryaEquations: res.suryaEquations,
+    suryaTables: res.suryaTables,
+    engineRoutingReason: res.engineRoutingReason,
   };
+}
+
+function deduplicateExtractedTables(raw: ExtractedTable[]): ExtractedTable[] {
+  const seen = new Set<string>();
+  const out: ExtractedTable[] = [];
+  for (const tbl of raw) {
+    const hSig = tbl.headers.map((h) => h.trim().toLowerCase()).filter(Boolean).join('|');
+    const rSig = tbl.rows
+      .map((r) => r.map((c) => c.trim().toLowerCase()).filter(Boolean).join('|'))
+      .filter(Boolean)
+      .join(';');
+    const sig = `${hSig}::${rSig}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(tbl);
+  }
+  return out;
 }
 
 function isSafeQrUrl(payload: string): boolean {
@@ -1233,6 +1277,9 @@ async function processPdfBuffer(params: {
   pdfPageRenderer?: PdfPageRenderer;
   visionFallback?: VisionFallbackMode;
   visionOcrRunner?: VisionOcrRunner;
+  engineMode?: OcrEngineMode;
+  suryaRunner?: SuryaOcrRunner;
+  language?: string;
   onProgress?: (update: ScanProgressUpdate) => void;
   handwritingAdapter?: HandwritingEngineAdapter;
   mathAdapter?: MathOcrAdapter;
@@ -1508,6 +1555,9 @@ async function processPdfBuffer(params: {
     let pageLineBoxes: OcrLineBox[] | undefined;
     let pageWordBoxes: OcrWordBox[] | undefined;
     let pagePrep: PreprocessedImageResult | undefined;
+    let pageSuryaBlocks: ReconstructedBlock[] | undefined;
+    let pageSuryaEquations: ExtractedFormula[] = [];
+    let pageSuryaTables: ExtractedTable[] = [];
 
     const canRunOcr = Boolean(highResOcrBytes || highResOcrDataUrl);
     if ((needsFullOcr || isMixedPage) && canRunOcr) {
@@ -1530,6 +1580,9 @@ async function processPdfBuffer(params: {
           signal: params.signal,
           visionFallback: params.visionFallback ?? 'off',
           visionOcrRunner: params.visionOcrRunner,
+          engineMode: params.engineMode,
+          suryaRunner: params.suryaRunner,
+          language: params.language,
           onOcrProgress: (pct, statusText) => {
             params.onProgress?.({
               stage: 'ocr',
@@ -1553,6 +1606,9 @@ async function processPdfBuffer(params: {
         pageWordBoxes = ocrRes.wordBoxes;
         pagePrep = ocrRes.preprocessed;
         perspectiveCorrected = Boolean(ocrRes.perspectiveCorrected);
+        pageSuryaBlocks = ocrRes.suryaBlocks;
+        pageSuryaEquations = ocrRes.suryaEquations ?? [];
+        pageSuryaTables = ocrRes.suryaTables ?? [];
         if (ocrRes.preprocessed?.appliedSteps) {
           preprocessingApplied.push(...ocrRes.preprocessed.appliedSteps);
         }
@@ -1627,12 +1683,11 @@ async function processPdfBuffer(params: {
           })
         : [];
     const textTables = extractTablesFromText(cleanedPageText, pageNo);
-    const pageTables =
-      visualTables.length > 0 && textTables.length === 0
-        ? visualTables
-        : visualTables.length > 0
-          ? [...visualTables, ...textTables.filter((tt) => tt.rows.length > 0)]
-          : textTables;
+    const pageTables = deduplicateExtractedTables([
+      ...pageSuryaTables.map((t) => enrichExtractedTable(t)),
+      ...visualTables,
+      ...textTables.filter((tt) => tt.rows.length > 0 || visualTables.length === 0),
+    ]);
 
     if (!hasVectorDrawings && visualGray && visualW > 0 && visualH > 0) {
       try {
@@ -1657,12 +1712,17 @@ async function processPdfBuffer(params: {
       }
     }
 
-    const pageFormulas = await extractMathFormulasAdvanced({
+    const baseFormulas = await extractMathFormulasAdvanced({
       text: cleanedPageText,
       pageNumber: pageNo,
       wordBoxes: pageWordBoxes,
       adapter: params.mathAdapter,
     });
+    const seenLatexPdf = new Set(pageSuryaEquations.map((f) => f.latex.replace(/\s+/g, '')));
+    const pageFormulas: ExtractedFormula[] = [
+      ...pageSuryaEquations,
+      ...baseFormulas.filter((f) => !seenLatexPdf.has(f.latex.replace(/\s+/g, ''))),
+    ];
 
     let pageHandwriting: HandwritingAnalysisResult | undefined;
     let pageOmr: OmrScanResult | undefined;
@@ -1753,21 +1813,24 @@ async function processPdfBuffer(params: {
       errors,
     });
 
-    const pageBlocks = reconstructPageBlocks({
-      pageNumber: pageNo,
-      text: cleanedPageText,
-      tables: pageTables,
-      formulas: pageFormulas,
-      diagrams: pageDiagrams,
-      lineBoxes: pageLineBoxes,
-      wordBoxes: pageWordBoxes,
-      pdfPlacedTokens: !needsFullOcr ? nativeInspection.placedTokens : undefined,
-      pdfPageWidth: baseViewport.width || 612,
-      pdfPageHeight: baseViewport.height || 792,
-      pageWidth: visualW || baseViewport.width || 612,
-      pageHeight: visualH || baseViewport.height || 792,
-      uncertainSpans,
-    });
+    const pageBlocks =
+      pageSuryaBlocks && pageSuryaBlocks.length >= 2
+        ? pageSuryaBlocks
+        : reconstructPageBlocks({
+            pageNumber: pageNo,
+            text: cleanedPageText,
+            tables: pageTables,
+            formulas: pageFormulas,
+            diagrams: pageDiagrams,
+            lineBoxes: pageLineBoxes,
+            wordBoxes: pageWordBoxes,
+            pdfPlacedTokens: !needsFullOcr ? nativeInspection.placedTokens : undefined,
+            pdfPageWidth: baseViewport.width || 612,
+            pdfPageHeight: baseViewport.height || 792,
+            pageWidth: visualW || baseViewport.width || 612,
+            pageHeight: visualH || baseViewport.height || 792,
+            uncertainSpans,
+          });
 
     pages.push({
       pageNumber: pageNo,
@@ -2028,6 +2091,9 @@ export async function scanSingleAcademicInput(
     bypassCache?: boolean;
     visionFallback?: VisionFallbackMode;
     visionOcrRunner?: VisionOcrRunner;
+    engineMode?: OcrEngineMode;
+    suryaRunner?: SuryaOcrRunner;
+    language?: string;
     handwritingAdapter?: HandwritingEngineAdapter;
     mathAdapter?: MathOcrAdapter;
     omrTemplate?: OmrTemplateConfig;
@@ -2037,6 +2103,17 @@ export async function scanSingleAcademicInput(
   const docId = options?.docId ?? `adoc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const ocrRunner = options?.ocrRunner ?? defaultBrowserOcrRunner;
   const effectiveVisionFallback: VisionFallbackMode = options?.visionFallback ?? 'off';
+  let effectiveHandwritingAdapter = options?.handwritingAdapter;
+  if (!effectiveHandwritingAdapter && typeof window !== 'undefined' && effectiveVisionFallback !== 'off') {
+    try {
+      const caps = await queryServerOcrCapabilities();
+      if (caps?.handwriting?.available) {
+        effectiveHandwritingAdapter = createBackendHandwritingAdapter();
+      }
+    } catch {
+      // Optional backend HTR capability lookup never blocks offline scan
+    }
+  }
   const moduleReports: ScannerModuleRunReport[] = [];
 
   throwIfAborted(options?.signal);
@@ -2189,6 +2266,9 @@ export async function scanSingleAcademicInput(
     let pageLineBoxes: OcrLineBox[] | undefined;
     let pageWordBoxes: OcrWordBox[] | undefined;
     let perspectiveCorrected = Boolean(prep?.perspectiveCorrected);
+    let imgSuryaBlocks: ReconstructedBlock[] | undefined;
+    let imgSuryaEquations: ExtractedFormula[] = [];
+    let imgSuryaTables: ExtractedTable[] = [];
 
     try {
       const ocrRes = await ocrRunner({
@@ -2199,6 +2279,9 @@ export async function scanSingleAcademicInput(
         signal: options?.signal,
         visionFallback: effectiveVisionFallback,
         visionOcrRunner: options?.visionOcrRunner,
+        engineMode: options?.engineMode,
+        suryaRunner: options?.suryaRunner,
+        language: options?.language,
         onOcrProgress: (pct, statusText) => {
           options?.onProgress?.({
             stage: 'ocr',
@@ -2219,6 +2302,9 @@ export async function scanSingleAcademicInput(
       uncertainSpans = ocrRes.uncertainSpans ?? [];
       pageLineBoxes = ocrRes.lineBoxes;
       pageWordBoxes = ocrRes.wordBoxes;
+      imgSuryaBlocks = ocrRes.suryaBlocks;
+      imgSuryaEquations = ocrRes.suryaEquations ?? [];
+      imgSuryaTables = ocrRes.suryaTables ?? [];
       if (ocrRes.preprocessed) {
         finalPrep = ocrRes.preprocessed;
         optimizedPreviewUrl = ocrRes.preprocessed.previewDataUrl || optimizedPreviewUrl;
@@ -2317,12 +2403,11 @@ export async function scanSingleAcademicInput(
             })
           : [];
       const textTables = extractTablesFromText(ocrText, 1);
-      const mergedTables =
-        visualTables.length > 0 && textTables.length === 0
-          ? visualTables
-          : visualTables.length > 0
-            ? [...visualTables, ...textTables.filter((tt) => tt.rows.length > 0)]
-            : textTables;
+      const mergedTables = deduplicateExtractedTables([
+        ...imgSuryaTables.map((t) => enrichExtractedTable(t)),
+        ...visualTables,
+        ...textTables.filter((tt) => tt.rows.length > 0 || visualTables.length === 0),
+      ]);
       tables = linkMultiPageTables(mergedTables.map((t) => enrichExtractedTable(t)));
       moduleReports.push({
         module: 'advanced_tables',
@@ -2331,7 +2416,10 @@ export async function scanSingleAcademicInput(
         detail: `Extracted ${tables.length} structured table(s).`,
       });
     } catch (err) {
-      tables = extractTablesFromText(ocrText, 1);
+      tables = deduplicateExtractedTables([
+        ...imgSuryaTables,
+        ...extractTablesFromText(ocrText, 1),
+      ]);
       moduleReports.push({
         module: 'advanced_tables',
         status: 'failed',
@@ -2340,15 +2428,20 @@ export async function scanSingleAcademicInput(
       });
     }
 
-    // 3. Mathematical Formulas (2D spatial word-box + algebraic/calculus/matrix LaTeX)
+    // 3. Mathematical Formulas (Surya LaTeX + 2D spatial word-box + algebraic/calculus/matrix LaTeX)
     const mathStart = Date.now();
     try {
-      formulas = await extractMathFormulasAdvanced({
+      const textAndSpatialFormulas = await extractMathFormulasAdvanced({
         text: ocrText,
         pageNumber: 1,
         wordBoxes: pageWordBoxes,
         adapter: options?.mathAdapter,
       });
+      const seenLatexImg = new Set(imgSuryaEquations.map((f) => f.latex.replace(/\s+/g, '')));
+      formulas = [
+        ...imgSuryaEquations,
+        ...textAndSpatialFormulas.filter((f) => !seenLatexImg.has(f.latex.replace(/\s+/g, ''))),
+      ];
       moduleReports.push({
         module: 'math_formulas',
         status: 'executed',
@@ -2487,7 +2580,7 @@ export async function scanSingleAcademicInput(
           ocrText,
           ocrConfidence: averageOcrConfidence,
           wordBoxes: pageWordBoxes,
-          adapter: options?.handwritingAdapter,
+          adapter: effectiveHandwritingAdapter,
           isScannedOrRaster: true,
         });
         handwritingAnalysis = htr;
@@ -2591,18 +2684,21 @@ export async function scanSingleAcademicInput(
       errors: pageErrors,
     });
 
-    const pageBlocks = reconstructPageBlocks({
-      pageNumber: 1,
-      text: ocrText,
-      tables,
-      formulas,
-      diagrams: pageDiagrams,
-      lineBoxes: pageLineBoxes,
-      wordBoxes: pageWordBoxes,
-      pageWidth: visualW || finalPrep?.width,
-      pageHeight: visualH || finalPrep?.height,
-      uncertainSpans,
-    });
+    const pageBlocks =
+      imgSuryaBlocks && imgSuryaBlocks.length >= 2
+        ? imgSuryaBlocks
+        : reconstructPageBlocks({
+            pageNumber: 1,
+            text: ocrText,
+            tables,
+            formulas,
+            diagrams: pageDiagrams,
+            lineBoxes: pageLineBoxes,
+            wordBoxes: pageWordBoxes,
+            pageWidth: visualW || finalPrep?.width,
+            pageHeight: visualH || finalPrep?.height,
+            uncertainSpans,
+          });
 
     pages = [
       {
@@ -2653,8 +2749,11 @@ export async function scanSingleAcademicInput(
       pdfPageRenderer: options?.pdfPageRenderer,
       visionFallback: effectiveVisionFallback,
       visionOcrRunner: options?.visionOcrRunner,
+      engineMode: options?.engineMode,
+      suryaRunner: options?.suryaRunner,
+      language: options?.language,
       onProgress: options?.onProgress,
-      handwritingAdapter: options?.handwritingAdapter,
+      handwritingAdapter: effectiveHandwritingAdapter,
       mathAdapter: options?.mathAdapter,
       omrTemplate: options?.omrTemplate,
     });
@@ -3041,6 +3140,34 @@ export async function scanSingleAcademicInput(
     });
   }
 
+  // Academic Question, Option, Subquestion & Multi-Page Continuation Parser
+  const qpStart = Date.now();
+  let academicStructure: AcademicExamStructureReport | undefined;
+  try {
+    academicStructure = parseAcademicExamStructure({
+      pages,
+      fileName: magicCheck.safeFileName,
+    });
+    for (const issue of academicStructure.issues) {
+      if (issue.severity === 'warning') {
+        docWarnings.push(issue.message);
+      }
+    }
+    moduleReports.push({
+      module: 'academic_question_parser',
+      status: 'executed',
+      durationMs: Date.now() - qpStart,
+      detail: `${academicStructure.totalDetectedQuestions} question(s), ${academicStructure.continuedQuestionNumbers.length} cross-page continuation(s)`,
+    });
+  } catch (err) {
+    moduleReports.push({
+      module: 'academic_question_parser',
+      status: 'failed',
+      durationMs: Date.now() - qpStart,
+      detail: err instanceof Error ? err.message : 'Academic question structure parse failed.',
+    });
+  }
+
   for (const pg of pages) {
     if (pg.warnings.length > 0) docWarnings.push(...pg.warnings);
     if (pg.errors && pg.errors.length > 0) docWarnings.push(...pg.errors);
@@ -3055,6 +3182,9 @@ export async function scanSingleAcademicInput(
     averageOcrConfidence,
     totalAlnumChars,
   });
+
+  const engineList = Array.from(new Set(pages.map((p) => p.ocrEngineUsed).filter(Boolean)));
+  const ocrEngineSummary = engineList.length > 0 ? engineList.join(', ') : undefined;
 
   return {
     fileName: magicCheck.safeFileName,
@@ -3082,6 +3212,7 @@ export async function scanSingleAcademicInput(
     category: classification?.mappedLegacyCategory ?? structured.category,
     qrCodesFound,
     averageOcrConfidence,
+    ocrEngineSummary,
     extractionQualityStatus,
     processedPages,
     unprocessedPages,
@@ -3094,6 +3225,7 @@ export async function scanSingleAcademicInput(
     classification,
     integrityReport,
     languageAnalysis,
+    academicStructure,
     omrResults,
     formResults,
     handwritingAnalysis,

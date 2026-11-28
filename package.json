@@ -10,12 +10,13 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test tests/auth.test.ts tests/documentIntelligence.test.ts tests/scrollLock.test.ts tests/ocrBenchmark.test.ts tests/advancedScannerModules.test.ts tests/layoutReconstruction.test.ts"
+    "test": "tsx --test tests/auth.test.ts tests/documentIntelligence.test.ts tests/scrollLock.test.ts tests/ocrBenchmark.test.ts tests/advancedScannerModules.test.ts tests/layoutReconstruction.test.ts tests/suryaAndAcademicParser.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/yor": "^1.0.0",
     "@types/katex": "^0.16.8",
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-react": "^6.1.1",

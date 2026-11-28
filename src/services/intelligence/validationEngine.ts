@@ -273,7 +273,35 @@ export function runDeterministicChecks(params: {
     });
   }
 
-  // 11. Modular scanner fault report
+  // 11. Academic Question Structure & Multi-Page Consistency Check
+  if (artifact.academicStructure) {
+    const warnings = artifact.academicStructure.issues.filter((i) => i.severity === 'warning');
+    if (warnings.length > 0) {
+      checks.push({
+        id: 'chk-exam-consistency',
+        label: 'Question sequence & exam consistency',
+        category: 'structure',
+        passed: false,
+        severity: 'warning',
+        detail: warnings
+          .slice(0, 3)
+          .map((w) => w.message)
+          .join(' '),
+        pageNumbers: Array.from(new Set(warnings.flatMap((w) => w.pageNumbers))),
+      });
+    } else if (artifact.academicStructure.totalDetectedQuestions > 0) {
+      checks.push({
+        id: 'chk-exam-consistency',
+        label: 'Question sequence & exam consistency',
+        category: 'structure',
+        passed: true,
+        severity: 'info',
+        detail: `Parsed ${artifact.academicStructure.totalDetectedQuestions} question(s) (${artifact.academicStructure.continuedQuestionNumbers.length} stitched across pages) with consistent numbering.`,
+      });
+    }
+  }
+
+  // 12. Modular scanner fault report
   const failedModules = (artifact.moduleReports ?? []).filter((m) => m.status === 'failed');
   if (failedModules.length > 0) {
     checks.push({

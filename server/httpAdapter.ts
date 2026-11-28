@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { defaultOtpEngine } from './otpService.ts';
 import { defaultSuperAdminEngine } from './superAdminService.ts';
 import { defaultDocumentEngine } from './documentService.ts';
+import { defaultSuryaOcrService } from './suryaOcrService.ts';
+import { getInstalledOcrLanguages } from '../src/services/intelligence/languageDetector.ts';
 
 export type NodeHttpRequest = IncomingMessage & {
   body?: unknown;
@@ -494,7 +496,76 @@ export function createSuperAdminHttpHandlers(engine = defaultSuperAdminEngine) {
 
 export const defaultSuperAdminHttpHandlers = createSuperAdminHttpHandlers();
 
-export function createDocumentHttpHandlers(engine = defaultDocumentEngine) {
+export function createDocumentHttpHandlers(
+  engine = defaultDocumentEngine,
+  suryaService = defaultSuryaOcrService
+) {
+  async function handleOcrCapabilities(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const localLangs = getInstalledOcrLanguages();
+    const caps = suryaService.detectCapabilities(localLangs);
+    sendJson(res, 200, caps);
+  }
+
+  async function handleSuryaOcr(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req, MAX_DOC_BODY_BYTES);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid Surya OCR request payload.' });
+      return;
+    }
+    const result = await suryaService.analyzeWithSurya({ body });
+    sendJson(res, result.status, result.body);
+  }
+
+  async function handleHandwritingOcr(
+    req: NodeHttpRequest,
+    res: NodeHttpResponse
+  ): Promise<void> {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { ok: false, error: 'Method not allowed.' });
+      return;
+    }
+    const originCheck = checkSameOriginRequest(req);
+    if (!originCheck.ok) {
+      sendJson(res, 403, { ok: false, error: originCheck.error });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req, MAX_DOC_BODY_BYTES);
+    } catch (err) {
+      const code = err instanceof Error && err.message === 'BODY_TOO_LARGE' ? 413 : 400;
+      sendJson(res, code, { ok: false, error: 'Invalid handwriting OCR payload.' });
+      return;
+    }
+    const result = await engine.performHandwritingOcr({ body });
+    sendJson(res, result.status, result.body);
+  }
+
   async function handleValidate(
     req: NodeHttpRequest,
     res: NodeHttpResponse
@@ -592,6 +663,9 @@ export function createDocumentHttpHandlers(engine = defaultDocumentEngine) {
   }
 
   return {
+    handleOcrCapabilities,
+    handleSuryaOcr,
+    handleHandwritingOcr,
     handleVisionOcr,
     handleValidate,
     handleCrossCheck,

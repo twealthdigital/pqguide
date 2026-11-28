@@ -14,6 +14,11 @@ import type {
   DocumentRiskLevel,
   UncertainSpan,
 } from '../src/core/types.ts';
+import {
+  createSuryaOcrService,
+  validateConfiguredServiceUrl,
+  type ServerHandwritingOcrResult,
+} from './suryaOcrService.ts';
 
 export interface DocumentServiceDeps {
   env?: Record<string, string | undefined>;
@@ -708,10 +713,209 @@ export function createDocumentEngine(deps?: DocumentServiceDeps) {
     }
   }
 
+  async function performHandwritingOcr(params: {
+    body: unknown;
+  }): Promise<ServerHandwritingOcrResult> {
+    if (!params.body || typeof params.body !== 'object') {
+      return {
+        status: 400,
+        body: { ok: false, modelAvailable: false, engine: 'none', error: 'Handwriting OCR payload is required.' },
+      };
+    }
+
+    const rec = params.body as Record<string, unknown>;
+    const rawBase64 = typeof rec.imageBase64 === 'string' ? rec.imageBase64.trim() : '';
+    const mimeMatch = rawBase64.match(/^data:([^;]+);base64,(.+)$/);
+    const mimeType =
+      (typeof rec.mimeType === 'string' && rec.mimeType.trim()) ||
+      mimeMatch?.[1] ||
+      'image/png';
+    const cleanB64 = mimeMatch ? mimeMatch[2] : rawBase64;
+    const promptHint = typeof rec.promptHint === 'string' ? rec.promptHint.slice(0, 160) : '';
+
+    if (!cleanB64) {
+      return {
+        status: 400,
+        body: { ok: false, modelAvailable: false, engine: 'none', error: 'imageBase64 is required.' },
+      };
+    }
+
+    const allowedImageMimes = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
+    const normalizedMime = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType.toLowerCase();
+    if (!allowedImageMimes.has(normalizedMime)) {
+      return {
+        status: 400,
+        body: { ok: false, modelAvailable: false, engine: 'none', error: 'Unsupported handwriting crop mime type.' },
+      };
+    }
+
+    const buf = Buffer.from(cleanB64, 'base64');
+    if (buf.byteLength === 0 || buf.byteLength > MAX_SCANNER_FILE_BYTES) {
+      return {
+        status: 413,
+        body: { ok: false, modelAvailable: false, engine: 'none', error: 'Handwriting crop payload empty or exceeds size limit.' },
+      };
+    }
+
+    const ext = normalizedMime === 'image/webp' ? 'webp' : normalizedMime === 'image/jpeg' ? 'jpg' : 'png';
+    const sec = validateMagicAndSecurity({
+      fileName: `htr-crop.${ext}`,
+      mimeType: normalizedMime,
+      bytes: new Uint8Array(buf),
+    });
+    if (!sec.valid || sec.format !== 'image') {
+      return {
+        status: 422,
+        body: {
+          ok: false,
+          modelAvailable: false,
+          engine: 'none',
+          error: sec.error ?? 'Handwriting crop failed magic-byte validation.',
+        },
+      };
+    }
+
+    const suryaUrlCheck = validateConfiguredServiceUrl(env.SURYA_OCR_URL);
+    const htrUrlCheck = validateConfiguredServiceUrl(
+      env.HTR_SERVICE_URL || (suryaUrlCheck.valid ? `${suryaUrlCheck.normalizedUrl}/htr` : undefined)
+    );
+
+    if (htrUrlCheck.valid && htrUrlCheck.normalizedUrl) {
+      try {
+        const res = await fetchImpl(htrUrlCheck.normalizedUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(30_000),
+          body: JSON.stringify({ imageBase64: cleanB64, mimeType: normalizedMime, promptHint }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          modelAvailable?: boolean;
+          modelUsed?: string;
+          text?: string;
+          confidence?: number;
+          unreadable?: boolean;
+          uncertainWords?: string[];
+          error?: string;
+        };
+        if (res.ok && data.modelAvailable) {
+          return {
+            status: 200,
+            body: {
+              ok: Boolean(data.ok),
+              modelAvailable: true,
+              engine: 'trocr',
+              modelUsed: data.modelUsed || 'microsoft/trocr-base-handwritten',
+              text: data.text || '[unreadable handwriting]',
+              confidence: typeof data.confidence === 'number' ? data.confidence : 0,
+              unreadable: Boolean(data.unreadable),
+              uncertainWords: Array.isArray(data.uncertainWords) ? data.uncertainWords.slice(0, 20) : [],
+              error: data.error,
+            },
+          };
+        }
+      } catch {
+        // Fall through to Gemini Vision HTR if configured
+      }
+    }
+
+    const geminiKey = env.GEMINI_API_KEY?.trim();
+    if (geminiKey) {
+      try {
+        const ai = new GoogleGenAI({
+          apiKey: geminiKey,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+        });
+        const response = await ai.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: [
+            {
+              text: [
+                'Transcribe this cropped handwritten academic answer verbatim without guessing or inventing words.',
+                'If the ink/handwriting is illegible, set unreadable=true and return text="[unreadable handwriting]".',
+                'List any uncertain tokens in uncertainWords.',
+                promptHint ? `Context: ${promptHint}` : '',
+              ]
+                .filter(Boolean)
+                .join('\n'),
+            },
+            { inlineData: { mimeType: normalizedMime, data: cleanB64 } },
+          ],
+          config: {
+            temperature: 0,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                text: { type: Type.STRING },
+                confidence: { type: Type.INTEGER },
+                unreadable: { type: Type.BOOLEAN },
+                uncertainWords: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+              },
+              required: ['text', 'confidence', 'unreadable', 'uncertainWords'],
+            },
+          },
+        });
+        const parsed = JSON.parse(response.text || '{}') as {
+          text?: string;
+          confidence?: number;
+          unreadable?: boolean;
+          uncertainWords?: string[];
+        };
+        const text = typeof parsed.text === 'string' && parsed.text.trim() ? parsed.text.trim() : '[unreadable handwriting]';
+        const unreadable = Boolean(parsed.unreadable) || text === '[unreadable handwriting]';
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            modelAvailable: true,
+            engine: 'vision_htr',
+            modelUsed: GEMINI_MODEL,
+            text,
+            confidence:
+              typeof parsed.confidence === 'number'
+                ? Math.max(0, Math.min(85, Math.round(parsed.confidence)))
+                : unreadable
+                  ? 15
+                  : 68,
+            unreadable,
+            uncertainWords: Array.isArray(parsed.uncertainWords) ? parsed.uncertainWords.slice(0, 20) : [],
+          },
+        };
+      } catch (err) {
+        return {
+          status: 200,
+          body: {
+            ok: false,
+            modelAvailable: true,
+            engine: 'vision_htr',
+            modelUsed: GEMINI_MODEL,
+            error: err instanceof Error ? err.message.slice(0, 160) : 'Vision HTR request failed.',
+          },
+        };
+      }
+    }
+
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        modelAvailable: false,
+        engine: 'none',
+        error: 'No dedicated handwriting recognition weights configured (set HTR_SERVICE_URL, SURYA_OCR_URL, or GEMINI_API_KEY).',
+      },
+    };
+  }
+
   return {
     validateAndOptimizeBinary,
     crossCheckWithAi,
     performVisionOcr,
+    performHandwritingOcr,
   };
 }
 

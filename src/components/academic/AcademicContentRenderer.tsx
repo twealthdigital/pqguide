@@ -1454,11 +1454,15 @@ export const ScannedPageSideBySide: React.FC<{
             : 'Native PDF';
   const engineBadge = !showTechnical
     ? null
-    : page.ocrEngineUsed === 'hybrid_tesseract_vision'
-      ? 'Hybrid Tesseract + Vision'
-      : page.ocrEngineUsed === 'vision'
-        ? 'Vision OCR'
-        : null;
+    : page.ocrEngineUsed === 'surya'
+      ? 'Surya Layout OCR'
+      : page.ocrEngineUsed === 'hybrid_surya_tesseract'
+        ? 'Hybrid Surya + Tesseract'
+        : page.ocrEngineUsed === 'hybrid_tesseract_vision'
+          ? 'Hybrid Tesseract + Vision'
+          : page.ocrEngineUsed === 'vision'
+            ? 'Vision OCR'
+            : null;
   const uncertainSpans = showTechnical ? (page.uncertainSpans ?? []) : [];
   const statusBadge =
     page.processingStatus === 'failed'
@@ -2026,12 +2030,80 @@ export const ModuleExecutionSummaryCard: React.FC<{
   );
 };
 
+export const AcademicStructureSummaryCard: React.FC<{
+  structure: NonNullable<AcademicDocumentRecord['academicStructure']>;
+}> = ({ structure }) => {
+  if (structure.totalDetectedQuestions === 0 && structure.issues.length === 0) return null;
+  const warnings = structure.issues.filter((i) => i.severity === 'warning');
+  return (
+    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-4 space-y-2.5 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-display font-bold text-[#1A1B20]">
+          Parsed Exam Structure · {structure.totalDetectedQuestions} Question(s)
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+          {structure.continuedQuestionNumbers.length > 0 && (
+            <span className="rounded bg-[#EFF1F5] text-[#1A1B20] px-2 py-0.5">
+              Stitched cross-page: Q{structure.continuedQuestionNumbers.join(', Q')}
+            </span>
+          )}
+          {warnings.length > 0 ? (
+            <span className="rounded bg-[#FEF3C7] text-[#92400E] px-2 py-0.5">
+              {warnings.length} consistency warning(s)
+            </span>
+          ) : (
+            <span className="rounded bg-[#DCFCE7] text-[#15803D] px-2 py-0.5">
+              Sequence consistent
+            </span>
+          )}
+        </div>
+      </div>
+      {structure.instructions.length > 0 && (
+        <p className="text-[11px] text-[#505460]">
+          <strong>Instructions:</strong> {structure.instructions.join(' · ')}
+        </p>
+      )}
+      {warnings.length > 0 && (
+        <ul className="rounded-xl bg-[#FEF3C7]/55 border border-[#FDE68A] px-3 py-2 text-[11px] text-[#92400E] list-disc pl-6 space-y-0.5">
+          {warnings.slice(0, 6).map((w, idx) => (
+            <li key={idx}>{w.message}</li>
+          ))}
+        </ul>
+      )}
+      {structure.questions.length > 0 && (
+        <div className="space-y-1.5">
+          {structure.questions.slice(0, 8).map((q) => (
+            <div
+              key={q.id}
+              className="rounded-xl bg-[#F6F7F9] px-3 py-2 border border-[#1A1B20]/[0.06] space-y-0.5"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-[#1A1B20]">
+                  Q{q.questionNumber}
+                  {q.marks ? ` (${q.marks})` : ''}
+                  {q.subquestions.length > 0 ? ` · ${q.subquestions.length} subquestion(s)` : ''}
+                  {q.options.length > 0 ? ` · ${q.options.length} MCQ options` : ''}
+                </span>
+                <span className="text-[10px] font-mono-tabular text-[#686C78]">
+                  Page {q.pageNumbers.join('–')}
+                </span>
+              </div>
+              <p className="text-[#3A3D47] line-clamp-2">{q.stem || '[No stem text]'}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const SuperAdminIntelligenceSuite: React.FC<{
   doc: Pick<
     AcademicDocumentRecord,
     | 'academicMetadata'
     | 'classification'
     | 'integrityReport'
+    | 'academicStructure'
     | 'pages'
     | 'handwritingAnalysis'
     | 'omrResults'
@@ -2047,6 +2119,7 @@ export const SuperAdminIntelligenceSuite: React.FC<{
 }> = ({ doc, onOverrideCategory }) => (
   <div className="space-y-3">
     <IntegrityQualityBanner integrityReport={doc.integrityReport} pages={doc.pages} />
+    {doc.academicStructure && <AcademicStructureSummaryCard structure={doc.academicStructure} />}
     {doc.classification && (
       <DocumentClassificationCard
         classification={doc.classification}

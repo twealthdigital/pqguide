@@ -8,6 +8,7 @@
         "@google/genai": "^3.6.1",
         "@tailwindcss/vite": "^4.3.3",
         "@tesseract.js-data/eng": "^1.0.0",
+        "@tesseract.js-data/yor": "^1.0.0",
         "@types/katex": "^0.16.8",
         "@types/qrcode": "^1.5.6",
         "@vitejs/plugin-react": "^6.1.1",
@@ -279,6 +280,8 @@
     "@tailwindcss/vite": ["@tailwindcss/vite@4.3.5", "", { "dependencies": { "@tailwindcss/node": "4.3.5", "@tailwindcss/oxide": "4.3.5", "tailwindcss": "4.3.5" }, "peerDependencies": { "vite": "^5.2.0 || ^6 || ^7 || ^8" } }, "sha512-BCNiY0a1ZjdOHVqw7kyb7U72BwfMF3dfUuN+tQsLWky/J5JOI/r7abibglXfygrZhVO/3u3V+E25kkKTeMkXaQ=="],
 
     "@tesseract.js-data/eng": ["@tesseract.js-data/eng@1.0.0", "", {}, "sha512-mbTumm6KQPUHyzTPQaF3ObXYnx0SqqfV2nabqFVQBwD6Kl7PhGSLSzOlfFTWy0P3BjghaSKA2W9GB19Jk+ZcTg=="],
+
+    "@tesseract.js-data/yor": ["@tesseract.js-data/yor@1.0.0", "", {}, "sha512-5Ob7XZzWpuvaRRX/rGdorl1CuSvEF+ZL68CKUxV2TU0dwwnlsxpJd9WdHpnJ69HFWwMamMWmFwvU4SLIIGv8Cw=="],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.5", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-dOGOPxlaNV+G046mZzN+9C0dAcQZeSKcXiVaM0TYy/LM4ttTmgSBDxYfovcYI8Em3+eAbiAYpvWLOv8+ZVRJKA=="],
 

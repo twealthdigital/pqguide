@@ -207,6 +207,7 @@ export function analyzeGrayscaleQuality(
   const p5 = percentile(0.05);
   const p50 = percentile(0.5);
   const p95 = percentile(0.95);
+  const p995 = percentile(0.995);
   const contrastSpread = Math.max(0, p95 - p5);
 
   // Tile local brightness across an 8x8 grid in the inner 80% of the page
@@ -293,7 +294,8 @@ export function analyzeGrayscaleQuality(
   const hasStrongShadows = shadowVariance >= 22;
   const isUnevenLighting = shadowVariance >= 13 || darkBorderFraction >= 0.25;
   const isBlurry = sharpnessScore < 9.5;
-  const isLikelyBlank = blankRatio < 0.0012 && contrastSpread < 25;
+  const isInvertedPolarity = p50 < 95 && p995 > 155 && p995 - p50 > 55;
+  const isLikelyBlank = !isInvertedPolarity && blankRatio < 0.0012 && contrastSpread < 25;
 
   // Faded printing: visible strokes exist, but darkest ink percentile is shallow/pale
   const isFadedPrinting = !isLikelyBlank && p5 > 118 && contrastSpread < 92;
@@ -459,9 +461,32 @@ export function analyzeGrayscaleQuality(
     actionableWarnings.push('Page appears blank or nearly empty.');
   }
 
+  if (isInvertedPolarity) {
+    actionableWarnings.push('Dark-background / negative scan polarity detected; auto-inverted to dark ink on white paper.');
+  }
+
+  let qualityScore = 92;
+  if (isLikelyBlank) {
+    qualityScore = 8;
+  } else {
+    if (isLowResolution) qualityScore -= 16;
+    if (isBlurry) qualityScore -= Math.min(24, Math.round((9.5 - sharpnessScore) * 3));
+    if (isFadedPrinting) qualityScore -= 14;
+    if (hasStrongShadows) qualityScore -= 14;
+    else if (isUnevenLighting) qualityScore -= 8;
+    if (hasStainsOrMarks) qualityScore -= 8;
+    if (hasFoldLinesOrCreases) qualityScore -= 8;
+    if (isTornOrDamaged) qualityScore -= 10;
+    if (isIncompleteCapture) qualityScore -= 12;
+    qualityScore -= Math.min(20, unreadableRegionsCount * 5);
+    qualityScore = Math.max(12, Math.min(99, qualityScore));
+  }
+
   return {
     width,
     height,
+    qualityScore,
+    isInvertedPolarity,
     contrastSpread,
     contrastScore: contrastSpread,
     medianIntensity: p50,
@@ -928,7 +953,7 @@ export function detectDocumentCropBox(
 }
 
 /**
- * Estimates page tilt (-14 to +14 degrees) via coarse 1° + fine 0.25° gradient projection search.
+ * Estimates page tilt (-22 to +22 degrees) via two-stage coarse + fine 0.25° gradient projection search.
  */
 export function estimateSkewAngle(
   gray: Uint8Array,
@@ -936,8 +961,9 @@ export function estimateSkewAngle(
   height: number
 ): number {
   if (width < 120 || height < 120) return 0;
-  const stepX = Math.max(1, Math.floor(width / 360));
-  const stepY = Math.max(1, Math.floor(height / 420));
+  const step = Math.max(1, Math.floor(Math.max(width, height) / 420));
+  const stepX = step;
+  const stepY = step;
   const sw = Math.max(32, Math.floor(width / stepX));
   const sh = Math.max(32, Math.floor(height / stepY));
   const small = new Uint8Array(sw * sh);
@@ -985,8 +1011,15 @@ export function estimateSkewAngle(
   let coarseDeg = 0;
   let coarseScore = zeroScore;
 
-  for (let deg = -14; deg <= 14; deg += 1) {
-    if (deg === 0) continue;
+  // Coarse 1° search over [-14, +14] plus 2° outer sweep across [±16, ±22]
+  const angles: number[] = [];
+  for (let d = -22; d <= -16; d += 2) angles.push(d);
+  for (let d = -14; d <= 14; d += 1) {
+    if (d !== 0) angles.push(d);
+  }
+  for (let d = 16; d <= 22; d += 2) angles.push(d);
+
+  for (const deg of angles) {
     const score = scoreAngle(deg);
     if (score > coarseScore) {
       coarseScore = score;
@@ -996,7 +1029,12 @@ export function estimateSkewAngle(
 
   let bestDeg = coarseDeg;
   let bestScore = coarseScore;
-  for (let deg = Math.max(-14.5, coarseDeg - 1.25); deg <= Math.min(14.5, coarseDeg + 1.25); deg += 0.25) {
+  const fineRadius = Math.abs(coarseDeg) > 14 ? 2.0 : 1.25;
+  for (
+    let deg = Math.max(-22.5, coarseDeg - fineRadius);
+    deg <= Math.min(22.5, coarseDeg + fineRadius);
+    deg += 0.25
+  ) {
     const score = scoreAngle(deg);
     if (score > bestScore) {
       bestScore = score;
@@ -1544,6 +1582,12 @@ export async function preprocessImageForOcr(input: {
   }
 
   const preQuality = analyzeGrayscaleQuality(gray, width, height);
+  if (preQuality.isInvertedPolarity) {
+    for (let i = 0; i < gray.length; i += 1) {
+      gray[i] = 255 - gray[i];
+    }
+    appliedSteps.push('invert_dark_polarity');
+  }
 
   // 1. Detect 4-corner quadrilateral perspective boundary first; fallback to rectangular crop
   let perspectiveCorrected = false;
@@ -1577,14 +1621,18 @@ export async function preprocessImageForOcr(input: {
   }
 
   const qualityMetrics = analyzeGrayscaleQuality(gray, width, height);
-  // Preserve border/tear/stain inspection from pre-crop sheet analysis
+  // Preserve border/tear/stain/polarity inspection from pre-crop sheet analysis
   qualityMetrics.darkBorderFraction = preQuality.darkBorderFraction;
+  if (preQuality.isInvertedPolarity) {
+    qualityMetrics.isInvertedPolarity = true;
+    qualityMetrics.actionableWarnings.push(...preQuality.actionableWarnings.filter((w) => /polarity/i.test(w)));
+  }
   if (preQuality.isTornOrDamaged) qualityMetrics.isTornOrDamaged = true;
   if (preQuality.isIncompleteCapture && !perspectiveCorrected) {
     qualityMetrics.isIncompleteCapture = true;
   }
 
-  // 2. Estimate skew on native grid BEFORE resizing (supports up to ±14 degrees)
+  // 2. Estimate skew on native grid BEFORE resizing (supports up to ±22 degrees)
   const skewDeg = estimateSkewAngle(gray, width, height);
   qualityMetrics.skewAngleDeg = skewDeg;
   if (Math.abs(skewDeg) >= 4.5) {

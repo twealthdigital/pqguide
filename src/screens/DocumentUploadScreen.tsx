@@ -44,6 +44,11 @@ import { validateScannedDocument } from '../services/intelligence/validationEngi
 import { mapDetailedToLegacyCategory } from '../services/intelligence/documentClassifier';
 import { downloadOriginalDocumentFile } from '../services/intelligence/storageAdapter';
 import {
+  queryServerOcrCapabilities,
+  type ClientOcrCapabilities,
+  type OcrEngineMode,
+} from '../services/intelligence/ocrRouter';
+import {
   AcademicBlocksRenderer,
   ReconstructedDocumentRenderer,
   ScannedPageSideBySide,
@@ -232,6 +237,26 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
     publishOptionsRef.current = publishOptions;
   }, [publishOptions]);
 
+  const [ocrEngineMode, setOcrEngineMode] = useState<OcrEngineMode>('auto');
+  const [ocrCaps, setOcrCaps] = useState<ClientOcrCapabilities | null>(null);
+  const ocrEngineModeRef = useRef<OcrEngineMode>('auto');
+  const ocrCapsRef = useRef<ClientOcrCapabilities | null>(null);
+  useEffect(() => {
+    ocrEngineModeRef.current = ocrEngineMode;
+  }, [ocrEngineMode]);
+  useEffect(() => {
+    let active = true;
+    void queryServerOcrCapabilities().then((caps) => {
+      if (active && caps) {
+        setOcrCaps(caps);
+        ocrCapsRef.current = caps;
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Edit dialog + "Update" (replace file)
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const [replaceTargetId, setReplaceTargetId] = useState<string | null>(null);
@@ -291,6 +316,8 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
       const artifact = await scanSingleAcademicInput(inputFile, {
         docId: id,
         signal: controller.signal,
+        engineMode: ocrEngineModeRef.current,
+        visionFallback: ocrCapsRef.current?.vision?.available ? 'auto' : 'off',
         onProgress,
       });
 
@@ -440,6 +467,7 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
         classification: artifact.classification,
         integrityReport: artifact.integrityReport,
         languageAnalysis: artifact.languageAnalysis,
+        academicStructure: artifact.academicStructure,
         omrResults: artifact.omrResults,
         formResults: artifact.formResults,
         handwritingAnalysis: artifact.handwritingAnalysis,
@@ -839,6 +867,33 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                   onClick={() => setPublishOptions((prev) => ({ ...prev, notify: opt.value }))}
                   className={`px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer border ${
                     publishOptions.notify === opt.value
+                      ? 'bg-[#1D1E23] text-white border-[#1D1E23]'
+                      : 'bg-white text-[#505460] border-[#1A1B20]/10'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[#686C78]">OCR engine preference</p>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  { value: 'auto', label: ocrCaps?.surya?.available ? 'Auto (Surya + Local)' : 'Auto (Smart)' },
+                  { value: 'surya', label: 'Surya OCR' },
+                  { value: 'hybrid', label: 'Hybrid Verify' },
+                  { value: 'tesseract', label: 'Local Tesseract' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={ocrEngineMode === opt.value}
+                  onClick={() => setOcrEngineMode(opt.value)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer border ${
+                    ocrEngineMode === opt.value
                       ? 'bg-[#1D1E23] text-white border-[#1D1E23]'
                       : 'bg-white text-[#505460] border-[#1A1B20]/10'
                   }`}

@@ -424,7 +424,15 @@ export function parseStructuredDocument(params: {
   const seenTableKeys = new Set<string>();
   const tables: ExtractedTable[] = [];
   for (const t of rawTables) {
-    const sig = `${t.headers.join('|')}::${t.rows.map((r) => r.join('|')).join(';')}`.toLowerCase();
+    const normHeaders = t.headers
+      .map((h) => h.trim().toLowerCase())
+      .filter((h) => Boolean(h) && !/^col\s+\d+$/.test(h))
+      .join('|');
+    const normRows = t.rows
+      .map((r) => r.map((c) => c.trim().toLowerCase()).filter(Boolean).join('|'))
+      .filter(Boolean)
+      .join(';');
+    const sig = `${normHeaders}::${normRows}`;
     if (seenTableKeys.has(sig)) continue;
     seenTableKeys.add(sig);
     tables.push(t);
