@@ -165,6 +165,18 @@ function decodeZxingSingle(
     height,
     false
   );
+  const origWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const first = typeof args[0] === 'string' ? args[0] : '';
+    const err = args[1] as { name?: string; constructor?: { name?: string } } | undefined;
+    const errName = err?.name || err?.constructor?.name || '';
+    const isExpectedZxingReaderErr =
+      first.includes('MultiFormatReader: non-ReaderException from reader') &&
+      (errName === 'NotFoundException' ||
+        errName === 'FormatException' ||
+        errName === 'ChecksumException');
+    if (!isExpectedZxingReaderErr) origWarn.apply(console, args);
+  };
   try {
     return reader.decode(new BinaryBitmap(new HybridBinarizer(source)));
   } catch {
@@ -174,6 +186,7 @@ function decodeZxingSingle(
       return null;
     }
   } finally {
+    console.warn = origWarn;
     reader.reset();
   }
 }

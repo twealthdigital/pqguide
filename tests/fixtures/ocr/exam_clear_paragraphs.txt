@@ -1,0 +1,8 @@
+COMPUTER SCIENCE DEPARTMENT
+CSC 401 COMPILER CONSTRUCTION
+
+1. Explain lexical analysis and finite automata
+with examples of regular expressions.
+
+2. Construct an LL(1) parsing table for grammar
+and eliminate left recursion carefully.

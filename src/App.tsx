@@ -119,6 +119,12 @@ const SubscriptionScreen = lazy(() =>
   }))
 );
 
+const RepoFlowLauncher = lazy(() =>
+  import('./components/dev/RepoFlowDrawer').then((m) => ({
+    default: m.RepoFlowLauncher,
+  }))
+);
+
 /** One step in the in-app "Back" trail. */
 interface NavEntry {
   screen: AppScreen;
@@ -1859,6 +1865,9 @@ export default function App() {
           onComplete={() => setPhase('done')}
         />
       )}
+      <Suspense fallback={null}>
+        <RepoFlowLauncher />
+      </Suspense>
     </>
   );
 }

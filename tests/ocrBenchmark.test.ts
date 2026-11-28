@@ -536,6 +536,113 @@ describe('PQGuide OCR benchmark (generated pages with known text + optional real
       `Expected vertex labels attached to vectorScene, got: ${JSON.stringify(labelTexts)}`
     );
   });
+
+  test('12. End-to-end pipeline preserves paragraphs, headings, superscripts/subscripts, 3-page PDF order (logo+scan), and handwriting HTR', async () => {
+    // 12a. Paragraphs, line breaks, and uppercase headings preserved via real PNG OCR
+    const structuredPng = new Uint8Array(
+      await sharp(
+        Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760">
+            <rect width="1400" height="760" fill="#ffffff"/>
+            <text x="80" y="95" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="bold" fill="#111">SECTION A: ALGORITHMS</text>
+            <text x="80" y="180" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">First line of question one explaining</text>
+            <text x="80" y="220" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">merge sort recurrence relations clearly.</text>
+            <text x="80" y="340" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">Second paragraph defining graph traversal</text>
+            <text x="80" y="380" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" fill="#111">using breadth first search queues.</text>
+          </svg>`
+        )
+      )
+        .png()
+        .toBuffer()
+    );
+    const structOut = await scanSingleAcademicInput(
+      { name: 'CSC301_structure.png', type: 'image/png', size: structuredPng.byteLength, bytes: structuredPng },
+      { bypassCache: true, visionFallback: 'off' }
+    );
+    assert.ok(
+      structOut.headings.some((h) => /SECTION A.*ALGORITHMS/i.test(h)),
+      `Expected SECTION A heading preserved, got: ${JSON.stringify(structOut.headings)}`
+    );
+    assert.ok(structOut.extractedText.includes('\n\n'), 'Expected blank-line paragraph separation preserved');
+    assert.ok(/merge sort recurrence/i.test(structOut.extractedText));
+    assert.ok(/breadth first search/i.test(structOut.extractedText));
+
+    // 12b. Multi-page 3-page PDF preserves exact page order and selects largest scanned image over small header logo
+    const logoPng = await sharp(
+      Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90"><rect width="90" height="90" fill="#1d4ed8"/><text x="15" y="55" font-size="24" fill="#fff">LOGO</text></svg>`)
+    ).png().toBuffer();
+    const fullScanJpg = await sharp(
+      renderSvgTextPage(['QUESTION TWO (25 MARKS)', 'Derive Einstein relation E = mc^2 and chemical stoichiometry for H2O.'], 1350, 680, 32, 88)
+    ).jpeg({ quality: 92 }).toBuffer();
+
+    const pdf3 = new jsPDF({ unit: 'pt', format: 'a4' });
+    pdf3.text('PHY 301 MODERN PHYSICS AND CHEMISTRY - FIRST SEMESTER 2024/2025', 48, 70);
+    pdf3.text('1. State Heisenberg uncertainty relation: dx * dp >= h / (4 * pi).', 48, 110);
+    pdf3.addPage();
+    // Embed small logo FIRST, then full scanned page SECOND
+    pdf3.addImage(logoPng.toString('base64'), 'PNG', 40, 30, 50, 50);
+    pdf3.addImage(fullScanJpg.toString('base64'), 'JPEG', 40, 100, 500, 260);
+    pdf3.addPage();
+    pdf3.text('SECTION C: Thermodynamics Summary and Reaction Equilibrium.', 48, 70);
+    pdf3.text('$$E = mc^2$$ and subscript reaction $a_n = 2^n$ with kinetic term $K = (1/2) m v^2$.', 48, 110);
+
+    const pdf3Bytes = new Uint8Array(pdf3.output('arraybuffer'));
+    const pdf3Out = await scanSingleAcademicInput(
+      { name: 'PHY301_3pages.pdf', type: 'application/pdf', size: pdf3Bytes.byteLength, bytes: pdf3Bytes },
+      { bypassCache: true, visionFallback: 'off' }
+    );
+    assert.equal(pdf3Out.pageCount, 3);
+    const p1Pos = pdf3Out.extractedText.indexOf('--- Page 1 ---');
+    const p2Pos = pdf3Out.extractedText.indexOf('--- Page 2 ---');
+    const p3Pos = pdf3Out.extractedText.indexOf('--- Page 3 ---');
+    assert.ok(p1Pos !== -1 && p2Pos > p1Pos && p3Pos > p2Pos, 'Page markers must preserve strict 1 -> 2 -> 3 order');
+    assert.ok(/Heisenberg uncertainty/i.test(pdf3Out.pages[0]?.text ?? ''), 'Page 1 native physics question preserved');
+    assert.ok(/Einstein|uncertainty|QUESTION TWO/i.test(pdf3Out.pages[1]?.text ?? ''), 'Page 2 should OCR full scanned block, not only the 90x90 logo');
+    assert.ok(/Thermodynamics Summary/i.test(pdf3Out.pages[2]?.text ?? ''), 'Page 3 thermodynamics section preserved');
+    assert.ok(pdf3Out.formulas.some((f) => /mc\^?\{?2\}?/i.test(f.latex)), 'Superscript E=mc^2 preserved');
+    assert.ok(pdf3Out.formulas.some((f) => /a_\{?n\}?/.test(f.latex)), 'Subscript a_n preserved');
+
+    // 12c. Handwritten stroke crop through scanSingleAcademicInput (both default honest mode + custom HTR adapter)
+    const hwPng = new Uint8Array(
+      await sharp(
+        Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="680" height="260">
+            <rect width="680" height="260" fill="#ffffff"/>
+            <path d="M55 120 C 75 75, 105 150, 130 98 S 175 135, 210 92 C 245 78, 270 140, 310 104" fill="none" stroke="#111" stroke-width="5"/>
+            <path d="M330 112 C 355 70, 385 148, 415 95 S 455 140, 495 102" fill="none" stroke="#111" stroke-width="4"/>
+          </svg>`
+        )
+      ).png().toBuffer()
+    );
+    const hwDefault = await scanSingleAcademicInput(
+      { name: 'handwritten_ans.png', type: 'image/png', size: hwPng.byteLength, bytes: hwPng },
+      { bypassCache: true, visionFallback: 'off' }
+    );
+    assert.equal(hwDefault.handwritingAnalysis?.detected, true);
+    assert.equal(hwDefault.handwritingAnalysis?.engineStatus, 'model_unavailable_partial');
+
+    const hwAdapted = await scanSingleAcademicInput(
+      { name: 'handwritten_ans.png', type: 'image/png', size: hwPng.byteLength, bytes: hwPng },
+      {
+        bypassCache: true,
+        visionFallback: 'off',
+        handwritingAdapter: {
+          name: 'VerifiedHTR',
+          async recognizeRegion() {
+            return {
+              text: 'Momentum is conserved in elastic collisions.',
+              confidence: 86,
+              uncertainWords: [],
+              unreadable: false,
+            };
+          },
+        },
+      }
+    );
+    assert.equal(hwAdapted.handwritingAnalysis?.detected, true);
+    assert.equal(hwAdapted.handwritingAnalysis?.engineStatus, 'executed');
+    assert.ok(hwAdapted.handwritingAnalysis?.regions.some((r) => /Momentum is conserved/.test(r.extractedText)));
+  });
 });
 
 after(async () => {

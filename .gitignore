@@ -8,3 +8,6 @@ coverage/
 !.env.example
 # Tesseract language-data cache written to the working directory
 *.traineddata
+# AI Studio internal session directory
+.aistudio/
+

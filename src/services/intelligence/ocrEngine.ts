@@ -110,25 +110,88 @@ const workerPool: PooledWorkerSlot[] = Array.from({ length: OCR_POOL_SIZE }, (_,
 }));
 const waiterQueue: Array<(slot: PooledWorkerSlot) => void> = [];
 
+async function resolveNodeTesseractOptions(): Promise<Record<string, unknown>> {
+  const isNodeRuntime =
+    typeof process !== 'undefined' &&
+    typeof process.versions?.node === 'string' &&
+    typeof window === 'undefined';
+  if (!isNodeRuntime) return {};
+
+  try {
+    const dynImport = new Function('specifier', 'return import(specifier)') as (
+      specifier: string
+    ) => Promise<unknown>;
+    const [fsMod, pathMod, osMod, moduleMod] = await Promise.all([
+      dynImport('node:fs'),
+      dynImport('node:path'),
+      dynImport('node:os'),
+      dynImport('node:module'),
+    ]);
+    const fs = fsMod as typeof import('node:fs');
+    const path = pathMod as typeof import('node:path');
+    const os = osMod as typeof import('node:os');
+    const { createRequire } = moduleMod as typeof import('node:module');
+
+    const candidateDirs: string[] = [];
+    try {
+      const req = createRequire(
+        typeof import.meta?.url === 'string'
+          ? import.meta.url
+          : path.resolve(process.cwd(), 'package.json')
+      );
+      const pkgDir = path.dirname(req.resolve('@tesseract.js-data/eng/package.json'));
+      candidateDirs.push(path.join(pkgDir, '4.0.0_best_int'), path.join(pkgDir, '4.0.0'));
+    } catch {
+      // Fallback to workspace node_modules
+    }
+    candidateDirs.push(
+      path.resolve(process.cwd(), 'node_modules/@tesseract.js-data/eng/4.0.0_best_int'),
+      path.resolve(process.cwd(), 'node_modules/@tesseract.js-data/eng/4.0.0')
+    );
+
+    const langPath = candidateDirs.find((dir) =>
+      fs.existsSync(path.join(dir, 'eng.traineddata.gz'))
+    );
+    const cachePath = path.join(os.tmpdir(), 'pqguide-tesseract-cache');
+    fs.mkdirSync(cachePath, { recursive: true });
+
+    if (langPath) {
+      return {
+        langPath,
+        gzip: true,
+        cachePath,
+        cacheMethod: 'write',
+      };
+    }
+    return { cachePath };
+  } catch {
+    return {};
+  }
+}
+
 async function initSlotWorker(slot: PooledWorkerSlot): Promise<TesseractWorker> {
   if (slot.worker) return slot.worker;
   if (!slot.initPromise) {
-    slot.initPromise = createWorker('eng', undefined, {
-      logger: (msg: { status?: string; progress?: number }) => {
-        if (!slot.onProgress) return;
-        if (msg.status === 'recognizing text' && typeof msg.progress === 'number') {
-          slot.onProgress(
-            Math.max(0, Math.min(100, Math.round(msg.progress * 100))),
-            'Recognizing characters'
-          );
-        } else if (msg.status && typeof msg.progress === 'number') {
-          slot.onProgress(
-            Math.max(0, Math.min(25, Math.round(msg.progress * 25))),
-            msg.status
-          );
-        }
-      },
-    })
+    slot.initPromise = resolveNodeTesseractOptions()
+      .then((nodeOpts) =>
+        createWorker('eng', undefined, {
+          ...nodeOpts,
+          logger: (msg: { status?: string; progress?: number }) => {
+            if (!slot.onProgress) return;
+            if (msg.status === 'recognizing text' && typeof msg.progress === 'number') {
+              slot.onProgress(
+                Math.max(0, Math.min(100, Math.round(msg.progress * 100))),
+                'Recognizing characters'
+              );
+            } else if (msg.status && typeof msg.progress === 'number') {
+              slot.onProgress(
+                Math.max(0, Math.min(25, Math.round(msg.progress * 25))),
+                msg.status
+              );
+            }
+          },
+        })
+      )
       .then(async (worker) => {
         await worker.setParameters({
           user_defined_dpi: '300',
@@ -565,10 +628,20 @@ function analyzeBlocksAndOrder(
     const outputSegments: string[] = [];
     let r = 0;
     let rebuiltTableCount = 0;
+    let prevMidY: number | null = null;
+    const pushSegment = (text: string, firstMidY: number, lastMidY: number) => {
+      if (prevMidY !== null && firstMidY - prevMidY > medianH * 1.9 && outputSegments.length > 0) {
+        outputSegments.push('');
+      }
+      outputSegments.push(text);
+      prevMidY = lastMidY;
+    };
 
     while (r < rowGroups.length) {
       if (!isEligibleTableRow(rowGroups[r])) {
-        if (rowGroups[r].rawLine) outputSegments.push(rowGroups[r].rawLine);
+        if (rowGroups[r].rawLine) {
+          pushSegment(rowGroups[r].rawLine, rowGroups[r].midY, rowGroups[r].midY);
+        }
         r += 1;
         continue;
       }
@@ -632,7 +705,11 @@ function analyzeBlocksAndOrder(
           const headerLine = `| ${gridRows[0].map((c) => c || ' ').join(' | ')} |`;
           const sepLine = `| ${bands.map(() => '---').join(' | ')} |`;
           const bodyLines = gridRows.slice(1).map((row) => `| ${row.map((c) => c || ' ').join(' | ')} |`);
-          outputSegments.push([headerLine, sepLine, ...bodyLines].join('\n'));
+          pushSegment(
+            [headerLine, sepLine, ...bodyLines].join('\n'),
+            run[0].midY,
+            run[run.length - 1].midY
+          );
           rebuiltTableCount += 1;
           r = end;
           continue;
@@ -640,7 +717,9 @@ function analyzeBlocksAndOrder(
       }
 
       for (let k = r; k < end; k += 1) {
-        if (rowGroups[k].rawLine) outputSegments.push(rowGroups[k].rawLine);
+        if (rowGroups[k].rawLine) {
+          pushSegment(rowGroups[k].rawLine, rowGroups[k].midY, rowGroups[k].midY);
+        }
       }
       r = end;
     }

@@ -888,6 +888,14 @@ async function extractNodePdfPageRasterFallback(
     if (!sharpFn) return null;
 
     const opList = await page.getOperatorList();
+    let bestImg: {
+      width: number;
+      height: number;
+      channels: 1 | 3 | 4;
+      data: Uint8Array | Uint8ClampedArray;
+      pixels: number;
+    } | null = null;
+
     for (let idx = 0; idx < opList.fnArray.length; idx += 1) {
       if (!imageOpIds.has(opList.fnArray[idx])) continue;
       const objId = opList.argsArray[idx]?.[0];
@@ -907,7 +915,7 @@ async function extractNodePdfPageRasterFallback(
       if (!imgObj || !imgObj.data || !imgObj.width || !imgObj.height) continue;
       const pixelCount = imgObj.width * imgObj.height;
       if (pixelCount < 400) continue;
-      const channels =
+      const channels: 0 | 1 | 3 | 4 =
         imgObj.data.length === pixelCount * 4
           ? 4
           : imgObj.data.length === pixelCount * 3
@@ -916,16 +924,28 @@ async function extractNodePdfPageRasterFallback(
               ? 1
               : 0;
       if (channels === 0) continue;
-      const pngBuf = await sharpFn(new Uint8Array(imgObj.data), {
-        raw: { width: imgObj.width, height: imgObj.height, channels },
+      if (!bestImg || pixelCount > bestImg.pixels) {
+        bestImg = {
+          width: imgObj.width,
+          height: imgObj.height,
+          channels,
+          data: imgObj.data,
+          pixels: pixelCount,
+        };
+      }
+    }
+
+    if (bestImg) {
+      const pngBuf = await sharpFn(new Uint8Array(bestImg.data), {
+        raw: { width: bestImg.width, height: bestImg.height, channels: bestImg.channels },
       })
         .png()
         .toBuffer();
       return {
         bytes: new Uint8Array(pngBuf),
         mimeType: 'image/png',
-        width: imgObj.width,
-        height: imgObj.height,
+        width: bestImg.width,
+        height: bestImg.height,
       };
     }
   } catch {

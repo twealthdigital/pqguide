@@ -8,6 +8,7 @@ import {
   createSuperAdminHttpHandlers,
 } from './server/httpAdapter.ts';
 import { createOtpEngine, type OtpEngineDeps } from './server/otpService.ts';
+import { createRepoFlowHandlers } from './server/repoFlowService.ts';
 import { createSuperAdminEngine } from './server/superAdminService.ts';
 
 dotenv.config({ path: path.resolve(import.meta.dirname, '.env.local') });
@@ -24,6 +25,7 @@ export function createApiApp(deps?: OtpEngineDeps) {
 
   app.use('/api/auth', express.json({ limit: '64kb' }));
   app.use('/api/documents', express.json({ limit: '8mb' }));
+  app.use('/api/repo', express.json({ limit: '256kb' }));
 
   const otpEngine = deps ? createOtpEngine(deps) : undefined;
   const handlers = otpEngine
@@ -37,6 +39,7 @@ export function createApiApp(deps?: OtpEngineDeps) {
   const documentHandlers = deps
     ? createDocumentHttpHandlers()
     : createDocumentHttpHandlers();
+  const repoFlowHandlers = createRepoFlowHandlers();
 
   app.get('/api/auth/email-otp/status', (req: Request, res: Response) => {
     void handlers.handleStatus(req, res);
@@ -112,6 +115,26 @@ export function createApiApp(deps?: OtpEngineDeps) {
 
   app.post('/api/documents/cross-check', (req: Request, res: Response) => {
     void documentHandlers.handleCrossCheck(req, res);
+  });
+
+  app.get('/api/repo/status', (req: Request, res: Response) => {
+    void repoFlowHandlers.handleStatus(req, res);
+  });
+
+  app.post('/api/repo/verify', (req: Request, res: Response) => {
+    void repoFlowHandlers.handleVerify(req, res);
+  });
+
+  app.post('/api/repo/diff', (req: Request, res: Response) => {
+    void repoFlowHandlers.handleDiff(req, res);
+  });
+
+  app.post('/api/repo/pull', (req: Request, res: Response) => {
+    void repoFlowHandlers.handlePull(req, res);
+  });
+
+  app.post('/api/repo/push', (req: Request, res: Response) => {
+    void repoFlowHandlers.handlePush(req, res);
   });
 
   return app;

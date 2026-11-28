@@ -23,7 +23,7 @@ import type {
   SemesterType,
   StudentLevel,
 } from '../core/types';
-import { isRestrictedAccount } from '../core/permissions';
+import { hasPermission, isRestrictedAccount } from '../core/permissions';
 import { sanitizeSafeUrl } from '../core/security';
 import { archiveRepository } from '../services/archiveRepository';
 import { useArchiveStore } from '../hooks/useArchiveStore';
@@ -497,9 +497,11 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
 
   const enqueueFiles = async (rawFiles: FileList | File[], replaceDocId?: string) => {
     setBannerError(null);
-    if (restricted) {
+    if (!hasPermission(currentUser, 'docs:scan_submit')) {
       setBannerError(
-        'Your account is currently in read-only mode. Contact support before uploading new documents.'
+        restricted
+          ? 'Your account is currently in read-only mode. Contact support before uploading new documents.'
+          : 'Only authorized administrators can scan or submit academic documents.'
       );
       return;
     }
