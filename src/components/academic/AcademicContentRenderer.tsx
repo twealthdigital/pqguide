@@ -22,7 +22,12 @@ export interface StructuredAiBlock {
   answer?: string;
   explanation?: string;
 }
-import type { ExtractedDiagramAsset, ExtractedFormula, ExtractedTable } from '../../core/types';
+import type {
+  ExtractedDiagramAsset,
+  ExtractedFormula,
+  ExtractedPageContent,
+  ExtractedTable,
+} from '../../core/types';
 
 export const KatexFormula: React.FC<{
   latex: string;
@@ -468,6 +473,58 @@ export const AcademicBlocksRenderer: React.FC<{
           </div>
         );
       })}
+    </div>
+  );
+};
+
+/** The scanned page image for a page, if there is one. */
+export function pageImageUrl(page: ExtractedPageContent, fallback?: string): string | undefined {
+  const fromDiagram = page.diagrams.find((d) => d.id.startsWith('scan-sheet'))?.dataUrl;
+  return sanitizeSafeUrl(page.renderedPreviewUrl ?? fromDiagram ?? fallback) || undefined;
+}
+
+/**
+ * One page: the scanned image on the left, everything that was read from it on the
+ * right (stacked on small screens). Pages with no image use the full width.
+ */
+export const ScannedPageSideBySide: React.FC<{
+  page: ExtractedPageContent;
+  imageUrl?: string;
+  totalPages?: number;
+}> = ({ page, imageUrl, totalPages }) => {
+  const text = page.text.trim();
+  return (
+    <div
+      className={`grid grid-cols-1 gap-3 items-start ${imageUrl ? 'md:grid-cols-2' : ''}`}
+    >
+      {imageUrl && (
+        <figure className="rounded-2xl border border-[#1A1B20]/10 bg-[#F6F7F9] p-3 space-y-2 md:sticky md:top-0">
+          <img
+            src={imageUrl}
+            alt={`Scanned page ${page.pageNumber}`}
+            referrerPolicy="no-referrer"
+            className="w-full max-h-[560px] object-contain rounded-xl bg-white"
+          />
+          <figcaption className="text-xs text-[#505460] font-medium">
+            Page {page.pageNumber}
+            {totalPages && totalPages > 1 ? ` of ${totalPages}` : ''} · Scanned page
+          </figcaption>
+        </figure>
+      )}
+      <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5 min-w-0">
+        <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
+          Extracted text · Page {page.pageNumber}
+        </p>
+        {text ? (
+          <div className="max-h-[560px] overflow-y-auto whitespace-pre-wrap break-words">
+            <RichInlineText text={text} className="text-xs sm:text-sm leading-relaxed text-[#3A3D47]" />
+          </div>
+        ) : (
+          <p className="text-xs sm:text-sm text-[#686C78]">
+            No text could be read from this page.
+          </p>
+        )}
+      </div>
     </div>
   );
 };

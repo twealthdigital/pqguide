@@ -26,6 +26,8 @@ import {
   ExtractedFormulasList,
   ExtractedTableCard,
   RichInlineText,
+  ScannedPageSideBySide,
+  pageImageUrl,
 } from '../components/academic/AcademicContentRenderer';
 import {
   CustomSelect,
@@ -413,18 +415,21 @@ export const DocumentLibraryScreen: React.FC<DocumentLibraryScreenProps> = ({
                       )}
                     </div>
 
-                    {activePage.warnings.length > 0 && (
+                    {showTechnical && activePage.warnings.length > 0 && (
                       <div className="rounded-xl bg-[#FEF3C7] border border-[#FDE68A] px-3 py-2 text-xs text-[#92400E] flex items-center gap-2">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                         <span>{activePage.warnings.join(' ')}</span>
                       </div>
                     )}
 
-                    <div className="rounded-xl bg-white border border-[#1A1B20]/[0.06] p-3.5">
-                      <RichInlineText
-                        text={activePage.text || 'No readable text on this page.'}
-                      />
-                    </div>
+                    <ScannedPageSideBySide
+                      page={activePage}
+                      totalPages={selectedDoc.pages.length}
+                      imageUrl={pageImageUrl(
+                        activePage,
+                        activePage.pageNumber === 1 ? selectedDoc.optimizedPreviewUrl : undefined
+                      )}
+                    />
                   </div>
                 )}
 

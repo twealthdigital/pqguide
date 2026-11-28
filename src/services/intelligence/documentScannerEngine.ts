@@ -60,6 +60,7 @@ export interface OcrRunnerResult {
 export type OcrRunner = (input: {
   imageDataUrl?: string;
   bytes?: Uint8Array;
+  mimeType?: string;
   signal?: AbortSignal;
 }) => Promise<OcrRunnerResult>;
 
@@ -249,16 +250,60 @@ async function decodeImageAndOptimizeBrowser(
   }
 }
 
+/**
+ * Tesseract reads best when text is roughly 300 DPI. A small or low-resolution image
+ * (a cropped screenshot, a thumbnail) comes back with nothing, so it is enlarged first,
+ * converted to grayscale and given a little extra contrast. Very large photos are
+ * capped so memory stays reasonable. Only the OCR copy changes; the preview is untouched.
+ */
+async function prepareImageForOcr(dataUrl: string): Promise<string> {
+  if (typeof document === 'undefined') return dataUrl;
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Failed to decode image for OCR.'));
+      el.src = dataUrl;
+    });
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    if (!w || !h) return dataUrl;
+
+    const targetWidth = w < 1600 ? Math.min(w * 4, 2000) : Math.min(w, 2400);
+    const scale = targetWidth / w;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.filter = 'grayscale(100%) contrast(120%)';
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return dataUrl;
+  }
+}
+
 async function defaultBrowserOcrRunner(input: {
   imageDataUrl?: string;
   bytes?: Uint8Array;
+  mimeType?: string;
   signal?: AbortSignal;
 }): Promise<OcrRunnerResult> {
   throwIfAborted(input.signal);
-  const target = input.imageDataUrl ?? (input.bytes ? uint8ToDataUrl(input.bytes, 'image/png') : '');
-  if (!target) {
+  // Prefer the original bytes (full resolution) over the downsized preview copy.
+  const source = input.bytes
+    ? uint8ToDataUrl(input.bytes, input.mimeType || 'image/png')
+    : (input.imageDataUrl ?? '');
+  if (!source) {
     throw new Error('No image buffer provided to OCR engine.');
   }
+  const target = await prepareImageForOcr(source);
+  throwIfAborted(input.signal);
 
   const { createWorker } = await import('tesseract.js');
   const worker = await createWorker('eng');
@@ -897,6 +942,7 @@ export async function scanSingleAcademicInput(
       const ocrRes = await ocrRunner({
         imageDataUrl: opt.optimizedDataUrl,
         bytes: input.bytes,
+        mimeType,
         signal: options?.signal,
       });
       ocrText = ocrRes.text;

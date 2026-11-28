@@ -43,6 +43,8 @@ import { validateScannedDocument } from '../services/intelligence/validationEngi
 import {
   AcademicBlocksRenderer,
   ExtractedDiagramsGallery,
+  ScannedPageSideBySide,
+  pageImageUrl,
   ExtractedFormulasList,
   ExtractedTableCard,
   RichInlineText,
@@ -1176,20 +1178,38 @@ export const DocumentUploadScreen: React.FC<DocumentUploadScreenProps> = ({
                   </div>
                 )}
 
-                {previewRecord.diagrams.length > 0 && (
-                  <ExtractedDiagramsGallery diagrams={previewRecord.diagrams} />
+                {previewRecord.pages.length > 0 ? (
+                  <div className="space-y-3">
+                    {previewRecord.pages.map((pg) => (
+                      <ScannedPageSideBySide
+                        key={pg.pageNumber}
+                        page={pg}
+                        totalPages={previewRecord.pages.length}
+                        imageUrl={pageImageUrl(
+                          pg,
+                          pg.pageNumber === 1 ? previewRecord.optimizedPreviewUrl : undefined
+                        )}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  previewRecord.extractedText && (
+                    <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5">
+                      <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
+                        Extracted text
+                      </p>
+                      <RichInlineText
+                        text={previewRecord.extractedText.slice(0, 3500)}
+                        className="text-xs sm:text-sm text-[#3A3D47]"
+                      />
+                    </div>
+                  )
                 )}
 
-                {previewRecord.extractedText && (
-                  <div className="rounded-2xl border border-[#1A1B20]/10 bg-white p-3.5 space-y-1.5">
-                    <p className="font-bold text-xs uppercase tracking-wider text-[#686C78]">
-                      Extracted Text
-                    </p>
-                    <RichInlineText
-                      text={previewRecord.extractedText.slice(0, 3500)}
-                      className="text-xs sm:text-sm text-[#3A3D47]"
-                    />
-                  </div>
+                {previewRecord.diagrams.some((d) => !d.id.startsWith('scan-sheet')) && (
+                  <ExtractedDiagramsGallery
+                    diagrams={previewRecord.diagrams.filter((d) => !d.id.startsWith('scan-sheet'))}
+                  />
                 )}
 
                 {isSuperAdmin && (
